@@ -1,0 +1,29 @@
+[*]
+charset = utf-8
+root = true
+
+[*.{c,cc,cpp,cxx,h,hpp,hxx,inl,ipp}]
+indent_style = space
+indent_size = 2
+tab_width = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+max_line_length = 80
+
+[*.{cmake,inc}]
+indent_style = space
+indent_size = 2
+max_line_length = 80
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.md]
+max_line_length = off
+trim_trailing_whitespace = false
+insert_final_newline = true
+
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2

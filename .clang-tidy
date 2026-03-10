@@ -1,0 +1,36 @@
+---
+Checks: '
+google-*,
+-google-objc-avoid-throwing-exception,
+-google-objc-function-naming,
+-google-objc-global-variable-declaration,
+-google-readability-todo,
+modernize-*,
+-modernize-use-trailing-return-type,
+performance-*,
+-performance-avoid-endl,
+readability-*,
+-readability-function-cognitive-complexity,
+-readability-identifier-length,
+-readability-magic-numbers,
+bugprone-*,
+cppcoreguidelines-*,
+portability-*
+'
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(include|src)/.*'
+CheckOptions:
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConstantPrefix
+    value: k
