@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_1024B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-11T09:43:29Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 1024,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 3000000618,
+  "elapsed_ms": 3000.001,
+  "packets": 2406154,
+  "bytes": 2463901696,
+  "throughput_pps": 802051.2,
+  "throughput_mbps": 6570.403
+}

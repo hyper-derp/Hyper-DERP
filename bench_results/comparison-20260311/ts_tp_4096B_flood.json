@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_4096B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-11T09:43:40Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 4096,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 3000445970,
+  "elapsed_ms": 3000.446,
+  "packets": 1129139,
+  "bytes": 4624953344,
+  "throughput_pps": 376323.7,
+  "throughput_mbps": 12331.376
+}

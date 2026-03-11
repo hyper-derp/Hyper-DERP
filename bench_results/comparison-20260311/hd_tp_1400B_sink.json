@@ -1,0 +1,17 @@
+{
+  "test": "hd_tp_1400B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-11T09:33:16Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 0,
+  "elapsed_ms": 0.000,
+  "packets": 0,
+  "bytes": 0,
+  "throughput_pps": 0.0,
+  "throughput_mbps": 0.000
+}

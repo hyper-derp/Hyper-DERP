@@ -1,0 +1,5 @@
+=== Phase 1: Connecting 20 peers ===
+  20/20 connected (0 failed)
+Connected 20/20 in 6 ms
+
+=== Phase 2: Traffic (10 active pairs, 5s, 1400B msgs, 5000 Mbps cap) ===

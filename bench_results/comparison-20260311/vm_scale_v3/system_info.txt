@@ -1,0 +1,11 @@
+date: 2026-03-11T12:45:28+01:00
+relay_vm: 10.101.1.1
+client_vm: 10.101.1.2
+kernel: 6.12.73+deb13-amd64
+cpu: Intel Xeon Processor (SierraForest)
+workers: 2
+peers: 20
+pairs: 10
+duration: 5s
+size: 1400B
+rates: 10 50 100 250 500 1000 2000 5000

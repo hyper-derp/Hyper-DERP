@@ -1,0 +1,17 @@
+{
+  "test": "hd_tp_1024B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-11T09:44:42Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 7103290329,
+  "elapsed_ms": 7103.290,
+  "packets": 2025,
+  "bytes": 2073600,
+  "throughput_pps": 285.1,
+  "throughput_mbps": 2.335
+}

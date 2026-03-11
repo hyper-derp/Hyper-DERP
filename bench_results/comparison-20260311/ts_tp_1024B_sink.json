@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_1024B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-11T09:43:28Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 7088123749,
+  "elapsed_ms": 7088.124,
+  "packets": 954739,
+  "bytes": 977652736,
+  "throughput_pps": 134695.6,
+  "throughput_mbps": 1103.426
+}

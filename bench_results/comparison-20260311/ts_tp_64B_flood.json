@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_64B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-11T09:43:07Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 3000004662,
+  "elapsed_ms": 3000.005,
+  "packets": 553889,
+  "bytes": 35448896,
+  "throughput_pps": 184629.4,
+  "throughput_mbps": 94.530
+}

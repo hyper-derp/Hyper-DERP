@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_1400B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-11T09:29:42Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 1400,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 10000253107,
+  "elapsed_ms": 10000.253,
+  "packets": 8038415,
+  "bytes": 11253781000,
+  "throughput_pps": 803821.2,
+  "throughput_mbps": 9002.797
+}

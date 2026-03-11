@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_4096B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-11T09:43:39Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 7121251877,
+  "elapsed_ms": 7121.252,
+  "packets": 327702,
+  "bytes": 1342267392,
+  "throughput_pps": 46017.5,
+  "throughput_mbps": 1507.900
+}

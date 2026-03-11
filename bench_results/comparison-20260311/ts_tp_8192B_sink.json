@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_8192B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-11T09:30:28Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 19124064977,
+  "elapsed_ms": 19124.065,
+  "packets": 1081596,
+  "bytes": 8860434432,
+  "throughput_pps": 56556.8,
+  "throughput_mbps": 3706.507
+}
