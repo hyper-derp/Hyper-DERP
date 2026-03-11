@@ -63,6 +63,9 @@ constexpr auto ServerErrorName(ServerError e)
 struct ServerConfig {
   uint16_t port = 3340;
   int num_workers = 0;  // 0 = auto (hardware_concurrency)
+  /// Per-socket send/recv buffer size in bytes. 0 = use
+  /// the OS default. Capped by net.core.wmem_max/rmem_max.
+  int sockbuf_size = 0;
   std::array<int, kMaxWorkers> pin_cores{};
 
   ServerConfig() { pin_cores.fill(-1); }

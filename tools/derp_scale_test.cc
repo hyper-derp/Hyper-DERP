@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <pthread.h>
 #include <signal.h>
 #include <sodium.h>
@@ -43,10 +44,11 @@ struct PairResult {
 // Config.
 static const char* g_host = "127.0.0.1";
 static uint16_t g_port = 3340;
-static int g_num_peers = 100;
+static int g_num_peers = 20;
 static int g_active_pairs = 0;
 static int g_msg_size = 1024;
 static int g_duration_sec = 5;
+static double g_rate_mbps = 100;  // Mbps, 0 = unlimited
 static bool g_json = false;
 
 // Traffic thread state.
@@ -76,12 +78,47 @@ static void* SenderThread(void* arg) {
   }
 
   // Stop 1s before duration ends to let pipeline drain.
-  int send_sec = g_duration_sec > 2 ? g_duration_sec - 1 : 1;
+  int send_sec =
+      g_duration_sec > 2 ? g_duration_sec - 1 : 1;
   uint64_t deadline_ns =
       NowNs() +
       static_cast<uint64_t>(send_sec) * 1000000000ULL;
 
+  // Rate limiter: bytes-per-nanosecond budget.
+  // Per-sender rate = total / active_pairs.
+  double bytes_per_ns = 0;
+  if (g_rate_mbps > 0 && g_active_pairs > 0) {
+    double per_sender_mbps =
+        g_rate_mbps / g_active_pairs;
+    bytes_per_ns = per_sender_mbps * 1e6 / 8.0 / 1e9;
+  }
+  uint64_t send_start = NowNs();
+  uint64_t total_bytes_paced = 0;
+
   while (NowNs() < deadline_ns) {
+    // Token-bucket pace: spin-wait until budget allows.
+    if (bytes_per_ns > 0) {
+      uint64_t allowed = static_cast<uint64_t>(
+          (NowNs() - send_start) * bytes_per_ns);
+      while (total_bytes_paced + g_msg_size > allowed) {
+        uint64_t wait_ns = static_cast<uint64_t>(
+            (total_bytes_paced + g_msg_size - allowed) /
+            bytes_per_ns);
+        if (wait_ns > 1000) {
+          struct timespec ts_sleep;
+          ts_sleep.tv_sec = 0;
+          ts_sleep.tv_nsec =
+              static_cast<long>(wait_ns);
+          nanosleep(&ts_sleep, nullptr);
+        }
+        allowed = static_cast<uint64_t>(
+            (NowNs() - send_start) * bytes_per_ns);
+        if (NowNs() >= deadline_ns) {
+          goto done;
+        }
+      }
+    }
+
     if (!ClientSendPacket(&s->client,
                           r->client.public_key,
                           payload, g_msg_size)) {
@@ -90,7 +127,9 @@ static void* SenderThread(void* arg) {
     }
     ta->result.msgs_sent++;
     ta->result.bytes_sent += g_msg_size;
+    total_bytes_paced += g_msg_size;
   }
+done:
 
   delete[] payload;
   return nullptr;
@@ -166,16 +205,21 @@ int main(int argc, char** argv) {
     } else if (strcmp(argv[i], "--duration") == 0 &&
                i + 1 < argc) {
       g_duration_sec = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--rate-mbps") == 0 &&
+               i + 1 < argc) {
+      g_rate_mbps = atof(argv[++i]);
     } else if (strcmp(argv[i], "--json") == 0) {
       g_json = true;
     } else {
       fprintf(stderr,
           "Usage: derp-scale-test [options]\n"
-          "  --peers N           Total peers (100)\n"
+          "  --peers N           Total peers (20)\n"
           "  --active-pairs K    Pairs with traffic "
           "(default: min(10, peers/2))\n"
           "  --msg-size N        Message size (1024)\n"
           "  --duration N        Traffic seconds (5)\n"
+          "  --rate-mbps F       Aggregate send rate "
+          "(100, 0=unlimited)\n"
           "  --host/--port       Relay address\n"
           "  --json              JSON to stdout\n");
       return 1;
@@ -247,10 +291,19 @@ int main(int argc, char** argv) {
   int actual_pairs = 0;
 
   if (connected >= 2) {
-    fprintf(stderr,
-            "=== Phase 2: Traffic (%d active pairs, "
-            "%ds, %dB msgs) ===\n",
-            g_active_pairs, g_duration_sec, g_msg_size);
+    if (g_rate_mbps > 0) {
+      fprintf(stderr,
+              "=== Phase 2: Traffic (%d active pairs, "
+              "%ds, %dB msgs, %.0f Mbps cap) ===\n",
+              g_active_pairs, g_duration_sec,
+              g_msg_size, g_rate_mbps);
+    } else {
+      fprintf(stderr,
+              "=== Phase 2: Traffic (%d active pairs, "
+              "%ds, %dB msgs, unlimited) ===\n",
+              g_active_pairs, g_duration_sec,
+              g_msg_size);
+    }
 
     // Build active pair list from connected peers.
     auto* args = new TrafficArg[g_active_pairs * 2]();
@@ -365,6 +418,7 @@ int main(int argc, char** argv) {
            "  \"active_pairs\": %d,\n"
            "  \"duration_sec\": %d,\n"
            "  \"message_size\": %d,\n"
+           "  \"rate_mbps\": %.1f,\n"
            "  \"messages_sent\": %" PRIu64 ",\n"
            "  \"messages_recv\": %" PRIu64 ",\n"
            "  \"message_loss_pct\": %.4f,\n"
@@ -373,7 +427,7 @@ int main(int argc, char** argv) {
            "}\n",
            ts, g_num_peers, connected, failed,
            connect_ms, actual_pairs,
-           g_duration_sec, g_msg_size,
+           g_duration_sec, g_msg_size, g_rate_mbps,
            total_sent, total_recv, loss_pct,
            total_send_errors, throughput_mbps);
   }

@@ -58,8 +58,9 @@ inline constexpr int kRecvBudget = 512;
 /// Deferred recv ring buffer size.
 inline constexpr int kRecvDeferSize = 4096;
 
-/// Provided buffer count per worker.
-inline constexpr int kPbufCount = 256;
+/// Provided buffer count per worker. Higher values reduce
+/// ENOBUFS re-arms under multishot recv.
+inline constexpr int kPbufCount = 512;
 
 /// Provided buffer size per buffer.
 inline constexpr int kPbufSize = kReadBufSize;
@@ -228,6 +229,9 @@ struct Worker {
   int recv_defer_head;
   int recv_defer_tail;
 
+  // Multishot recv support (kernel 6.0+).
+  int use_multishot_recv;
+
   // Slab allocator for SendItem nodes.
   SendItem* slab_items;
   SendItem* slab_item_free;
@@ -245,6 +249,8 @@ struct Ctx {
   int num_workers;
   int pipe_rds[kMaxWorkers];
   int pin_cores[kMaxWorkers];  // -1 = no pinning
+  /// Per-socket send/recv buffer size. 0 = OS default.
+  int sockbuf_size;
 };
 
 }  // namespace hyper_derp

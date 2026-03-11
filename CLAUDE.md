@@ -1,7 +1,17 @@
 # Hyper-DERP
 
-High-performance DERP (Designated Encrypted Relay for Packets) server.
-Linux-only, io_uring-based, pure data-oriented design.
+Hyper-performance DERP (Designated Encrypted Relay for Packets) server.
+Linux-only, io_uring-based, pure data-oriented design. Aimed at establishing mechanical-sympathy with perfect datapreservation.
+
+## Procedure
+- we will need stabilty as well as speed. We are testing on a workstation we are limited on how far we can go.
+- every improvement needs to be tightly tracked with performace tests
+- document each step with its of md and or datafile - we need to be able to track the progression
+- make tests a scientifically as possible - that mean the testharnesses need to be very good
+- the datacollection will be as important as the code, really get cpu cycles, cache fill anything that will help us make it go faster.
+- do commit often so we can recover if we regress
+- we are always testing against the derp go variant
+- for now use virtual machines for testing you have access to libvirt - clone multipe debian vms if needed, use tap network bc of speed.
 
 ## Build
 
@@ -10,20 +20,6 @@ cmake --preset default    # or debug
 cmake --build build -j
 ctest --output-on-failure -j --test-dir build/tests
 ```
-
-### Dependencies (system)
-
-- liburing-dev
-- clang (preferred compiler, auto-detected)
-- ninja-build
-- cmake >= 3.20
-
-### Dependencies (system, continued)
-
-- libspdlog-dev
-- libgtest-dev, libgmock-dev
-- libcli11-dev
-- libsodium-dev
 
 ## Project Structure
 

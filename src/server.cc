@@ -264,7 +264,8 @@ auto ServerInit(Server* server,
                      "DpInit failed");
   }
 
-  // Apply core pinning configuration.
+  // Apply configuration to data plane context.
+  server->data_plane.sockbuf_size = config->sockbuf_size;
   for (int i = 0; i < num_workers && i < kMaxWorkers;
        i++) {
     server->data_plane.pin_cores[i] =
@@ -303,7 +304,7 @@ auto ServerInit(Server* server,
                      strerror(errno));
   }
 
-  if (listen(lfd, 128) < 0) {
+  if (listen(lfd, 4096) < 0) {
     spdlog::error("listen: {}", strerror(errno));
     close(lfd);
     DpDestroy(&server->data_plane);

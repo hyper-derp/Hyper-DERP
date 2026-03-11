@@ -41,6 +41,7 @@ int main(int argc, char* argv[]) {
 
   uint16_t port = 3340;
   int num_workers = 0;
+  int sockbuf_size = 0;
   const char* pin_spec = nullptr;
 
   for (int i = 1; i < argc; i++) {
@@ -53,6 +54,8 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--pin-workers"sv &&
                i + 1 < argc) {
       pin_spec = argv[++i];
+    } else if (arg == "--sockbuf"sv && i + 1 < argc) {
+      sockbuf_size = std::atoi(argv[++i]);
     }
   }
 
@@ -61,6 +64,7 @@ int main(int argc, char* argv[]) {
   hyper_derp::ServerConfig config;
   config.port = port;
   config.num_workers = num_workers;
+  config.sockbuf_size = sockbuf_size;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,

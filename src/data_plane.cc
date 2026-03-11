@@ -27,12 +27,24 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+// Compat guards for io_uring features (kernel 6.0+).
+#ifndef IORING_SETUP_SINGLE_ISSUER
+#define IORING_SETUP_SINGLE_ISSUER (1U << 12)
+#endif
+#ifndef IORING_SETUP_DEFER_TASKRUN
+#define IORING_SETUP_DEFER_TASKRUN (1U << 13)
+#endif
+#ifndef IORING_RECV_MULTISHOT
+#define IORING_RECV_MULTISHOT (1U << 1)
+#endif
+
 namespace hyper_derp {
 
 // -- Internal forward declarations -------------------------------------------
 
 static void SlabFreeItem(Worker* w, SendItem* item);
 static inline void FrameFree(uint8_t* buf);
+static int WorkerInitRing(Worker* w);
 
 // -- user_data encoding ------------------------------------------------------
 
@@ -511,6 +523,9 @@ static void SubmitRecvNow(Worker* w, int fd) {
   }
   if (w->use_provided_bufs) {
     io_uring_prep_recv(sqe, fd, nullptr, 0, 0);
+    if (w->use_multishot_recv) {
+      sqe->ioprio |= IORING_RECV_MULTISHOT;
+    }
     sqe->buf_group = w->id;
     sqe->flags |= IOSQE_BUFFER_SELECT;
   } else {
@@ -797,7 +812,8 @@ static void NotifyPeerClose(Worker* w, Peer* peer) {
 // -- Recv CQE handling -------------------------------------------------------
 
 static void HandleRecvProvided(Worker* w,
-                               struct io_uring_cqe* cqe) {
+                               struct io_uring_cqe* cqe,
+                               int multishot_active) {
   int fd = UdFd(cqe->user_data);
   int bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
   uint8_t* buf =
@@ -898,7 +914,8 @@ return_buf:
                         bid, buf_mask, 0);
   io_uring_buf_ring_advance(w->buf_ring, 1);
 
-  if (fd >= 0 && fd < kMaxFd && w->fd_map[fd]) {
+  if (!multishot_active &&
+      fd >= 0 && fd < kMaxFd && w->fd_map[fd]) {
     SubmitRecv(w, fd);
   }
 }
@@ -961,18 +978,27 @@ static void HandleRecvSingle(Worker* w,
 
 static void HandleRecvCqe(Worker* w,
                           struct io_uring_cqe* cqe) {
-  w->recv_inflight--;
-  if (w->recv_inflight < 0) {
-    w->recv_inflight = 0;
+  // Multishot recv: IORING_CQE_F_MORE means the SQE is
+  // still active — don't decrement inflight or resubmit.
+  int multishot_active = cqe->flags & IORING_CQE_F_MORE;
+  if (!multishot_active) {
+    w->recv_inflight--;
+    if (w->recv_inflight < 0) {
+      w->recv_inflight = 0;
+    }
   }
 
   if (cqe->flags & IORING_CQE_F_BUFFER) {
-    HandleRecvProvided(w, cqe);
+    HandleRecvProvided(w, cqe, multishot_active);
     return;
   }
 
   if (w->use_provided_bufs) {
-    if (cqe->res == -ENOBUFS) {
+    if (cqe->res == -ENOBUFS || cqe->res == -EINVAL) {
+      if (cqe->res == -EINVAL) {
+        // Kernel doesn't support multishot recv; fall back.
+        w->use_multishot_recv = 0;
+      }
       int fd = UdFd(cqe->user_data);
       if (fd >= 0 && fd < kMaxFd && w->fd_map[fd]) {
         SubmitRecv(w, fd);
@@ -1194,6 +1220,15 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
 
   SetNonblock(cmd->fd);
 
+  // Enlarge socket buffers to absorb bursts.
+  int bufsize = w->ctx->sockbuf_size;
+  if (bufsize > 0) {
+    setsockopt(cmd->fd, SOL_SOCKET, SO_SNDBUF,
+               &bufsize, sizeof(bufsize));
+    setsockopt(cmd->fd, SOL_SOCKET, SO_RCVBUF,
+               &bufsize, sizeof(bufsize));
+  }
+
   // Detect AF_UNIX (ZC sends not supported).
   {
     struct sockaddr_storage sa;
@@ -1297,6 +1332,16 @@ static void ProcessXfer(Worker* w) {
 
 static void* WorkerRun(void* arg) {
   auto* w = static_cast<Worker*>(arg);
+
+  // Initialize io_uring ring on the worker thread so that
+  // SINGLE_ISSUER + DEFER_TASKRUN record this thread as
+  // the submitter.
+  if (WorkerInitRing(w) < 0) {
+    spdlog::error("worker {} ring init failed", w->id);
+    __atomic_store_n(&w->ring_exited, 1,
+                     __ATOMIC_RELEASE);
+    return nullptr;
+  }
 
   // Pin to core if configured.
   int pin = w->ctx->pin_cores[w->id];
@@ -1449,20 +1494,44 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
     return -1;
   }
 
+  RingInit(&w->cmd_ring);
+  XferRingInit(&w->xfer_ring);
+
+  if (SlabInit(w) < 0) {
+    close(pipefd[0]);
+    close(w->pipe_wr);
+    close(w->event_fd);
+    close(w->xfer_efd);
+    return -1;
+  }
+
+  return 0;
+}
+
+/// Initialize the io_uring ring, file table, and provided
+/// buffer ring. Must be called from the worker thread so
+/// that SINGLE_ISSUER + DEFER_TASKRUN record the correct
+/// submitter task.
+static int WorkerInitRing(Worker* w) {
   struct io_uring_params params {};
-  params.flags = IORING_SETUP_COOP_TASKRUN;
+  params.flags = IORING_SETUP_SINGLE_ISSUER |
+                 IORING_SETUP_DEFER_TASKRUN;
   int ret = io_uring_queue_init_params(
       kUringQueueDepth, &w->ring, &params);
   if (ret < 0) {
+    // Fall back to COOP_TASKRUN (kernel < 6.1).
     memset(&params, 0, sizeof(params));
+    params.flags = IORING_SETUP_COOP_TASKRUN;
     ret = io_uring_queue_init_params(
         kUringQueueDepth, &w->ring, &params);
     if (ret < 0) {
-      close(pipefd[0]);
-      close(w->pipe_wr);
-      close(w->event_fd);
-      close(w->xfer_efd);
-      return -1;
+      // Fall back to no flags.
+      memset(&params, 0, sizeof(params));
+      ret = io_uring_queue_init_params(
+          kUringQueueDepth, &w->ring, &params);
+      if (ret < 0) {
+        return -1;
+      }
     }
   }
 
@@ -1492,7 +1561,7 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
   if (w->provided_bufs) {
     int br_ret;
     w->buf_ring = io_uring_setup_buf_ring(
-        &w->ring, kPbufCount, id, 0, &br_ret);
+        &w->ring, kPbufCount, w->id, 0, &br_ret);
     if (w->buf_ring) {
       int mask = io_uring_buf_ring_mask(kPbufCount);
       for (int i = 0; i < kPbufCount; i++) {
@@ -1511,17 +1580,8 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
     }
   }
 
-  RingInit(&w->cmd_ring);
-  XferRingInit(&w->xfer_ring);
-
-  if (SlabInit(w) < 0) {
-    close(pipefd[0]);
-    close(w->pipe_wr);
-    close(w->event_fd);
-    close(w->xfer_efd);
-    io_uring_queue_exit(&w->ring);
-    return -1;
-  }
+  // Enable multishot recv when provided buffers are active.
+  w->use_multishot_recv = w->use_provided_bufs;
 
   return 0;
 }
