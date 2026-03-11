@@ -67,6 +67,9 @@ struct ServerConfig {
   /// Per-socket send/recv buffer size in bytes. 0 = use
   /// the OS default. Capped by net.core.wmem_max/rmem_max.
   int sockbuf_size = 0;
+  /// Maximum accepted connections per second.
+  /// 0 = unlimited (no rate limiting).
+  int max_accept_per_sec = 0;
   /// Metrics HTTP server configuration.
   MetricsConfig metrics;
   std::array<int, kMaxWorkers> pin_cores{};

@@ -34,6 +34,8 @@ static void PrintUsage(const char* prog) {
       "(0=disabled)\n"
       "  --tls-cert <path>     TLS certificate for metrics\n"
       "  --tls-key <path>      TLS key for metrics\n"
+      "  --max-accept-rate <n> Max accepts/sec "
+      "(0=unlimited)\n"
       "  --debug-endpoints     Enable /debug/* metrics "
       "endpoints\n"
       "  --log-level <level>   Log level "
@@ -88,6 +90,7 @@ int main(int argc, char* argv[]) {
   int port = 3340;
   int num_workers = 0;
   int sockbuf_size = 0;
+  int max_accept_rate = 0;
   int metrics_port = 0;
   const char* tls_cert = nullptr;
   const char* tls_key = nullptr;
@@ -125,6 +128,15 @@ int main(int argc, char* argv[]) {
                     256 * 1024 * 1024)) {
         std::println(stderr,
                      "error: invalid --sockbuf");
+        return EXIT_FAILURE;
+      }
+    } else if (arg == "--max-accept-rate"sv &&
+               i + 1 < argc) {
+      if (!ParseInt(argv[++i], &max_accept_rate, 0,
+                    1000000)) {
+        std::println(stderr,
+                     "error: invalid --max-accept-rate "
+                     "(0-1000000)");
         return EXIT_FAILURE;
       }
     } else if (arg == "--metrics-port"sv &&
@@ -184,6 +196,7 @@ int main(int argc, char* argv[]) {
   config.port = static_cast<uint16_t>(port);
   config.num_workers = num_workers;
   config.sockbuf_size = sockbuf_size;
+  config.max_accept_per_sec = max_accept_rate;
   config.metrics.port = static_cast<uint16_t>(
       metrics_port);
   if (tls_cert) config.metrics.tls_cert = tls_cert;

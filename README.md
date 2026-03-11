@@ -63,12 +63,24 @@ cmake --build build-debug -j
 ## Usage
 
 ```sh
+# Show all options
+./build/hyper-derp --help
+
 # Start relay (default port 3340, auto-detect worker count)
 ./build/hyper-derp --port 3340 --workers 4
 
-# Pin workers to specific cores (for high-bandwidth single-peer)
-./build/hyper-derp --port 3340 --workers 2 --pin-workers 0,1
+# Pin workers to specific cores
+./build/hyper-derp --workers 2 --pin-workers 0,1
+
+# With metrics, rate limiting, and log level
+./build/hyper-derp --workers 4 \
+  --metrics-port 9090 \
+  --max-accept-rate 1000 \
+  --log-level info
 ```
+
+See [OPERATIONS.md](OPERATIONS.md) for production tuning
+(sysctl, CPU pinning, memory footprint, Prometheus alerting).
 
 ## Packaging
 

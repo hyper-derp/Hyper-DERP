@@ -28,6 +28,9 @@ namespace hyper_derp {
 static std::chrono::steady_clock::time_point
     g_last_hs_warn;
 static uint64_t g_hs_warn_suppressed = 0;
+static std::chrono::steady_clock::time_point
+    g_last_rl_warn;
+static uint64_t g_rl_warn_suppressed = 0;
 
 static void WarnHandshake(int fd,
                           const std::string& msg,
@@ -47,6 +50,25 @@ static void WarnHandshake(int fd,
   } else {
     spdlog::warn("handshake failed for fd {}: {} ({})",
                  fd, msg, code);
+  }
+}
+
+static void WarnRateLimit(uint64_t rejected) {
+  auto now = std::chrono::steady_clock::now();
+  if (now - g_last_rl_warn < std::chrono::seconds(1)) {
+    g_rl_warn_suppressed++;
+    return;
+  }
+  g_last_rl_warn = now;
+  if (g_rl_warn_suppressed > 0) {
+    spdlog::warn(
+        "rate limit: rejected {} connections "
+        "[{} similar warnings suppressed]",
+        rejected, g_rl_warn_suppressed);
+    g_rl_warn_suppressed = 0;
+  } else {
+    spdlog::warn("rate limit: rejected {} connections",
+                 rejected);
   }
 }
 
@@ -234,6 +256,11 @@ static void AcceptLoop(Server* server) {
   spdlog::info("accept loop started on port {}",
                server->config.port);
 
+  const int limit = server->config.max_accept_per_sec;
+  auto window_start = std::chrono::steady_clock::now();
+  int window_count = 0;
+  uint64_t total_rejected = 0;
+
   while (server->running.load(
              std::memory_order_acquire)) {
     sockaddr_in addr{};
@@ -251,6 +278,28 @@ static void AcceptLoop(Server* server) {
                       strerror(errno));
       }
       break;
+    }
+
+    // Token bucket rate limiting.
+    if (limit > 0) {
+      auto now = std::chrono::steady_clock::now();
+      auto elapsed = std::chrono::duration_cast<
+          std::chrono::seconds>(now - window_start);
+      if (elapsed.count() >= 1) {
+        window_start = now;
+        window_count = 0;
+      }
+      if (window_count >= limit) {
+        close(fd);
+        total_rejected++;
+        WarnRateLimit(total_rejected);
+        // Sleep 1ms to avoid busy-spinning on a flood.
+        struct timespec ts{.tv_sec = 0,
+                           .tv_nsec = 1000000};
+        nanosleep(&ts, nullptr);
+        continue;
+      }
+      window_count++;
     }
 
     HandleConnection(server, fd);
