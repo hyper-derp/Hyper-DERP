@@ -5,9 +5,9 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <expected>
+#include <format>
 #include <netinet/tcp.h>
 #include <sodium.h>
 #include <string_view>
@@ -115,14 +115,15 @@ auto ClientConnect(DerpClient* c, const char* host,
 auto ClientUpgrade(DerpClient* c)
     -> std::expected<void, Error<ClientError>> {
   char req[256];
-  int req_len = snprintf(req, sizeof(req),
+  auto r = std::format_to_n(req, sizeof(req) - 1,
       "GET /derp HTTP/1.1\r\n"
-      "Host: %s:%u\r\n"
+      "Host: {}:{}\r\n"
       "Upgrade: DERP\r\n"
       "Connection: Upgrade\r\n"
       "\r\n",
-      c->host.c_str(),
-      static_cast<unsigned>(c->port));
+      c->host, c->port);
+  *r.out = '\0';
+  int req_len = static_cast<int>(r.size);
   if (WriteAll(c->fd,
                reinterpret_cast<const uint8_t*>(req),
                req_len) < 0) {

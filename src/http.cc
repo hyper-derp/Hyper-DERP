@@ -3,9 +3,9 @@
 
 #include "hyper_derp/http.h"
 
-#include <cstdio>
 #include <cstring>
 #include <expected>
+#include <format>
 #include <string_view>
 
 #include "hyper_derp/error.h"
@@ -128,29 +128,33 @@ auto ParseHttpRequest(const uint8_t* buf, int len,
 
 int WriteUpgradeResponse(uint8_t* buf, int buf_size,
                          const char* server_pub_key_hex) {
-  int n = snprintf(
-      reinterpret_cast<char*>(buf), buf_size,
+  auto r = std::format_to_n(
+      reinterpret_cast<char*>(buf), buf_size - 1,
       "HTTP/1.1 101 Switching Protocols\r\n"
       "Upgrade: DERP\r\n"
       "Connection: Upgrade\r\n"
-      "Derp-Version: %d\r\n"
-      "Derp-Public-Key: %s\r\n\r\n",
+      "Derp-Version: {}\r\n"
+      "Derp-Public-Key: {}\r\n\r\n",
       kProtocolVersion, server_pub_key_hex);
+  int n = static_cast<int>(r.size);
   if (n < 0 || n >= buf_size) {
     return -1;
   }
+  *r.out = '\0';
   return n;
 }
 
 int WriteProbeResponse(uint8_t* buf, int buf_size) {
-  int n = snprintf(
-      reinterpret_cast<char*>(buf), buf_size,
+  auto r = std::format_to_n(
+      reinterpret_cast<char*>(buf), buf_size - 1,
       "HTTP/1.1 200 OK\r\n"
       "Access-Control-Allow-Origin: *\r\n"
       "Content-Length: 0\r\n\r\n");
+  int n = static_cast<int>(r.size);
   if (n < 0 || n >= buf_size) {
     return -1;
   }
+  *r.out = '\0';
   return n;
 }
 
@@ -176,27 +180,30 @@ int WriteNoContentResponse(uint8_t* buf, int buf_size,
     }
   }
 
-  int n;
+  std::format_to_n_result<char*> r;
+  auto* out = reinterpret_cast<char*>(buf);
   if (challenge && challenge[0]) {
-    n = snprintf(
-        reinterpret_cast<char*>(buf), buf_size,
+    r = std::format_to_n(
+        out, buf_size - 1,
         "HTTP/1.1 204 No Content\r\n"
-        "X-Tailscale-Response: response %s\r\n"
+        "X-Tailscale-Response: response {}\r\n"
         "Cache-Control: no-cache, no-store, "
         "must-revalidate, no-transform, max-age=0\r\n"
         "\r\n",
         challenge);
   } else {
-    n = snprintf(
-        reinterpret_cast<char*>(buf), buf_size,
+    r = std::format_to_n(
+        out, buf_size - 1,
         "HTTP/1.1 204 No Content\r\n"
         "Cache-Control: no-cache, no-store, "
         "must-revalidate, no-transform, max-age=0\r\n"
         "\r\n");
   }
+  int n = static_cast<int>(r.size);
   if (n < 0 || n >= buf_size) {
     return -1;
   }
+  *r.out = '\0';
   return n;
 }
 
@@ -221,17 +228,19 @@ int WriteErrorResponse(uint8_t* buf, int buf_size,
       reason = "Internal Server Error";
       break;
   }
-  int msg_len = static_cast<int>(strlen(message));
-  int n = snprintf(
-      reinterpret_cast<char*>(buf), buf_size,
-      "HTTP/1.1 %d %s\r\n"
+  auto msg = std::string_view(message);
+  auto r = std::format_to_n(
+      reinterpret_cast<char*>(buf), buf_size - 1,
+      "HTTP/1.1 {} {}\r\n"
       "Content-Type: text/plain\r\n"
-      "Content-Length: %d\r\n\r\n"
-      "%s",
-      status_code, reason, msg_len, message);
+      "Content-Length: {}\r\n\r\n"
+      "{}",
+      status_code, reason, msg.size(), msg);
+  int n = static_cast<int>(r.size);
   if (n < 0 || n >= buf_size) {
     return -1;
   }
+  *r.out = '\0';
   return n;
 }
 

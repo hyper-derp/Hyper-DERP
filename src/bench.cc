@@ -4,8 +4,8 @@
 #include "hyper_derp/bench.h"
 
 #include <algorithm>
-#include <cinttypes>
 #include <cstring>
+#include <print>
 
 namespace hyper_derp {
 
@@ -84,75 +84,73 @@ void WriteBenchJson(FILE* out, const BenchResult* r) {
           ? (r->bytes_total * 8.0) / (elapsed_s * 1e6)
           : 0;
 
-  fprintf(out, "{\n");
-  fprintf(out, "  \"test\": \"%s\",\n", r->test_name);
-  fprintf(out, "  \"mode\": \"%s\",\n", r->mode);
-  fprintf(out, "  \"timestamp\": \"%s\",\n", ts);
+  std::print(out, "{{\n");
+  std::print(out, "  \"test\": \"{}\",\n", r->test_name);
+  std::print(out, "  \"mode\": \"{}\",\n", r->mode);
+  std::print(out, "  \"timestamp\": \"{}\",\n", ts);
 
-  fprintf(out, "  \"config\": {\n");
-  fprintf(out, "    \"packet_count\": %d,\n",
-          r->packet_count);
-  fprintf(out, "    \"packet_size\": %d,\n",
-          r->packet_size);
-  fprintf(out, "    \"num_workers\": %d,\n",
-          r->num_workers);
-  fprintf(out, "    \"core\": %d\n", r->core);
-  fprintf(out, "  },\n");
+  std::print(out, "  \"config\": {{\n");
+  std::print(out, "    \"packet_count\": {},\n",
+             r->packet_count);
+  std::print(out, "    \"packet_size\": {},\n",
+             r->packet_size);
+  std::print(out, "    \"num_workers\": {},\n",
+             r->num_workers);
+  std::print(out, "    \"core\": {}\n", r->core);
+  std::print(out, "  }},\n");
 
-  fprintf(out, "  \"elapsed_ns\": %" PRIu64 ",\n",
-          r->elapsed_ns);
-  fprintf(out, "  \"elapsed_ms\": %.3f,\n",
-          r->elapsed_ns / 1e6);
-  fprintf(out, "  \"packets\": %d,\n",
-          r->packets_completed);
-  fprintf(out, "  \"bytes\": %" PRIu64 ",\n",
-          r->bytes_total);
-  fprintf(out, "  \"throughput_pps\": %.1f,\n",
-          throughput_pps);
-  fprintf(out, "  \"throughput_mbps\": %.3f",
-          throughput_mbps);
+  std::print(out, "  \"elapsed_ns\": {},\n",
+             r->elapsed_ns);
+  std::print(out, "  \"elapsed_ms\": {:.3f},\n",
+             r->elapsed_ns / 1e6);
+  std::print(out, "  \"packets\": {},\n",
+             r->packets_completed);
+  std::print(out, "  \"bytes\": {},\n", r->bytes_total);
+  std::print(out, "  \"throughput_pps\": {:.1f},\n",
+             throughput_pps);
+  std::print(out, "  \"throughput_mbps\": {:.3f}",
+             throughput_mbps);
 
   if (r->latency && r->latency->count > 0) {
-    fprintf(out, ",\n");
-    fprintf(out, "  \"latency_ns\": {\n");
-    fprintf(out, "    \"samples\": %d,\n",
-            r->latency->count);
-    fprintf(out, "    \"min\": %" PRIu64 ",\n",
-            r->latency->Min());
-    fprintf(out, "    \"max\": %" PRIu64 ",\n",
-            r->latency->Max());
-    fprintf(out, "    \"mean\": %" PRIu64 ",\n",
-            r->latency->Mean());
-    fprintf(out, "    \"p50\": %" PRIu64 ",\n",
-            r->latency->Percentile(0.50));
-    fprintf(out, "    \"p90\": %" PRIu64 ",\n",
-            r->latency->Percentile(0.90));
-    fprintf(out, "    \"p99\": %" PRIu64 ",\n",
-            r->latency->Percentile(0.99));
-    fprintf(out, "    \"p999\": %" PRIu64 "",
-            r->latency->Percentile(0.999));
+    std::print(out, ",\n");
+    std::print(out, "  \"latency_ns\": {{\n");
+    std::print(out, "    \"samples\": {},\n",
+               r->latency->count);
+    std::print(out, "    \"min\": {},\n",
+               r->latency->Min());
+    std::print(out, "    \"max\": {},\n",
+               r->latency->Max());
+    std::print(out, "    \"mean\": {},\n",
+               r->latency->Mean());
+    std::print(out, "    \"p50\": {},\n",
+               r->latency->Percentile(0.50));
+    std::print(out, "    \"p90\": {},\n",
+               r->latency->Percentile(0.90));
+    std::print(out, "    \"p99\": {},\n",
+               r->latency->Percentile(0.99));
+    std::print(out, "    \"p999\": {}",
+               r->latency->Percentile(0.999));
 
     if (r->include_raw_samples) {
-      fprintf(out, ",\n    \"raw\": [");
+      std::print(out, ",\n    \"raw\": [");
       for (int i = 0; i < r->latency->count; i++) {
         if (i > 0) {
-          fprintf(out, ",");
+          std::print(out, ",");
         }
         if (i % 20 == 0) {
-          fprintf(out, "\n      ");
+          std::print(out, "\n      ");
         }
-        fprintf(out, "%" PRIu64,
-                r->latency->samples[i]);
+        std::print(out, "{}", r->latency->samples[i]);
       }
-      fprintf(out, "\n    ]");
+      std::print(out, "\n    ]");
     }
 
-    fprintf(out, "\n  }\n");
+    std::print(out, "\n  }}\n");
   } else {
-    fprintf(out, "\n");
+    std::print(out, "\n");
   }
 
-  fprintf(out, "}\n");
+  std::print(out, "}}\n");
 }
 
 }  // namespace hyper_derp
