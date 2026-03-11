@@ -344,6 +344,10 @@ auto ServerRun(Server* server)
   spdlog::info("data plane running with {} workers",
                server->data_plane.num_workers);
 
+  // Start metrics server (if configured).
+  server->metrics_server = MetricsStart(
+      server->config.metrics, &server->data_plane);
+
   // Run data plane (blocks until DpStop is called).
   int rc = DpRun(&server->data_plane);
 
@@ -402,6 +406,10 @@ void ServerStop(Server* server) {
       "other={}",
       ep, ecr, eag, eoth);
 
+  // Stop metrics server before data plane teardown.
+  MetricsStop(server->metrics_server);
+  server->metrics_server = nullptr;
+
   server->running.store(0, std::memory_order_release);
   CpStop(&server->control_plane);
   DpStop(&server->data_plane);
@@ -411,6 +419,8 @@ void ServerStop(Server* server) {
 }
 
 void ServerDestroy(Server* server) {
+  MetricsStop(server->metrics_server);
+  server->metrics_server = nullptr;
   CpDestroy(&server->control_plane);
   DpDestroy(&server->data_plane);
   if (server->listen_fd >= 0) {

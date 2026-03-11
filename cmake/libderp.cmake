@@ -4,6 +4,8 @@ find_library(SODIUM_LIB sodium REQUIRED)
 find_path(SODIUM_INCLUDE_DIR sodium.h REQUIRED)
 message(STATUS "libsodium: ${SODIUM_LIB}")
 
+find_package(OpenSSL REQUIRED)
+
 add_library(libderp_obj OBJECT
   src/protocol.cc
   src/data_plane.cc
@@ -14,6 +16,7 @@ add_library(libderp_obj OBJECT
   src/bench.cc
   src/control_plane.cc
   src/tun.cc
+  src/metrics.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
@@ -24,10 +27,14 @@ target_link_libraries(libderp_obj PUBLIC
   ${URING_LIB}
   ${SODIUM_LIB}
   spdlog::spdlog
+  Crow::Crow
+  OpenSSL::SSL
+  OpenSSL::Crypto
   pthread
 )
 target_compile_definitions(libderp_obj PUBLIC
   HAVE_IO_URING
+  CROW_ENABLE_SSL
 )
 
 add_library(libderp STATIC $<TARGET_OBJECTS:libderp_obj>)
@@ -40,8 +47,12 @@ target_link_libraries(libderp PUBLIC
   ${URING_LIB}
   ${SODIUM_LIB}
   spdlog::spdlog
+  Crow::Crow
+  OpenSSL::SSL
+  OpenSSL::Crypto
   pthread
 )
 target_compile_definitions(libderp PUBLIC
   HAVE_IO_URING
+  CROW_ENABLE_SSL
 )

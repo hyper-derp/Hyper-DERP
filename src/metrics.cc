@@ -1,0 +1,286 @@
+/// @file metrics.cc
+/// @brief HTTP metrics server using Crow with optional TLS.
+///
+/// Exposes Prometheus text format at /metrics, health check
+/// at /health, and debug introspection at /debug/workers and
+/// /debug/peers.
+
+#include <crow.h>
+
+#include <spdlog/spdlog.h>
+
+#include <chrono>
+#include <cstdint>
+#include <sstream>
+#include <string>
+#include <thread>
+
+#include "hyper_derp/handshake.h"
+#include "hyper_derp/metrics.h"
+#include "hyper_derp/protocol.h"
+
+namespace hyper_derp {
+
+struct MetricsServer {
+  crow::SimpleApp app;
+  std::thread thread;
+  Ctx* ctx;
+  std::chrono::steady_clock::time_point start_time;
+};
+
+// -- Prometheus text format helpers ------------------------------------------
+
+static void WriteCounter(std::ostringstream& out,
+                         const char* name,
+                         const char* help,
+                         uint64_t value) {
+  out << "# HELP " << name << ' ' << help << '\n'
+      << "# TYPE " << name << " counter\n"
+      << name << ' ' << value << '\n';
+}
+
+static void WriteCounterLabeled(
+    std::ostringstream& out,
+    const char* name,
+    const char* help,
+    const char* label_name,
+    std::initializer_list<
+        std::pair<const char*, uint64_t>> entries) {
+  out << "# HELP " << name << ' ' << help << '\n'
+      << "# TYPE " << name << " counter\n";
+  for (auto& [label_val, value] : entries) {
+    out << name << '{' << label_name << "=\""
+        << label_val << "\"} " << value << '\n';
+  }
+}
+
+static void WriteGauge(std::ostringstream& out,
+                       const char* name,
+                       const char* help,
+                       int64_t value) {
+  out << "# HELP " << name << ' ' << help << '\n'
+      << "# TYPE " << name << " gauge\n"
+      << name << ' ' << value << '\n';
+}
+
+// -- Stats collection --------------------------------------------------------
+
+struct AggregatedStats {
+  uint64_t recv_bytes = 0;
+  uint64_t send_bytes = 0;
+  uint64_t send_drops = 0;
+  uint64_t xfer_drops = 0;
+  uint64_t slab_exhausts = 0;
+  uint64_t send_epipe = 0;
+  uint64_t send_econnreset = 0;
+  uint64_t send_eagain = 0;
+  uint64_t send_other_err = 0;
+  int64_t peers_active = 0;
+  int num_workers = 0;
+};
+
+static AggregatedStats CollectStats(Ctx* ctx) {
+  AggregatedStats s;
+  s.num_workers = ctx->num_workers;
+  for (int i = 0; i < ctx->num_workers; i++) {
+    Worker* w = ctx->workers[i];
+    if (!w) continue;
+    s.recv_bytes += __atomic_load_n(
+        &w->stats.recv_bytes, __ATOMIC_RELAXED);
+    s.send_bytes += __atomic_load_n(
+        &w->stats.send_bytes, __ATOMIC_RELAXED);
+    s.send_drops += __atomic_load_n(
+        &w->stats.send_drops, __ATOMIC_RELAXED);
+    s.xfer_drops += __atomic_load_n(
+        &w->stats.xfer_drops, __ATOMIC_RELAXED);
+    s.slab_exhausts += __atomic_load_n(
+        &w->stats.slab_exhausts, __ATOMIC_RELAXED);
+    s.send_epipe += __atomic_load_n(
+        &w->stats.send_epipe, __ATOMIC_RELAXED);
+    s.send_econnreset += __atomic_load_n(
+        &w->stats.send_econnreset, __ATOMIC_RELAXED);
+    s.send_eagain += __atomic_load_n(
+        &w->stats.send_eagain, __ATOMIC_RELAXED);
+    s.send_other_err += __atomic_load_n(
+        &w->stats.send_other_err, __ATOMIC_RELAXED);
+    // Count active peers from hash table.
+    for (int j = 0; j < kHtCapacity; j++) {
+      if (w->ht[j].occupied == 1) {
+        s.peers_active++;
+      }
+    }
+  }
+  return s;
+}
+
+// -- Route handlers ----------------------------------------------------------
+
+static void RegisterRoutes(MetricsServer* ms) {
+  // Prometheus scrape endpoint.
+  CROW_ROUTE(ms->app, "/metrics")
+  ([ms]() {
+    auto s = CollectStats(ms->ctx);
+    std::ostringstream out;
+
+    WriteCounter(out, "hyper_derp_recv_bytes_total",
+                 "Total bytes received", s.recv_bytes);
+    WriteCounter(out, "hyper_derp_send_bytes_total",
+                 "Total bytes sent", s.send_bytes);
+    WriteCounter(out, "hyper_derp_xfer_drops_total",
+                 "Cross-shard transfer ring drops",
+                 s.xfer_drops);
+    WriteCounter(out, "hyper_derp_slab_exhausts_total",
+                 "SendItem slab exhaustions",
+                 s.slab_exhausts);
+    WriteCounterLabeled(
+        out, "hyper_derp_send_errors_total",
+        "Send errors by type", "reason",
+        {{"epipe", s.send_epipe},
+         {"econnreset", s.send_econnreset},
+         {"eagain", s.send_eagain},
+         {"other", s.send_other_err}});
+    WriteCounter(out, "hyper_derp_send_drops_total",
+                 "Total send drops", s.send_drops);
+    WriteGauge(out, "hyper_derp_peers_active",
+               "Currently connected peers",
+               s.peers_active);
+    WriteGauge(out, "hyper_derp_workers",
+               "Number of data plane workers",
+               s.num_workers);
+
+    auto resp = crow::response(200, out.str());
+    resp.set_header("Content-Type",
+                    "text/plain; version=0.0.4; "
+                    "charset=utf-8");
+    return resp;
+  });
+
+  // Health check.
+  CROW_ROUTE(ms->app, "/health")
+  ([ms]() {
+    auto now = std::chrono::steady_clock::now();
+    auto uptime = std::chrono::duration_cast<
+        std::chrono::seconds>(now - ms->start_time);
+    auto s = CollectStats(ms->ctx);
+
+    crow::json::wvalue j;
+    j["status"] = "ok";
+    j["uptime_seconds"] = uptime.count();
+    j["workers"] = s.num_workers;
+    j["peers_active"] = s.peers_active;
+    j["recv_bytes"] = s.recv_bytes;
+    j["send_bytes"] = s.send_bytes;
+    return crow::response(200, j);
+  });
+
+  // Per-worker stats breakdown.
+  CROW_ROUTE(ms->app, "/debug/workers")
+  ([ms]() {
+    crow::json::wvalue::list workers;
+    for (int i = 0; i < ms->ctx->num_workers; i++) {
+      Worker* w = ms->ctx->workers[i];
+      if (!w) continue;
+      crow::json::wvalue wj;
+      wj["id"] = w->id;
+      wj["recv_bytes"] = __atomic_load_n(
+          &w->stats.recv_bytes, __ATOMIC_RELAXED);
+      wj["send_bytes"] = __atomic_load_n(
+          &w->stats.send_bytes, __ATOMIC_RELAXED);
+      wj["send_drops"] = __atomic_load_n(
+          &w->stats.send_drops, __ATOMIC_RELAXED);
+      wj["xfer_drops"] = __atomic_load_n(
+          &w->stats.xfer_drops, __ATOMIC_RELAXED);
+      wj["slab_exhausts"] = __atomic_load_n(
+          &w->stats.slab_exhausts, __ATOMIC_RELAXED);
+      wj["send_epipe"] = __atomic_load_n(
+          &w->stats.send_epipe, __ATOMIC_RELAXED);
+      wj["send_econnreset"] = __atomic_load_n(
+          &w->stats.send_econnreset, __ATOMIC_RELAXED);
+      wj["send_eagain"] = __atomic_load_n(
+          &w->stats.send_eagain, __ATOMIC_RELAXED);
+      // Count peers.
+      int peers = 0;
+      for (int j = 0; j < kHtCapacity; j++) {
+        if (w->ht[j].occupied == 1) peers++;
+      }
+      wj["peers"] = peers;
+      workers.push_back(std::move(wj));
+    }
+    crow::json::wvalue resp;
+    resp["workers"] = std::move(workers);
+    return crow::response(200, resp);
+  });
+
+  // Active peer list.
+  CROW_ROUTE(ms->app, "/debug/peers")
+  ([ms]() {
+    crow::json::wvalue::list peers;
+    for (int i = 0; i < ms->ctx->num_workers; i++) {
+      Worker* w = ms->ctx->workers[i];
+      if (!w) continue;
+      for (int j = 0; j < kHtCapacity; j++) {
+        if (w->ht[j].occupied != 1) continue;
+        Peer* p = &w->ht[j];
+        crow::json::wvalue pj;
+        // Hex-encode the key.
+        char hex[kKeySize * 2 + 1];
+        KeyToHex(p->key, hex);
+        pj["key"] = std::string(hex);
+        pj["fd"] = p->fd;
+        pj["worker"] = w->id;
+        pj["send_inflight"] = p->send_inflight;
+        pj["no_zc"] = p->no_zc;
+        peers.push_back(std::move(pj));
+      }
+    }
+    crow::json::wvalue resp;
+    resp["peers"] = std::move(peers);
+    resp["count"] = peers.size();
+    return crow::response(200, resp);
+  });
+}
+
+// -- Public API --------------------------------------------------------------
+
+MetricsServer* MetricsStart(const MetricsConfig& config,
+                            Ctx* ctx) {
+  if (config.port == 0) {
+    return nullptr;
+  }
+
+  auto* ms = new MetricsServer;
+  ms->ctx = ctx;
+  ms->start_time = std::chrono::steady_clock::now();
+
+  RegisterRoutes(ms);
+
+  // Suppress Crow's internal logging noise.
+  ms->app.loglevel(crow::LogLevel::Warning);
+
+  // TLS setup.
+  if (!config.tls_cert.empty() &&
+      !config.tls_key.empty()) {
+    ms->app.ssl_file(config.tls_cert, config.tls_key);
+    spdlog::info("metrics server TLS enabled");
+  }
+
+  ms->thread = std::thread([ms, port = config.port]() {
+    spdlog::info("metrics server listening on port {}",
+                 port);
+    ms->app.port(port).concurrency(1).run();
+  });
+
+  return ms;
+}
+
+void MetricsStop(MetricsServer* server) {
+  if (!server) return;
+  server->app.stop();
+  if (server->thread.joinable()) {
+    server->thread.join();
+  }
+  spdlog::info("metrics server stopped");
+  delete server;
+}
+
+}  // namespace hyper_derp

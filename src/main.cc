@@ -42,6 +42,9 @@ int main(int argc, char* argv[]) {
   uint16_t port = 3340;
   int num_workers = 0;
   int sockbuf_size = 0;
+  uint16_t metrics_port = 0;
+  const char* tls_cert = nullptr;
+  const char* tls_key = nullptr;
   const char* pin_spec = nullptr;
 
   for (int i = 1; i < argc; i++) {
@@ -56,6 +59,14 @@ int main(int argc, char* argv[]) {
       pin_spec = argv[++i];
     } else if (arg == "--sockbuf"sv && i + 1 < argc) {
       sockbuf_size = std::atoi(argv[++i]);
+    } else if (arg == "--metrics-port"sv &&
+               i + 1 < argc) {
+      metrics_port = static_cast<uint16_t>(
+          std::atoi(argv[++i]));
+    } else if (arg == "--tls-cert"sv && i + 1 < argc) {
+      tls_cert = argv[++i];
+    } else if (arg == "--tls-key"sv && i + 1 < argc) {
+      tls_key = argv[++i];
     }
   }
 
@@ -65,6 +76,9 @@ int main(int argc, char* argv[]) {
   config.port = port;
   config.num_workers = num_workers;
   config.sockbuf_size = sockbuf_size;
+  config.metrics.port = metrics_port;
+  if (tls_cert) config.metrics.tls_cert = tls_cert;
+  if (tls_key) config.metrics.tls_key = tls_key;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,

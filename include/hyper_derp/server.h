@@ -16,6 +16,7 @@
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
+#include "hyper_derp/metrics.h"
 
 namespace hyper_derp {
 
@@ -66,6 +67,8 @@ struct ServerConfig {
   /// Per-socket send/recv buffer size in bytes. 0 = use
   /// the OS default. Capped by net.core.wmem_max/rmem_max.
   int sockbuf_size = 0;
+  /// Metrics HTTP server configuration.
+  MetricsConfig metrics;
   std::array<int, kMaxWorkers> pin_cores{};
 
   ServerConfig() { pin_cores.fill(-1); }
@@ -81,6 +84,7 @@ struct Server {
   std::atomic<int> running{0};
   std::thread accept_thread;
   std::thread control_thread;
+  MetricsServer* metrics_server = nullptr;
 };
 
 /// @brief Initializes the server.
