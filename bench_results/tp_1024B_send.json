@@ -1,0 +1,17 @@
+{
+  "test": "tp_1024B_send",
+  "mode": "send",
+  "timestamp": "2026-03-10T11:54:11Z",
+  "config": {
+    "packet_count": 100000,
+    "packet_size": 1024,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 497033924,
+  "elapsed_ms": 497.034,
+  "packets": 100000,
+  "bytes": 102400000,
+  "throughput_pps": 201193.5,
+  "throughput_mbps": 1648.177
+}

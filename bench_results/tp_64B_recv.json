@@ -1,0 +1,17 @@
+{
+  "test": "tp_64B_recv",
+  "mode": "recv",
+  "timestamp": "2026-03-10T11:54:08Z",
+  "config": {
+    "packet_count": 100000,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 26786367,
+  "elapsed_ms": 26.786,
+  "packets": 659,
+  "bytes": 42176,
+  "throughput_pps": 24602.1,
+  "throughput_mbps": 12.596
+}

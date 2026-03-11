@@ -1,0 +1,17 @@
+{
+  "test": "flood_1024B",
+  "mode": "flood",
+  "timestamp": "2026-03-10T12:09:09Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 1024,
+    "num_workers": 0,
+    "core": 3
+  },
+  "elapsed_ns": 10000006577,
+  "elapsed_ms": 10000.007,
+  "packets": 1081817,
+  "bytes": 1107780608,
+  "throughput_pps": 108181.6,
+  "throughput_mbps": 886.224
+}

@@ -15,7 +15,7 @@ class HandshakeTest : public ::testing::Test {
  protected:
   void SetUp() override {
     ASSERT_EQ(sodium_init() >= 0, true);
-    ASSERT_EQ(GenerateServerKeys(&server_keys_), 0);
+    ASSERT_TRUE(GenerateServerKeys(&server_keys_));
   }
 
   ServerKeys server_keys_;
@@ -23,16 +23,12 @@ class HandshakeTest : public ::testing::Test {
 
 TEST_F(HandshakeTest, GenerateServerKeysProducesKeys) {
   // Keys should be non-zero.
-  uint8_t zero[kKeySize] = {};
-  EXPECT_NE(
-      memcmp(server_keys_.public_key, zero, kKeySize), 0);
-  EXPECT_NE(
-      memcmp(server_keys_.private_key, zero, kKeySize), 0);
+  Key zero{};
+  EXPECT_NE(server_keys_.public_key, zero);
+  EXPECT_NE(server_keys_.private_key, zero);
   // Public and private should differ.
-  EXPECT_NE(
-      memcmp(server_keys_.public_key,
-             server_keys_.private_key, kKeySize),
-      0);
+  EXPECT_NE(server_keys_.public_key,
+            server_keys_.private_key);
 }
 
 TEST_F(HandshakeTest, BuildServerKeyFrame) {
@@ -48,13 +44,14 @@ TEST_F(HandshakeTest, BuildServerKeyFrame) {
 
   // Check magic.
   EXPECT_EQ(
-      memcmp(buf + kFrameHeaderSize, kMagic, kMagicSize),
+      memcmp(buf + kFrameHeaderSize, kMagic.data(),
+             kMagicSize),
       0);
 
   // Check public key.
   EXPECT_EQ(
       memcmp(buf + kFrameHeaderSize + kMagicSize,
-             server_keys_.public_key, kKeySize),
+             server_keys_.public_key.data(), kKeySize),
       0);
 }
 
@@ -92,16 +89,18 @@ TEST_F(HandshakeTest, BuildAndParseClientInfo) {
           payload + kKeySize + kNonceSize,
           reinterpret_cast<const uint8_t*>(json),
           json_len, nonce,
-          server_keys_.public_key, client_priv),
+          server_keys_.public_key.data(), client_priv),
       0);
 
   // Parse it.
   ClientInfo info;
-  int rc = ParseClientInfo(payload, payload_len,
-                           &server_keys_, &info);
-  ASSERT_EQ(rc, 0);
+  auto result = ParseClientInfo(payload, payload_len,
+                                &server_keys_, &info);
+  ASSERT_TRUE(result.has_value());
   EXPECT_EQ(
-      memcmp(info.public_key, client_pub, kKeySize), 0);
+      memcmp(info.public_key.data(), client_pub,
+             kKeySize),
+      0);
   EXPECT_EQ(info.version, 2);
   EXPECT_TRUE(info.can_ack_pings);
 
@@ -116,9 +115,11 @@ TEST_F(HandshakeTest, ParseClientInfoBadCrypto) {
   randombytes_buf(payload, payload_len);
 
   ClientInfo info;
-  int rc = ParseClientInfo(payload, payload_len,
-                           &server_keys_, &info);
-  EXPECT_EQ(rc, -1);
+  auto result = ParseClientInfo(payload, payload_len,
+                                &server_keys_, &info);
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().code,
+            HandshakeError::DecryptionFailed);
 
   delete[] payload;
 }
@@ -128,20 +129,23 @@ TEST_F(HandshakeTest, ParseClientInfoTooShort) {
   memset(payload, 0, kKeySize);
 
   ClientInfo info;
-  int rc = ParseClientInfo(payload, kKeySize,
-                           &server_keys_, &info);
-  EXPECT_EQ(rc, -1);
+  auto result = ParseClientInfo(payload, kKeySize,
+                                &server_keys_, &info);
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().code,
+            HandshakeError::BadClientInfo);
 }
 
 TEST_F(HandshakeTest, BuildServerInfoFrame) {
-  uint8_t client_pub[kKeySize];
+  Key client_pub;
   uint8_t client_priv[kKeySize];
-  crypto_box_keypair(client_pub, client_priv);
+  crypto_box_keypair(client_pub.data(), client_priv);
 
   uint8_t buf[256];
-  int n = BuildServerInfoFrame(
+  auto result = BuildServerInfoFrame(
       buf, sizeof(buf), &server_keys_, client_pub);
-  ASSERT_GT(n, 0);
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
 
   EXPECT_EQ(ReadFrameType(buf), FrameType::kServerInfo);
   uint32_t payload_len = ReadPayloadLen(buf);
@@ -160,7 +164,8 @@ TEST_F(HandshakeTest, BuildServerInfoFrame) {
   ASSERT_EQ(
       crypto_box_open_easy(
           plaintext, ciphertext, ciphertext_len,
-          nonce, server_keys_.public_key, client_priv),
+          nonce, server_keys_.public_key.data(),
+          client_priv),
       0);
 
   int pt_len = ciphertext_len - kBoxOverhead;

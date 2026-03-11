@@ -1,0 +1,10 @@
+# Standalone test tools.
+
+add_executable(derp-test-client derp_test_client.cc)
+target_link_libraries(derp-test-client PRIVATE libderp)
+
+add_executable(derp-tun-proxy derp_tun_proxy.cc)
+target_link_libraries(derp-tun-proxy PRIVATE libderp)
+
+add_executable(derp-scale-test derp_scale_test.cc)
+target_link_libraries(derp-scale-test PRIVATE libderp)

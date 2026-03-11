@@ -31,19 +31,19 @@ void DpDestroy(Ctx* ctx);
 /// @param ctx Data plane context.
 /// @param fd The peer's socket file descriptor.
 /// @param key The peer's 32-byte public key.
-void DpAddPeer(Ctx* ctx, int fd, const uint8_t key[kKeySize]);
+void DpAddPeer(Ctx* ctx, int fd, const Key& key);
 
 /// @brief Removes a peer from the data plane.
 /// @param ctx Data plane context.
 /// @param key The peer's 32-byte public key.
-void DpRemovePeer(Ctx* ctx, const uint8_t key[kKeySize]);
+void DpRemovePeer(Ctx* ctx, const Key& key);
 
 /// @brief Sends data to a peer (from the control plane).
 /// @param ctx Data plane context.
 /// @param key The destination peer's 32-byte public key.
 /// @param data Pointer to data (ownership transferred).
 /// @param data_len Length of data.
-void DpWrite(Ctx* ctx, const uint8_t key[kKeySize],
+void DpWrite(Ctx* ctx, const Key& key,
              uint8_t* data, int data_len);
 
 /// @brief Signals all workers to stop.

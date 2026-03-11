@@ -5,6 +5,7 @@
 
 #include <csignal>
 #include <cstdlib>
+#include <string_view>
 
 #include "hyper_derp/server.h"
 
@@ -15,27 +16,68 @@ static void SignalHandler(int sig) {
   hyper_derp::ServerStop(&g_server);
 }
 
-int main(int argc, char* argv[]) {
-  uint16_t port = 3340;
-  int num_workers = 0;  // auto
+/// Parse comma-separated core list (e.g. "0,2,4,6")
+/// into pin_cores array. Returns count parsed.
+static int ParsePinCores(const char* spec, int* out,
+                         int max) {
+  int count = 0;
+  const char* p = spec;
+  while (*p && count < max) {
+    char* end;
+    long val = strtol(p, &end, 10);
+    if (end == p) break;
+    out[count++] = static_cast<int>(val);
+    if (*end == ',') {
+      p = end + 1;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
 
-  // Minimal arg parsing.
+int main(int argc, char* argv[]) {
+  using namespace std::string_view_literals;
+
+  uint16_t port = 3340;
+  int num_workers = 0;
+  const char* pin_spec = nullptr;
+
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-      port = static_cast<uint16_t>(atoi(argv[++i]));
-    } else if (strcmp(argv[i], "--workers") == 0 &&
+    std::string_view arg = argv[i];
+    if (arg == "--port"sv && i + 1 < argc) {
+      port = static_cast<uint16_t>(
+          std::atoi(argv[++i]));
+    } else if (arg == "--workers"sv && i + 1 < argc) {
+      num_workers = std::atoi(argv[++i]);
+    } else if (arg == "--pin-workers"sv &&
                i + 1 < argc) {
-      num_workers = atoi(argv[++i]);
+      pin_spec = argv[++i];
     }
   }
 
   spdlog::info("hyper-derp starting on port {}", port);
 
-  hyper_derp::ServerConfig config{};
+  hyper_derp::ServerConfig config;
   config.port = port;
   config.num_workers = num_workers;
 
-  if (hyper_derp::ServerInit(&g_server, &config) < 0) {
+  if (pin_spec) {
+    int n = ParsePinCores(pin_spec,
+                          config.pin_cores.data(),
+                          hyper_derp::kMaxWorkers);
+    if (num_workers == 0) {
+      config.num_workers = n;
+    }
+    spdlog::info("pin-workers: {} cores specified", n);
+  }
+
+  auto init = hyper_derp::ServerInit(&g_server, &config);
+  if (!init) {
+    spdlog::error("init failed: {} ({})",
+                  init.error().message,
+                  hyper_derp::ServerErrorName(
+                      init.error().code));
     return EXIT_FAILURE;
   }
 
@@ -43,9 +85,9 @@ int main(int argc, char* argv[]) {
   signal(SIGTERM, SignalHandler);
   signal(SIGPIPE, SIG_IGN);
 
-  int rc = hyper_derp::ServerRun(&g_server);
+  auto run = hyper_derp::ServerRun(&g_server);
 
   hyper_derp::ServerDestroy(&g_server);
   spdlog::info("hyper-derp exiting");
-  return rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  return run.has_value() ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -5,42 +5,93 @@
 #ifndef INCLUDE_HYPER_DERP_SERVER_H_
 #define INCLUDE_HYPER_DERP_SERVER_H_
 
+#include <array>
 #include <cstdint>
+#include <expected>
 #include <pthread.h>
+#include <string_view>
 
+#include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
+#include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
 
 namespace hyper_derp {
 
+/// Error codes for ServerInit / ServerRun.
+enum class ServerError {
+  /// Key generation failed.
+  KeyGenFailed,
+  /// Data plane initialization failed.
+  DataPlaneInitFailed,
+  /// socket() call failed.
+  SocketFailed,
+  /// bind() call failed.
+  BindFailed,
+  /// listen() call failed.
+  ListenFailed,
+  /// pthread_create failed.
+  ThreadCreateFailed,
+  /// Data plane run loop returned an error.
+  DataPlaneRunFailed,
+};
+
+/// Human-readable name for a ServerError code.
+constexpr auto ServerErrorName(ServerError e)
+    -> std::string_view {
+  switch (e) {
+    case ServerError::KeyGenFailed:
+      return "KeyGenFailed";
+    case ServerError::DataPlaneInitFailed:
+      return "DataPlaneInitFailed";
+    case ServerError::SocketFailed:
+      return "SocketFailed";
+    case ServerError::BindFailed:
+      return "BindFailed";
+    case ServerError::ListenFailed:
+      return "ListenFailed";
+    case ServerError::ThreadCreateFailed:
+      return "ThreadCreateFailed";
+    case ServerError::DataPlaneRunFailed:
+      return "DataPlaneRunFailed";
+  }
+  return "Unknown";
+}
+
 /// Server configuration.
 struct ServerConfig {
-  uint16_t port;
-  int num_workers;  // 0 = auto (hardware_concurrency)
+  uint16_t port = 3340;
+  int num_workers = 0;  // 0 = auto (hardware_concurrency)
+  std::array<int, kMaxWorkers> pin_cores{};
+
+  ServerConfig() { pin_cores.fill(-1); }
 };
 
 /// Top-level server state.
 struct Server {
   ServerConfig config;
   ServerKeys keys;
-  Ctx data_plane;
-  int listen_fd;
-  int running;
-  pthread_t accept_thread;
-  pthread_t control_thread;
+  Ctx data_plane{};
+  ControlPlane control_plane{};
+  int listen_fd = -1;
+  int running = 0;
+  pthread_t accept_thread{};
+  pthread_t control_thread{};
 };
 
 /// @brief Initializes the server.
 /// @param server Pointer to uninitialized Server.
 /// @param config Server configuration.
-/// @returns 0 on success, -1 on failure.
-int ServerInit(Server* server,
-               const ServerConfig* config);
+/// @returns void on success, or ServerError.
+auto ServerInit(Server* server,
+                const ServerConfig* config)
+    -> std::expected<void, Error<ServerError>>;
 
 /// @brief Starts the server (blocks until stopped).
 /// @param server Initialized server.
-/// @returns 0 on success, -1 on failure.
-int ServerRun(Server* server);
+/// @returns void on success, or ServerError.
+auto ServerRun(Server* server)
+    -> std::expected<void, Error<ServerError>>;
 
 /// @brief Signals the server to stop.
 /// @param server Running server.

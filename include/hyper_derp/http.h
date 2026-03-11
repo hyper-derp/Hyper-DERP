@@ -6,29 +6,54 @@
 #define INCLUDE_HYPER_DERP_HTTP_H_
 
 #include <cstdint>
+#include <expected>
+#include <string>
+#include <string_view>
+
+#include "hyper_derp/error.h"
 
 namespace hyper_derp {
+
+/// Error codes for ParseHttpRequest.
+enum class HttpParseError {
+  /// Headers not yet complete (need more data).
+  Incomplete,
+  /// Request is malformed or exceeds size limit.
+  BadRequest,
+};
+
+/// Human-readable name for an HttpParseError code.
+constexpr auto HttpParseErrorName(HttpParseError e)
+    -> std::string_view {
+  switch (e) {
+    case HttpParseError::Incomplete:
+      return "Incomplete";
+    case HttpParseError::BadRequest:
+      return "BadRequest";
+  }
+  return "Unknown";
+}
 
 /// Maximum HTTP request size we'll accept.
 inline constexpr int kMaxHttpRequestSize = 4096;
 
 /// Parsed HTTP request (only the fields we need).
 struct HttpRequest {
-  char method[8];
-  char path[256];
-  bool has_upgrade;
-  char upgrade[32];
-  bool fast_start;
+  std::string method;
+  std::string path;
+  bool has_upgrade = false;
+  std::string upgrade;
+  bool fast_start = false;
 };
 
 /// @brief Parses an HTTP request from a buffer.
 /// @param buf Raw request bytes.
 /// @param len Number of bytes available.
 /// @param req Output parsed request.
-/// @returns Bytes consumed on success, -1 if incomplete
-///   (need more data), -2 on parse error.
-int ParseHttpRequest(const uint8_t* buf, int len,
-                     HttpRequest* req);
+/// @returns Bytes consumed on success, or HttpParseError.
+auto ParseHttpRequest(const uint8_t* buf, int len,
+                      HttpRequest* req)
+    -> std::expected<int, Error<HttpParseError>>;
 
 /// @brief Writes an HTTP 101 Switching Protocols response.
 /// @param buf Output buffer.

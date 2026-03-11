@@ -21,7 +21,10 @@ inline constexpr int kHtCapacity = 4096;
 inline constexpr int kCmdRingSize = 1024;
 
 /// Cross-shard transfer ring size (must be power of 2).
-inline constexpr int kXferRingSize = 4096;
+/// Sized to absorb small-packet bursts: a single provided
+/// buffer recv can contain hundreds of 64B frames, all
+/// pushed before the consumer drains.
+inline constexpr int kXferRingSize = 65536;
 
 /// Maximum worker threads.
 inline constexpr int kMaxWorkers = 32;
@@ -34,13 +37,20 @@ inline constexpr int kReadBufSize =
     kFrameHeaderSize + kMaxFramePayload;
 
 /// Slab allocator pool size (per worker).
-inline constexpr int kSlabSize = 8192;
+/// Sized to absorb send queue depth during small-packet
+/// bursts where recv batches produce hundreds of frames.
+inline constexpr int kSlabSize = 65536;
 
 /// io_uring submission queue depth.
-inline constexpr int kUringQueueDepth = 2048;
+inline constexpr int kUringQueueDepth = 4096;
 
 /// Maximum concurrent in-flight sends per peer.
-inline constexpr int kMaxSendsInflight = 4;
+/// SEND_ZC completions are near-zero cost until the
+/// notification CQE arrives; this can go high. Must be
+/// large enough to drain the send queue between recv
+/// bursts — a single provided-buffer recv can contain
+/// hundreds of small frames.
+inline constexpr int kMaxSendsInflight = 512;
 
 /// Maximum concurrent recv SQEs per worker.
 inline constexpr int kRecvBudget = 512;
@@ -100,7 +110,7 @@ struct Peer {
   int poll_write_pending;
 
   // Cold: accessed on connect/disconnect.
-  uint8_t key[kKeySize];
+  Key key;
 
   // Per-peer read buffer for frame reassembly.
   uint8_t rbuf[kReadBufSize];
@@ -109,7 +119,7 @@ struct Peer {
 /// Replicated routing table entry. Each worker has a full
 /// copy; writers use atomic store with release ordering.
 struct Route {
-  uint8_t key[kKeySize];
+  Key key;
   int worker_id;
   int fd;
   int occupied;  // Atomic: 0=empty, 1=live, 2=tombstone
@@ -119,7 +129,7 @@ struct Route {
 struct Cmd {
   CmdType type;
   int fd;
-  uint8_t key[kKeySize];
+  Key key;
   uint8_t* data;
   int data_len;
 };
@@ -140,6 +150,10 @@ struct WorkerStats {
   uint64_t slab_exhausts;
   uint64_t recv_bytes;
   uint64_t send_bytes;
+  uint64_t send_epipe;
+  uint64_t send_econnreset;
+  uint64_t send_eagain;
+  uint64_t send_other_err;
 };
 
 /// SPSC ring buffer for commands to a worker.
@@ -155,6 +169,7 @@ struct XferRing {
   uint32_t head;
   uint32_t tail;
   char lock;
+  uint32_t push_count;
 };
 
 // Forward declaration.
@@ -229,6 +244,7 @@ struct Ctx {
   Worker* workers[kMaxWorkers];
   int num_workers;
   int pipe_rds[kMaxWorkers];
+  int pin_cores[kMaxWorkers];  // -1 = no pinning
 };
 
 }  // namespace hyper_derp

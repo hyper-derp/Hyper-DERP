@@ -1,0 +1,17 @@
+{
+  "test": "tp_64B_v2_send",
+  "mode": "send",
+  "timestamp": "2026-03-10T11:59:39Z",
+  "config": {
+    "packet_count": 100000,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 676851528,
+  "elapsed_ms": 676.852,
+  "packets": 100000,
+  "bytes": 6400000,
+  "throughput_pps": 147742.9,
+  "throughput_mbps": 75.644
+}

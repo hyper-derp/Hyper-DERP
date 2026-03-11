@@ -1,0 +1,17 @@
+{
+  "test": "pinned_1024B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-10T12:05:47Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 1024,
+    "num_workers": 0,
+    "core": 3
+  },
+  "elapsed_ns": 10000000187,
+  "elapsed_ms": 10000.000,
+  "packets": 3267833,
+  "bytes": 3346260992,
+  "throughput_pps": 326783.3,
+  "throughput_mbps": 2677.009
+}

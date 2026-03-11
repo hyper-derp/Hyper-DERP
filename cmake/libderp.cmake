@@ -10,6 +10,10 @@ add_library(libderp_obj OBJECT
   src/http.cc
   src/handshake.cc
   src/server.cc
+  src/client.cc
+  src/bench.cc
+  src/control_plane.cc
+  src/tun.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include

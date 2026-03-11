@@ -43,8 +43,8 @@ TEST(ProtocolTest, FrameHeaderBigEndian) {
 }
 
 TEST(ProtocolTest, BuildRecvPacket) {
-  uint8_t src_key[kKeySize];
-  memset(src_key, 0xAA, kKeySize);
+  Key src_key;
+  memset(src_key.data(), 0xAA, kKeySize);
   uint8_t data[] = {0x01, 0x02, 0x03};
   int data_len = 3;
 
@@ -56,7 +56,8 @@ TEST(ProtocolTest, BuildRecvPacket) {
   EXPECT_EQ(ReadPayloadLen(buf),
             static_cast<uint32_t>(kKeySize + data_len));
   EXPECT_EQ(
-      memcmp(buf + kFrameHeaderSize, src_key, kKeySize),
+      memcmp(buf + kFrameHeaderSize, src_key.data(),
+             kKeySize),
       0);
   EXPECT_EQ(
       memcmp(buf + kFrameHeaderSize + kKeySize, data,
@@ -65,8 +66,8 @@ TEST(ProtocolTest, BuildRecvPacket) {
 }
 
 TEST(ProtocolTest, BuildPeerGone) {
-  uint8_t key[kKeySize];
-  memset(key, 0xBB, kKeySize);
+  Key key;
+  memset(key.data(), 0xBB, kKeySize);
 
   uint8_t buf[kFrameHeaderSize + kKeySize + 1];
   int n = BuildPeerGone(buf, key,
@@ -82,8 +83,8 @@ TEST(ProtocolTest, BuildPeerGone) {
 }
 
 TEST(ProtocolTest, BuildPeerPresent) {
-  uint8_t key[kKeySize];
-  memset(key, 0xCC, kKeySize);
+  Key key;
+  memset(key.data(), 0xCC, kKeySize);
 
   uint8_t buf[kFrameHeaderSize + kKeySize];
   int n = BuildPeerPresent(buf, key);
@@ -120,8 +121,8 @@ TEST(ProtocolTest, BuildPong) {
 }
 
 TEST(ProtocolTest, BuildServerKey) {
-  uint8_t key[kKeySize];
-  memset(key, 0xDD, kKeySize);
+  Key key;
+  memset(key.data(), 0xDD, kKeySize);
 
   uint8_t buf[kFrameHeaderSize + kKeySize];
   int n = BuildServerKey(buf, key);
@@ -131,7 +132,9 @@ TEST(ProtocolTest, BuildServerKey) {
   EXPECT_EQ(ReadPayloadLen(buf),
             static_cast<uint32_t>(kKeySize));
   EXPECT_EQ(
-      memcmp(buf + kFrameHeaderSize, key, kKeySize), 0);
+      memcmp(buf + kFrameHeaderSize, key.data(),
+             kKeySize),
+      0);
 }
 
 TEST(ProtocolTest, BuildHealth) {

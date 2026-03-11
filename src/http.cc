@@ -5,7 +5,10 @@
 
 #include <cstdio>
 #include <cstring>
+#include <expected>
+#include <string_view>
 
+#include "hyper_derp/error.h"
 #include "hyper_derp/protocol.h"
 
 namespace hyper_derp {
@@ -23,106 +26,101 @@ static const uint8_t* FindHeaderEnd(const uint8_t* buf,
 }
 
 // Case-insensitive prefix match.
-static bool CiStartsWith(const char* str,
-                          const char* prefix) {
-  while (*prefix) {
-    if ((*str | 0x20) != (*prefix | 0x20)) {
+static bool CiStartsWith(std::string_view str,
+                          std::string_view prefix) {
+  if (str.size() < prefix.size()) return false;
+  for (size_t i = 0; i < prefix.size(); i++) {
+    if ((str[i] | 0x20) != (prefix[i] | 0x20)) {
       return false;
     }
-    str++;
-    prefix++;
   }
   return true;
 }
 
 // Skip whitespace.
-static const char* SkipWs(const char* p) {
-  while (*p == ' ' || *p == '\t') {
-    p++;
+static std::string_view LTrim(std::string_view s) {
+  while (!s.empty() &&
+         (s.front() == ' ' || s.front() == '\t')) {
+    s.remove_prefix(1);
   }
-  return p;
+  return s;
 }
 
-int ParseHttpRequest(const uint8_t* buf, int len,
-                     HttpRequest* req) {
-  memset(req, 0, sizeof(*req));
+auto ParseHttpRequest(const uint8_t* buf, int len,
+                      HttpRequest* req)
+    -> std::expected<int, Error<HttpParseError>> {
+  *req = {};
 
   if (len > kMaxHttpRequestSize) {
-    return -2;
+    return MakeError(HttpParseError::BadRequest,
+                     "request exceeds max size");
   }
 
   const uint8_t* end = FindHeaderEnd(buf, len);
   if (!end) {
-    return -1;  // Incomplete.
+    return MakeError(HttpParseError::Incomplete,
+                     "headers not yet complete");
   }
 
   int header_len = static_cast<int>(end - buf) + 4;
-  const char* p = reinterpret_cast<const char*>(buf);
+  std::string_view input(
+      reinterpret_cast<const char*>(buf), header_len);
 
   // Parse request line: METHOD SP PATH SP HTTP/x.x\r\n
-  const char* method_end = strchr(p, ' ');
-  if (!method_end) {
-    return -2;
+  auto sp1 = input.find(' ');
+  if (sp1 == std::string_view::npos) {
+    return MakeError(HttpParseError::BadRequest,
+                     "no space after method");
   }
-  int method_len = static_cast<int>(method_end - p);
-  if (method_len <= 0 ||
-      method_len >= static_cast<int>(sizeof(req->method))) {
-    return -2;
+  req->method = std::string(input.substr(0, sp1));
+  if (req->method.empty()) {
+    return MakeError(HttpParseError::BadRequest,
+                     "empty method");
   }
-  memcpy(req->method, p, method_len);
-  req->method[method_len] = '\0';
 
-  p = method_end + 1;
-  const char* path_end = strchr(p, ' ');
-  if (!path_end) {
-    return -2;
+  auto rest = input.substr(sp1 + 1);
+  auto sp2 = rest.find(' ');
+  if (sp2 == std::string_view::npos) {
+    return MakeError(HttpParseError::BadRequest,
+                     "no space after path");
   }
-  int path_len = static_cast<int>(path_end - p);
-  if (path_len <= 0 ||
-      path_len >= static_cast<int>(sizeof(req->path))) {
-    return -2;
+  req->path = std::string(rest.substr(0, sp2));
+  if (req->path.empty()) {
+    return MakeError(HttpParseError::BadRequest,
+                     "empty path");
   }
-  memcpy(req->path, p, path_len);
-  req->path[path_len] = '\0';
 
   // Skip to end of request line.
-  const char* line_end = strstr(path_end, "\r\n");
-  if (!line_end) {
-    return -2;
+  auto crlf = input.find("\r\n");
+  if (crlf == std::string_view::npos) {
+    return MakeError(HttpParseError::BadRequest,
+                     "no CRLF after request line");
   }
-  p = line_end + 2;
+  auto headers = input.substr(crlf + 2);
 
   // Parse headers until empty line.
-  const char* headers_end =
-      reinterpret_cast<const char*>(end);
-  while (p < headers_end) {
-    const char* next = strstr(p, "\r\n");
-    if (!next) {
+  while (!headers.empty()) {
+    auto line_end = headers.find("\r\n");
+    if (line_end == std::string_view::npos) {
       break;
     }
+    auto line = headers.substr(0, line_end);
+    headers = headers.substr(line_end + 2);
 
-    if (CiStartsWith(p, "upgrade:")) {
-      const char* val = SkipWs(p + 8);
-      int val_len = static_cast<int>(next - val);
-      if (val_len > 0 &&
-          val_len <
-              static_cast<int>(sizeof(req->upgrade))) {
-        memcpy(req->upgrade, val, val_len);
-        req->upgrade[val_len] = '\0';
-      }
-    } else if (CiStartsWith(p, "connection:")) {
-      const char* val = SkipWs(p + 11);
+    if (CiStartsWith(line, "upgrade:")) {
+      auto val = LTrim(line.substr(8));
+      req->upgrade = std::string(val);
+    } else if (CiStartsWith(line, "connection:")) {
+      auto val = LTrim(line.substr(11));
       if (CiStartsWith(val, "upgrade")) {
         req->has_upgrade = true;
       }
-    } else if (CiStartsWith(p, "derp-fast-start:")) {
-      const char* val = SkipWs(p + 16);
-      if (*val == '1') {
+    } else if (CiStartsWith(line, "derp-fast-start:")) {
+      auto val = LTrim(line.substr(16));
+      if (!val.empty() && val.front() == '1') {
         req->fast_start = true;
       }
     }
-
-    p = next + 2;
   }
 
   return header_len;
@@ -160,12 +158,11 @@ int WriteNoContentResponse(uint8_t* buf, int buf_size,
                            const char* challenge) {
   if (challenge && challenge[0]) {
     // Validate challenge chars.
-    int clen = static_cast<int>(strlen(challenge));
-    if (clen > 64) {
+    std::string_view ch(challenge);
+    if (ch.size() > 64) {
       challenge = nullptr;
     } else {
-      for (int i = 0; i < clen; i++) {
-        char c = challenge[i];
+      for (char c : ch) {
         bool ok =
             (c >= 'a' && c <= 'z') ||
             (c >= 'A' && c <= 'Z') ||

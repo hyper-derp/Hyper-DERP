@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+  # Install default config if none exists.
+  if [ ! -f /etc/hyper-derp/hyper-derp.conf ]; then
+    cp /etc/hyper-derp/hyper-derp.conf.example \
+       /etc/hyper-derp/hyper-derp.conf
+  fi
+
+  systemctl daemon-reload
+  systemctl enable hyper-derp.service
+fi

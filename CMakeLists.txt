@@ -115,8 +115,57 @@ include("cmake/libderp.cmake")
 add_executable(hyper-derp src/main.cc)
 target_link_libraries(hyper-derp PRIVATE libderp)
 
+# Tools.
+add_subdirectory(tools)
+
 # Tests.
 enable_testing()
 add_subdirectory(tests)
 
 include(CTest)
+
+# ============================================================================
+# Install rules
+# ============================================================================
+install(TARGETS hyper-derp derp-test-client derp-tun-proxy
+  RUNTIME DESTINATION bin)
+install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/hyper-derp.service
+  DESTINATION lib/systemd/system)
+install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/hyper-derp.conf
+  DESTINATION /etc/hyper-derp
+  RENAME hyper-derp.conf.example)
+
+# ============================================================================
+# CPack — Debian package
+# ============================================================================
+set(CPACK_GENERATOR "DEB")
+set(CPACK_PACKAGE_NAME "hyper-derp")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+  "${PROJECT_DESCRIPTION}")
+set(CPACK_PACKAGE_DESCRIPTION
+  "Tailscale-compatible DERP relay server built with C++23 and io_uring for high-throughput, low-latency packet relay.")
+set(CPACK_PACKAGE_CONTACT
+  "karl <karl@localhost>")
+set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS
+  "liburing2 (>= 2.3), libsodium23 (>= 1.0.18), libspdlog1.12 (>= 1:1.12)")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE
+  "https://github.com/karl/hyper-derp")
+# Let dpkg-architecture determine the correct name.
+execute_process(
+  COMMAND dpkg --print-architecture
+  OUTPUT_VARIABLE _dpkg_arch
+  OUTPUT_STRIP_TRAILING_WHITESPACE)
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${_dpkg_arch}")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+# Post-install/remove scripts for systemd integration.
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+  "${CMAKE_SOURCE_DIR}/dist/postinst;${CMAKE_SOURCE_DIR}/dist/prerm;${CMAKE_SOURCE_DIR}/dist/postrm")
+
+include(CPack)

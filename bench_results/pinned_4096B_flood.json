@@ -1,0 +1,17 @@
+{
+  "test": "pinned_4096B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-10T12:05:58Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 4096,
+    "num_workers": 0,
+    "core": 3
+  },
+  "elapsed_ns": 10000006963,
+  "elapsed_ms": 10000.007,
+  "packets": 1032414,
+  "bytes": 4228767744,
+  "throughput_pps": 103241.3,
+  "throughput_mbps": 3383.012
+}

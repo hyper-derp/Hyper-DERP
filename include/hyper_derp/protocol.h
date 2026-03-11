@@ -4,6 +4,7 @@
 #ifndef INCLUDE_HYPER_DERP_PROTOCOL_H_
 #define INCLUDE_HYPER_DERP_PROTOCOL_H_
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -14,6 +15,16 @@ namespace hyper_derp {
 
 /// Curve25519 public key size in bytes.
 inline constexpr int kKeySize = 32;
+
+/// 32-byte Curve25519 key as a value type.
+using Key = std::array<uint8_t, kKeySize>;
+
+/// Create a Key from a raw byte pointer.
+inline Key ToKey(const uint8_t* data) {
+  Key k;
+  std::memcpy(k.data(), data, kKeySize);
+  return k;
+}
 
 /// Frame header: 1 byte type + 4 bytes big-endian length.
 inline constexpr int kFrameHeaderSize = 5;
@@ -138,7 +149,7 @@ inline constexpr int SendPacketDataLen(int payload_len) {
 /// @param data_len Length of packet data.
 /// @returns Total frame size written.
 int BuildRecvPacket(uint8_t* buf,
-                    const uint8_t* src_key,
+                    const Key& src_key,
                     const uint8_t* data,
                     int data_len);
 
@@ -148,7 +159,7 @@ int BuildRecvPacket(uint8_t* buf,
 /// @param reason Reason for departure.
 /// @returns Total frame size written.
 int BuildPeerGone(uint8_t* buf,
-                  const uint8_t* peer_key,
+                  const Key& peer_key,
                   PeerGoneReason reason);
 
 /// @brief Builds a PeerPresent frame into a buffer.
@@ -156,7 +167,7 @@ int BuildPeerGone(uint8_t* buf,
 /// @param peer_key The present peer's 32-byte key.
 /// @returns Total frame size written.
 int BuildPeerPresent(uint8_t* buf,
-                     const uint8_t* peer_key);
+                     const Key& peer_key);
 
 /// @brief Builds a KeepAlive frame into a buffer.
 /// @param buf Output buffer.
@@ -182,7 +193,7 @@ int BuildHealth(uint8_t* buf,
 /// @param server_key Server's 32-byte public key.
 /// @returns Total frame size written.
 int BuildServerKey(uint8_t* buf,
-                   const uint8_t* server_key);
+                   const Key& server_key);
 
 /// @brief Builds a Restarting frame into a buffer.
 /// @param buf Output buffer.

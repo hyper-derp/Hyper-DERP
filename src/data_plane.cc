@@ -14,11 +14,14 @@
 
 #include "hyper_derp/data_plane.h"
 
+#include <spdlog/spdlog.h>
+
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
+#include <sched.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -59,15 +62,14 @@ static uint32_t Fnv1a(const uint8_t* data, int len) {
 }
 
 static int PeerWorker(int num_workers,
-                      const uint8_t key[kKeySize]) {
+                      const Key& key) {
   return static_cast<int>(
-      Fnv1a(key, kKeySize) % num_workers);
+      Fnv1a(key.data(), kKeySize) % num_workers);
 }
 
 // -- Per-worker hash table ---------------------------------------------------
 
-static int HtFind(Worker* w,
-                  const uint8_t key[kKeySize],
+static int HtFind(Worker* w, const uint8_t* key,
                   Peer** out) {
   uint32_t h = Fnv1a(key, kKeySize);
   uint32_t mask = kHtCapacity - 1;
@@ -91,7 +93,7 @@ static int HtFind(Worker* w,
       }
       continue;
     }
-    if (memcmp(p->key, key, kKeySize) == 0) {
+    if (std::memcmp(p->key.data(), key, kKeySize) == 0) {
       *out = p;
       return static_cast<int>(idx);
     }
@@ -109,21 +111,21 @@ static Peer* HtLookup(Worker* w, const uint8_t* key) {
   Peer* p = nullptr;
   HtFind(w, key, &p);
   if (p && p->occupied == 1 &&
-      memcmp(p->key, key, kKeySize) == 0) {
+      std::memcmp(p->key.data(), key, kKeySize) == 0) {
     return p;
   }
   return nullptr;
 }
 
 static int HtInsert(Worker* w, int fd,
-                    const uint8_t key[kKeySize]) {
+                    const Key& key) {
   Peer* p = nullptr;
-  HtFind(w, key, &p);
+  HtFind(w, key.data(), &p);
   if (!p) {
     return -1;
   }
   p->fd = fd;
-  memcpy(p->key, key, kKeySize);
+  p->key = key;
   p->rbuf_len = 0;
   p->occupied = 1;
   p->send_head = nullptr;
@@ -136,9 +138,8 @@ static int HtInsert(Worker* w, int fd,
   return 0;
 }
 
-static void HtRemove(Worker* w,
-                     const uint8_t key[kKeySize]) {
-  Peer* p = HtLookup(w, key);
+static void HtRemove(Worker* w, const Key& key) {
+  Peer* p = HtLookup(w, key.data());
   if (!p) {
     return;
   }
@@ -167,7 +168,7 @@ static void HtRemove(Worker* w,
 // -- Replicated routing table ------------------------------------------------
 
 static int RouteFind(Route* routes,
-                     const uint8_t key[kKeySize],
+                     const uint8_t* key,
                      Route** out) {
   uint32_t h = Fnv1a(key, kKeySize);
   uint32_t mask = kHtCapacity - 1;
@@ -193,7 +194,7 @@ static int RouteFind(Route* routes,
       }
       continue;
     }
-    if (memcmp(r->key, key, kKeySize) == 0) {
+    if (std::memcmp(r->key.data(), key, kKeySize) == 0) {
       *out = r;
       return static_cast<int>(idx);
     }
@@ -213,21 +214,22 @@ static Route* RouteLookup(Route* routes,
   RouteFind(routes, key, &r);
   if (r &&
       __atomic_load_n(&r->occupied, __ATOMIC_ACQUIRE) == 1
-      && memcmp(r->key, key, kKeySize) == 0) {
+      && std::memcmp(r->key.data(), key,
+                     kKeySize) == 0) {
     return r;
   }
   return nullptr;
 }
 
 static void RouteSet(Route* routes,
-                     const uint8_t key[kKeySize],
+                     const Key& key,
                      int worker_id, int fd) {
   Route* r = nullptr;
-  RouteFind(routes, key, &r);
+  RouteFind(routes, key.data(), &r);
   if (!r) {
     return;
   }
-  memcpy(r->key, key, kKeySize);
+  r->key = key;
   r->worker_id = worker_id;
   r->fd = fd;
   __atomic_store_n(&r->occupied, 1, __ATOMIC_RELEASE);
@@ -242,7 +244,7 @@ static void RouteRemove(Route* routes,
 }
 
 static void BroadcastRouteAdd(
-    Ctx* ctx, const uint8_t key[kKeySize],
+    Ctx* ctx, const Key& key,
     int worker_id, int fd) {
   for (int i = 0; i < ctx->num_workers; i++) {
     RouteSet(ctx->workers[i]->routes, key, worker_id, fd);
@@ -250,9 +252,9 @@ static void BroadcastRouteAdd(
 }
 
 static void BroadcastRouteRemove(
-    Ctx* ctx, const uint8_t key[kKeySize]) {
+    Ctx* ctx, const Key& key) {
   for (int i = 0; i < ctx->num_workers; i++) {
-    RouteRemove(ctx->workers[i]->routes, key);
+    RouteRemove(ctx->workers[i]->routes, key.data());
   }
 }
 
@@ -291,6 +293,7 @@ static void XferRingInit(XferRing* r) {
   r->head = 0;
   r->tail = 0;
   r->lock = 0;
+  r->push_count = 0;
 }
 
 static void XferLock(XferRing* r) {
@@ -301,6 +304,11 @@ static void XferLock(XferRing* r) {
 static void XferUnlock(XferRing* r) {
   __atomic_clear(&r->lock, __ATOMIC_RELEASE);
 }
+
+/// Interval (in pushes) between periodic eventfd signals.
+/// Keeps the consumer responsive during sustained bursts
+/// where the ring never fully empties.
+static constexpr uint32_t kXferSignalInterval = 64;
 
 static int XferPush(XferRing* r, const Xfer* x) {
   XferLock(r);
@@ -315,8 +323,11 @@ static int XferPush(XferRing* r, const Xfer* x) {
   int was_empty = (cur_head == cur_tail);
   r->items[cur_head] = *x;
   __atomic_store_n(&r->head, next, __ATOMIC_RELEASE);
+  r->push_count++;
+  int signal = was_empty ||
+               (r->push_count % kXferSignalInterval == 0);
   XferUnlock(r);
-  return was_empty ? 1 : 0;
+  return signal ? 1 : 0;
 }
 
 static int XferPop(XferRing* r, Xfer* x) {
@@ -401,31 +412,29 @@ static void EnqueueCmd(Worker* w, const Cmd* cmd) {
   SignalEventfd(w->event_fd);
 }
 
-void DpAddPeer(Ctx* ctx, int fd,
-               const uint8_t key[kKeySize]) {
+void DpAddPeer(Ctx* ctx, int fd, const Key& key) {
   int wid = PeerWorker(ctx->num_workers, key);
   Cmd cmd{};
   cmd.type = kCmdAddPeer;
   cmd.fd = fd;
-  memcpy(cmd.key, key, kKeySize);
+  cmd.key = key;
   EnqueueCmd(ctx->workers[wid], &cmd);
 }
 
-void DpRemovePeer(Ctx* ctx,
-                  const uint8_t key[kKeySize]) {
+void DpRemovePeer(Ctx* ctx, const Key& key) {
   int wid = PeerWorker(ctx->num_workers, key);
   Cmd cmd{};
   cmd.type = kCmdRemovePeer;
-  memcpy(cmd.key, key, kKeySize);
+  cmd.key = key;
   EnqueueCmd(ctx->workers[wid], &cmd);
 }
 
-void DpWrite(Ctx* ctx, const uint8_t key[kKeySize],
+void DpWrite(Ctx* ctx, const Key& key,
              uint8_t* data, int data_len) {
   int wid = PeerWorker(ctx->num_workers, key);
   Cmd cmd{};
   cmd.type = kCmdWrite;
-  memcpy(cmd.key, key, kKeySize);
+  cmd.key = key;
   cmd.data = data;
   cmd.data_len = data_len;
   EnqueueCmd(ctx->workers[wid], &cmd);
@@ -589,11 +598,19 @@ static void SubmitPollMultishot(Worker* w, int fd,
   io_uring_sqe_set_data64(sqe, MakeUserData(op, fd));
 }
 
+/// Threshold below which regular send is used instead of
+/// SEND_ZC. For small frames the copy cost is negligible
+/// but ZC notification doubles CQE count.
+// Frames at or below this size use regular send() instead
+// of SEND_ZC to avoid the extra notification CQE, halving
+// per-packet kernel overhead for small packets.
+static constexpr int kZcThreshold = 1024;
+
 static inline void SubmitPeerSend(Worker* w, Peer* peer,
                                   const uint8_t* data,
                                   int len, int more) {
   int flags = more ? MSG_MORE : 0;
-  if (peer->no_zc) {
+  if (peer->no_zc || len <= kZcThreshold) {
     SubmitSend(w, peer->fd, data, len, flags);
   } else {
     SubmitSendZc(w, peer->fd, data, len, flags);
@@ -695,19 +712,18 @@ static void ForwardMsg(Worker* w, FrameType type,
   // Only SendPacket frames are forwarded peer-to-peer.
   if (type != FrameType::kSendPacket) {
     // Non-transport frames go to the control plane pipe.
-    uint8_t tag = static_cast<uint8_t>(type);
-    (void)WriteAllBlocking(w->pipe_wr, &tag, 1);
-    uint8_t len_buf[4];
-    len_buf[0] = static_cast<uint8_t>(payload_len >> 24);
-    len_buf[1] = static_cast<uint8_t>(payload_len >> 16);
-    len_buf[2] = static_cast<uint8_t>(payload_len >> 8);
-    len_buf[3] = static_cast<uint8_t>(payload_len);
-    // Prepend the fd for demux on the control side.
+    // Wire format: [4B fd BE][1B type][4B len BE][payload]
     uint8_t fd_buf[4];
     fd_buf[0] = static_cast<uint8_t>(src->fd >> 24);
     fd_buf[1] = static_cast<uint8_t>(src->fd >> 16);
     fd_buf[2] = static_cast<uint8_t>(src->fd >> 8);
     fd_buf[3] = static_cast<uint8_t>(src->fd);
+    uint8_t tag = static_cast<uint8_t>(type);
+    uint8_t len_buf[4];
+    len_buf[0] = static_cast<uint8_t>(payload_len >> 24);
+    len_buf[1] = static_cast<uint8_t>(payload_len >> 16);
+    len_buf[2] = static_cast<uint8_t>(payload_len >> 8);
+    len_buf[3] = static_cast<uint8_t>(payload_len);
     (void)WriteAllBlocking(w->pipe_wr, fd_buf, 4);
     (void)WriteAllBlocking(w->pipe_wr, &tag, 1);
     (void)WriteAllBlocking(w->pipe_wr, len_buf, 4);
@@ -799,6 +815,8 @@ static void HandleRecvProvided(Worker* w,
     if (cqe->res <= 0) {
       if (cqe->res == 0 || cqe->res == -ECONNRESET) {
         NotifyPeerClose(w, peer);
+        // Stop resubmitting recv on this dead fd.
+        w->fd_map[fd] = nullptr;
       }
       goto return_buf;
     }
@@ -898,6 +916,7 @@ static void HandleRecvSingle(Worker* w,
   if (cqe->res <= 0) {
     if (cqe->res == 0 || cqe->res == -ECONNRESET) {
       NotifyPeerClose(w, peer);
+      w->fd_map[fd] = nullptr;
     }
     return;
   }
@@ -1020,6 +1039,35 @@ static void HandleSendCqe(Worker* w,
       return;
     }
     if (cqe->res == -EAGAIN) {
+      w->stats.send_eagain++;
+      peer->send_inflight--;
+      SendItem* p = peer->send_head;
+      for (int i = 0;
+           i < peer->send_inflight && p; i++) {
+        p = p->next;
+      }
+      peer->send_next = p;
+      if (!peer->poll_write_pending) {
+        struct io_uring_sqe* sqe = GetSqe(w);
+        if (sqe) {
+          io_uring_prep_poll_add(sqe, fd, POLLOUT);
+          if (w->use_fixed_files) {
+            sqe->flags |= IOSQE_FIXED_FILE;
+          }
+          io_uring_sqe_set_data64(
+              sqe,
+              MakeUserData(kOpPollWrite, fd));
+          peer->poll_write_pending = 1;
+        }
+      }
+      return;
+    }
+    if (cqe->res == -ENOMEM) {
+      // SEND_ZC can't pin pages — kernel socket memory
+      // exhausted. Treat like EAGAIN: back off and wait
+      // for POLLOUT. This preserves TCP backpressure
+      // which prevents the recv path from outrunning
+      // the send path.
       peer->send_inflight--;
       SendItem* p = peer->send_head;
       for (int i = 0;
@@ -1135,7 +1183,7 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
     return;
   }
   HtInsert(w, cmd->fd, cmd->key);
-  Peer* p = HtLookup(w, cmd->key);
+  Peer* p = HtLookup(w, cmd->key.data());
   if (!p) {
     return;
   }
@@ -1168,7 +1216,7 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
 }
 
 static void ProcessCmdRemove(Worker* w, Cmd* cmd) {
-  Peer* p = HtLookup(w, cmd->key);
+  Peer* p = HtLookup(w, cmd->key.data());
   if (!p) {
     return;
   }
@@ -1180,13 +1228,14 @@ static void ProcessCmdRemove(Worker* w, Cmd* cmd) {
       io_uring_register_files_update(
           &w->ring, fd, fds, 1);
     }
+    close(fd);
   }
   HtRemove(w, cmd->key);
   BroadcastRouteRemove(w->ctx, cmd->key);
 }
 
 static void ProcessCmdWrite(Worker* w, Cmd* cmd) {
-  Peer* p = HtLookup(w, cmd->key);
+  Peer* p = HtLookup(w, cmd->key.data());
   if (p) {
     // Build a DERP frame wrapping the data.
     int frame_len = kFrameHeaderSize + cmd->data_len;
@@ -1248,6 +1297,22 @@ static void ProcessXfer(Worker* w) {
 
 static void* WorkerRun(void* arg) {
   auto* w = static_cast<Worker*>(arg);
+
+  // Pin to core if configured.
+  int pin = w->ctx->pin_cores[w->id];
+  if (pin >= 0) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(pin, &cpuset);
+    if (sched_setaffinity(0, sizeof(cpuset),
+                          &cpuset) == 0) {
+      spdlog::info("worker {} pinned to core {}", w->id,
+                   pin);
+    } else {
+      spdlog::warn("worker {} pin to core {} failed: {}",
+                   w->id, pin, strerror(errno));
+    }
+  }
 
   SubmitPollMultishot(w, w->event_fd, kOpPollCmd);
   SubmitPollMultishot(w, w->xfer_efd, kOpPollXfer);
@@ -1534,6 +1599,9 @@ int DpInit(Ctx* ctx, int num_workers) {
     num_workers = kMaxWorkers;
   }
   ctx->num_workers = num_workers;
+  for (int i = 0; i < kMaxWorkers; i++) {
+    ctx->pin_cores[i] = -1;
+  }
 
   for (int i = 0; i < num_workers; i++) {
     auto* w = static_cast<Worker*>(

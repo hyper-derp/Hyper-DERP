@@ -1,0 +1,17 @@
+{
+  "test": "pinned_8192B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-10T12:06:08Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 8192,
+    "num_workers": 0,
+    "core": 3
+  },
+  "elapsed_ns": 10000005453,
+  "elapsed_ms": 10000.005,
+  "packets": 1005894,
+  "bytes": 8240283648,
+  "throughput_pps": 100589.3,
+  "throughput_mbps": 6592.223
+}

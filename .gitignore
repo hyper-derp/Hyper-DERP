@@ -14,3 +14,25 @@ compile_commands.json
 .vscode/
 *.user
 CMakeUserPresets.json
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# MCP
+.mcp.json
+
+# Shell configs (present in homedir-based workspaces)
+.bash_profile
+.bashrc
+.zshrc
+.zprofile
+.profile
+.gitconfig
+
+# Git internals (bare repo artifacts in workspace root)
+HEAD
+objects/
+refs/
+hooks/
+config

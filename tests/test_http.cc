@@ -19,13 +19,14 @@ TEST(HttpTest, ParseDerpUpgradeRequest) {
       "\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  ASSERT_GT(rc, 0);
-  EXPECT_STREQ(req.method, "GET");
-  EXPECT_STREQ(req.path, "/derp");
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
+  EXPECT_EQ(req.method, "GET");
+  EXPECT_EQ(req.path, "/derp");
   EXPECT_TRUE(req.has_upgrade);
-  EXPECT_STREQ(req.upgrade, "DERP");
+  EXPECT_EQ(req.upgrade, "DERP");
   EXPECT_FALSE(req.fast_start);
 }
 
@@ -36,10 +37,11 @@ TEST(HttpTest, ParseProbeRequest) {
       "\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  ASSERT_GT(rc, 0);
-  EXPECT_STREQ(req.path, "/derp/probe");
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
+  EXPECT_EQ(req.path, "/derp/probe");
   EXPECT_FALSE(req.has_upgrade);
 }
 
@@ -50,10 +52,11 @@ TEST(HttpTest, ParseGenerate204Request) {
       "\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  ASSERT_GT(rc, 0);
-  EXPECT_STREQ(req.path, "/generate_204");
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
+  EXPECT_EQ(req.path, "/generate_204");
 }
 
 TEST(HttpTest, ParseFastStart) {
@@ -66,9 +69,10 @@ TEST(HttpTest, ParseFastStart) {
       "\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  ASSERT_GT(rc, 0);
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
   EXPECT_TRUE(req.fast_start);
 }
 
@@ -80,10 +84,11 @@ TEST(HttpTest, ParseWebSocketUpgrade) {
       "\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  ASSERT_GT(rc, 0);
-  EXPECT_STREQ(req.upgrade, "websocket");
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
+  EXPECT_EQ(req.upgrade, "websocket");
   EXPECT_TRUE(req.has_upgrade);
 }
 
@@ -91,9 +96,11 @@ TEST(HttpTest, IncompleteRequest) {
   const char* raw = "GET /derp HTTP/1.1\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  EXPECT_EQ(rc, -1);
+  ASSERT_FALSE(result.has_value());
+  EXPECT_EQ(result.error().code,
+            HttpParseError::Incomplete);
 }
 
 TEST(HttpTest, UpgradeResponse) {
@@ -169,9 +176,10 @@ TEST(HttpTest, CaseInsensitiveHeaders) {
       "\r\n";
   int len = strlen(raw);
   HttpRequest req;
-  int rc = ParseHttpRequest(
+  auto result = ParseHttpRequest(
       reinterpret_cast<const uint8_t*>(raw), len, &req);
-  ASSERT_GT(rc, 0);
+  ASSERT_TRUE(result.has_value());
+  ASSERT_GT(*result, 0);
   EXPECT_TRUE(req.has_upgrade);
 }
 

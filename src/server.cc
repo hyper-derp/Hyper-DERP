@@ -8,11 +8,16 @@
 
 #include <cerrno>
 #include <cstring>
+#include <expected>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <string_view>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "hyper_derp/control_plane.h"
+#include "hyper_derp/data_plane.h"
+#include "hyper_derp/error.h"
 #include "hyper_derp/http.h"
 
 namespace hyper_derp {
@@ -44,14 +49,15 @@ static int ReadHttpRequest(int fd, HttpRequest* req) {
     }
     total += n;
 
-    int rc = ParseHttpRequest(buf, total, req);
-    if (rc > 0) {
+    auto result = ParseHttpRequest(buf, total, req);
+    if (result.has_value()) {
       return 0;
     }
-    if (rc == -2) {
+    if (result.error().code ==
+        HttpParseError::BadRequest) {
       return -1;
     }
-    // rc == -1: incomplete, keep reading.
+    // Incomplete: keep reading.
   }
   return -1;
 }
@@ -70,14 +76,15 @@ static void SendAndClose(int fd, const uint8_t* data,
   close(fd);
 }
 
+using namespace std::string_view_literals;
+
 // Handle a single accepted connection.
 static void HandleConnection(Server* server, int fd) {
   SetTcpNodelay(fd);
 
-  // Set a 10-second deadline for the HTTP + handshake phase.
-  struct timeval tv;
-  tv.tv_sec = 10;
-  tv.tv_usec = 0;
+  // Set a 10-second deadline for the HTTP + handshake
+  // phase.
+  timeval tv{.tv_sec = 10, .tv_usec = 0};
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv,
              sizeof(tv));
   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv,
@@ -90,8 +97,8 @@ static void HandleConnection(Server* server, int fd) {
   }
 
   // Route by path.
-  if (strcmp(req.path, "/derp/probe") == 0 ||
-      strcmp(req.path, "/derp/latency-check") == 0) {
+  if (req.path == "/derp/probe"sv ||
+      req.path == "/derp/latency-check"sv) {
     uint8_t resp[256];
     int n = WriteProbeResponse(resp, sizeof(resp));
     if (n > 0) {
@@ -102,7 +109,7 @@ static void HandleConnection(Server* server, int fd) {
     return;
   }
 
-  if (strcmp(req.path, "/generate_204") == 0) {
+  if (req.path == "/generate_204"sv) {
     uint8_t resp[512];
     int n = WriteNoContentResponse(
         resp, sizeof(resp), nullptr);
@@ -114,7 +121,7 @@ static void HandleConnection(Server* server, int fd) {
     return;
   }
 
-  if (strcmp(req.path, "/derp") != 0) {
+  if (req.path != "/derp"sv) {
     uint8_t resp[256];
     int n = WriteErrorResponse(resp, sizeof(resp), 404,
                                "not found");
@@ -162,11 +169,14 @@ static void HandleConnection(Server* server, int fd) {
     }
   }
 
-  // Perform DERP handshake (ServerKey → ClientInfo →
+  // Perform DERP handshake (ServerKey -> ClientInfo ->
   // ServerInfo).
   ClientInfo info;
-  if (PerformHandshake(fd, &server->keys, &info) < 0) {
-    spdlog::warn("handshake failed for fd {}", fd);
+  auto hs = PerformHandshake(fd, &server->keys, &info);
+  if (!hs) {
+    spdlog::warn("handshake failed for fd {}: {} ({})",
+                 fd, hs.error().message,
+                 HandshakeErrorName(hs.error().code));
     close(fd);
     return;
   }
@@ -179,8 +189,7 @@ static void HandleConnection(Server* server, int fd) {
 
   // Clear the handshake timeouts before handing to the
   // data plane.
-  tv.tv_sec = 0;
-  tv.tv_usec = 0;
+  tv = {.tv_sec = 0, .tv_usec = 0};
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv,
              sizeof(tv));
   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv,
@@ -188,6 +197,10 @@ static void HandleConnection(Server* server, int fd) {
 
   // Hand the authenticated fd to the data plane.
   DpAddPeer(&server->data_plane, fd, info.public_key);
+
+  // Register with the control plane (notifies watchers).
+  CpOnPeerConnect(&server->control_plane,
+                  info.public_key, fd);
 }
 
 static void* AcceptLoop(void* arg) {
@@ -198,11 +211,10 @@ static void* AcceptLoop(void* arg) {
 
   while (__atomic_load_n(&server->running,
                          __ATOMIC_ACQUIRE)) {
-    struct sockaddr_in addr;
+    sockaddr_in addr{};
     socklen_t addr_len = sizeof(addr);
     int fd = accept(server->listen_fd,
-                    reinterpret_cast<struct sockaddr*>(
-                        &addr),
+                    reinterpret_cast<sockaddr*>(&addr),
                     &addr_len);
     if (fd < 0) {
       if (errno == EINTR || errno == EAGAIN) {
@@ -222,15 +234,18 @@ static void* AcceptLoop(void* arg) {
   return nullptr;
 }
 
-int ServerInit(Server* server,
-               const ServerConfig* config) {
-  memset(server, 0, sizeof(*server));
+auto ServerInit(Server* server,
+                const ServerConfig* config)
+    -> std::expected<void, Error<ServerError>> {
+  *server = {};
   server->config = *config;
-  server->listen_fd = -1;
 
-  if (GenerateServerKeys(&server->keys) < 0) {
-    spdlog::error("failed to generate server keys");
-    return -1;
+  auto keys = GenerateServerKeys(&server->keys);
+  if (!keys) {
+    spdlog::error("failed to generate server keys: {}",
+                  keys.error().message);
+    return MakeError(ServerError::KeyGenFailed,
+                     keys.error().message);
   }
 
   char hex[kKeySize * 2 + 1];
@@ -248,15 +263,26 @@ int ServerInit(Server* server,
 
   if (DpInit(&server->data_plane, num_workers) < 0) {
     spdlog::error("failed to initialize data plane");
-    return -1;
+    return MakeError(ServerError::DataPlaneInitFailed,
+                     "DpInit failed");
   }
+
+  // Apply core pinning configuration.
+  for (int i = 0; i < num_workers && i < kMaxWorkers;
+       i++) {
+    server->data_plane.pin_cores[i] =
+        config->pin_cores[i];
+  }
+
+  CpInit(&server->control_plane, &server->data_plane);
 
   // Create TCP listener.
   int lfd = socket(AF_INET, SOCK_STREAM, 0);
   if (lfd < 0) {
     spdlog::error("socket: {}", strerror(errno));
     DpDestroy(&server->data_plane);
-    return -1;
+    return MakeError(ServerError::SocketFailed,
+                     strerror(errno));
   }
 
   int opt = 1;
@@ -265,40 +291,53 @@ int ServerInit(Server* server,
   setsockopt(lfd, SOL_SOCKET, SO_REUSEPORT, &opt,
              sizeof(opt));
 
-  struct sockaddr_in bind_addr;
-  memset(&bind_addr, 0, sizeof(bind_addr));
+  sockaddr_in bind_addr{};
   bind_addr.sin_family = AF_INET;
   bind_addr.sin_addr.s_addr = INADDR_ANY;
   bind_addr.sin_port = htons(config->port);
 
   if (bind(lfd,
-           reinterpret_cast<struct sockaddr*>(&bind_addr),
+           reinterpret_cast<sockaddr*>(&bind_addr),
            sizeof(bind_addr)) < 0) {
     spdlog::error("bind: {}", strerror(errno));
     close(lfd);
     DpDestroy(&server->data_plane);
-    return -1;
+    return MakeError(ServerError::BindFailed,
+                     strerror(errno));
   }
 
   if (listen(lfd, 128) < 0) {
     spdlog::error("listen: {}", strerror(errno));
     close(lfd);
     DpDestroy(&server->data_plane);
-    return -1;
+    return MakeError(ServerError::ListenFailed,
+                     strerror(errno));
   }
 
   server->listen_fd = lfd;
   server->running = 1;
-  return 0;
+  return {};
 }
 
-int ServerRun(Server* server) {
+auto ServerRun(Server* server)
+    -> std::expected<void, Error<ServerError>> {
+  // Start control plane thread.
+  int rc = pthread_create(&server->control_thread,
+                          nullptr, CpRunLoop,
+                          &server->control_plane);
+  if (rc != 0) {
+    spdlog::error("failed to start control thread");
+    return MakeError(ServerError::ThreadCreateFailed,
+                     "control thread");
+  }
+
   // Start accept thread.
-  int rc = pthread_create(&server->accept_thread, nullptr,
-                          AcceptLoop, server);
+  rc = pthread_create(&server->accept_thread, nullptr,
+                      AcceptLoop, server);
   if (rc != 0) {
     spdlog::error("failed to start accept thread");
-    return -1;
+    return MakeError(ServerError::ThreadCreateFailed,
+                     "accept thread");
   }
 
   spdlog::info("data plane running with {} workers",
@@ -318,12 +357,50 @@ int ServerRun(Server* server) {
   }
   pthread_join(server->accept_thread, nullptr);
 
-  return rc;
+  // Stop and join the control thread.
+  CpStop(&server->control_plane);
+  pthread_join(server->control_thread, nullptr);
+
+  if (rc < 0) {
+    return MakeError(ServerError::DataPlaneRunFailed,
+                     "DpRun returned error");
+  }
+  return {};
 }
 
 void ServerStop(Server* server) {
+  // Dump stats before stopping.
+  uint64_t sd, xd, se, rb, sb;
+  DpGetStats(&server->data_plane,
+             &sd, &xd, &se, &rb, &sb);
+  spdlog::info(
+      "stats: send_drops={} xfer_drops={} slab_exhausts={} "
+      "recv_bytes={} send_bytes={}",
+      sd, xd, se, rb, sb);
+
+  // Detailed send error breakdown.
+  uint64_t ep = 0, ecr = 0, eag = 0, eoth = 0;
+  for (int i = 0; i < server->data_plane.num_workers;
+       i++) {
+    Worker* w = server->data_plane.workers[i];
+    if (!w) continue;
+    ep += __atomic_load_n(&w->stats.send_epipe,
+                          __ATOMIC_RELAXED);
+    ecr += __atomic_load_n(&w->stats.send_econnreset,
+                           __ATOMIC_RELAXED);
+    eag += __atomic_load_n(&w->stats.send_eagain,
+                           __ATOMIC_RELAXED);
+    eoth += __atomic_load_n(&w->stats.send_other_err,
+                            __ATOMIC_RELAXED);
+  }
+  spdlog::info(
+      "send errors: epipe={} econnreset={} eagain={} "
+      "other={}",
+      ep, ecr, eag, eoth);
+
   __atomic_store_n(&server->running, 0,
                    __ATOMIC_RELEASE);
+  CpStop(&server->control_plane);
   DpStop(&server->data_plane);
   if (server->listen_fd >= 0) {
     shutdown(server->listen_fd, SHUT_RDWR);
@@ -331,6 +408,7 @@ void ServerStop(Server* server) {
 }
 
 void ServerDestroy(Server* server) {
+  CpDestroy(&server->control_plane);
   DpDestroy(&server->data_plane);
   if (server->listen_fd >= 0) {
     close(server->listen_fd);
