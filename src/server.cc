@@ -8,6 +8,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <ctime>
 #include <expected>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -317,7 +318,8 @@ auto ServerInit(Server* server,
   return {};
 }
 
-auto ServerRun(Server* server)
+auto ServerRun(Server* server,
+               std::atomic<int>* stop_flag)
     -> std::expected<void, Error<ServerError>> {
   // Start control plane thread.
   try {
@@ -348,8 +350,33 @@ auto ServerRun(Server* server)
   server->metrics_server = MetricsStart(
       server->config.metrics, &server->data_plane);
 
+  // Poll for external stop signal in a background
+  // thread. This bridges the async-signal-safe flag
+  // into the normal shutdown path.
+  std::thread stop_poller;
+  if (stop_flag) {
+    stop_poller = std::thread([server, stop_flag]() {
+      while (!stop_flag->load(
+                 std::memory_order_acquire)) {
+        struct timespec ts {
+          .tv_sec = 0, .tv_nsec = 100000000
+        };
+        nanosleep(&ts, nullptr);
+      }
+      ServerStop(server);
+    });
+  }
+
   // Run data plane (blocks until DpStop is called).
   int rc = DpRun(&server->data_plane);
+
+  // Ensure the stop poller exits.
+  if (stop_flag) {
+    stop_flag->store(1, std::memory_order_release);
+  }
+  if (stop_poller.joinable()) {
+    stop_poller.join();
+  }
 
   // Wait for accept thread to finish.
   server->running.store(0, std::memory_order_release);
@@ -377,13 +404,20 @@ auto ServerRun(Server* server)
 }
 
 void ServerStop(Server* server) {
+  // Guard against double-stop.
+  int expected = 1;
+  if (!server->running.compare_exchange_strong(
+          expected, 0, std::memory_order_acq_rel)) {
+    return;
+  }
+
   // Dump stats before stopping.
   uint64_t sd, xd, se, rb, sb;
   DpGetStats(&server->data_plane,
              &sd, &xd, &se, &rb, &sb);
   spdlog::info(
-      "stats: send_drops={} xfer_drops={} slab_exhausts={} "
-      "recv_bytes={} send_bytes={}",
+      "stats: send_drops={} xfer_drops={} "
+      "slab_exhausts={} recv_bytes={} send_bytes={}",
       sd, xd, se, rb, sb);
 
   // Detailed send error breakdown.
@@ -410,7 +444,6 @@ void ServerStop(Server* server) {
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;
 
-  server->running.store(0, std::memory_order_release);
   CpStop(&server->control_plane);
   DpStop(&server->data_plane);
   if (server->listen_fd >= 0) {

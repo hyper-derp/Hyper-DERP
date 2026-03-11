@@ -14,6 +14,7 @@
 
 #include "hyper_derp/data_plane.h"
 
+#include <sodium.h>
 #include <spdlog/spdlog.h>
 
 #include <cerrno>
@@ -105,7 +106,7 @@ static int HtFind(Worker* w, const uint8_t* key,
       }
       continue;
     }
-    if (std::memcmp(p->key.data(), key, kKeySize) == 0) {
+    if (sodium_memcmp(p->key.data(), key, kKeySize) == 0) {
       *out = p;
       return static_cast<int>(idx);
     }
@@ -123,7 +124,7 @@ static Peer* HtLookup(Worker* w, const uint8_t* key) {
   Peer* p = nullptr;
   HtFind(w, key, &p);
   if (p && p->occupied == 1 &&
-      std::memcmp(p->key.data(), key, kKeySize) == 0) {
+      sodium_memcmp(p->key.data(), key, kKeySize) == 0) {
     return p;
   }
   return nullptr;
@@ -206,7 +207,7 @@ static int RouteFind(Route* routes,
       }
       continue;
     }
-    if (std::memcmp(r->key.data(), key, kKeySize) == 0) {
+    if (sodium_memcmp(r->key.data(), key, kKeySize) == 0) {
       *out = r;
       return static_cast<int>(idx);
     }
@@ -226,8 +227,8 @@ static Route* RouteLookup(Route* routes,
   RouteFind(routes, key, &r);
   if (r &&
       __atomic_load_n(&r->occupied, __ATOMIC_ACQUIRE) == 1
-      && std::memcmp(r->key.data(), key,
-                     kKeySize) == 0) {
+      && sodium_memcmp(r->key.data(), key,
+                       kKeySize) == 0) {
     return r;
   }
   return nullptr;
@@ -494,11 +495,15 @@ static int WriteAllBlocking(int fd, const uint8_t* buf,
 
 // -- io_uring SQE helpers ----------------------------------------------------
 
+/// Get an SQE, flushing the submission queue if full.
+/// Returns nullptr only if the ring is truly exhausted
+/// (should not happen with kUringQueueDepth = 4096).
 static inline struct io_uring_sqe* GetSqe(Worker* w) {
   struct io_uring_sqe* sqe = io_uring_get_sqe(&w->ring);
   if (sqe) {
     return sqe;
   }
+  // SQ full — flush pending submissions and retry.
   io_uring_submit(&w->ring);
   return io_uring_get_sqe(&w->ring);
 }
@@ -1116,10 +1121,15 @@ static void HandleSendCqe(Worker* w,
       }
       return;
     }
-    if (cqe->res == -EPIPE ||
-        cqe->res == -ECONNRESET ||
-        cqe->res == -ENOTCONN) {
+    if (cqe->res == -EPIPE) {
+      w->stats.send_epipe++;
       NotifyPeerClose(w, peer);
+    } else if (cqe->res == -ECONNRESET ||
+               cqe->res == -ENOTCONN) {
+      w->stats.send_econnreset++;
+      NotifyPeerClose(w, peer);
+    } else {
+      w->stats.send_other_err++;
     }
     w->stats.send_drops++;
     DrainSendQueue(w, peer, defer_notif);

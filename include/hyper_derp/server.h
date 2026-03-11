@@ -97,8 +97,12 @@ auto ServerInit(Server* server,
 
 /// @brief Starts the server (blocks until stopped).
 /// @param server Initialized server.
+/// @param stop_flag Optional atomic flag set by signal
+///   handler. ServerRun polls this and calls ServerStop
+///   from a safe context. May be nullptr.
 /// @returns void on success, or ServerError.
-auto ServerRun(Server* server)
+auto ServerRun(Server* server,
+               std::atomic<int>* stop_flag = nullptr)
     -> std::expected<void, Error<ServerError>>;
 
 /// @brief Signals the server to stop.
