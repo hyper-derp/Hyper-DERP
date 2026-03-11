@@ -75,6 +75,7 @@ struct AggregatedStats {
   uint64_t send_econnreset = 0;
   uint64_t send_eagain = 0;
   uint64_t send_other_err = 0;
+  uint64_t recv_enobufs = 0;
   int64_t peers_active = 0;
   int num_workers = 0;
 };
@@ -103,6 +104,8 @@ static AggregatedStats CollectStats(Ctx* ctx) {
         &w->stats.send_eagain, __ATOMIC_RELAXED);
     s.send_other_err += __atomic_load_n(
         &w->stats.send_other_err, __ATOMIC_RELAXED);
+    s.recv_enobufs += __atomic_load_n(
+        &w->stats.recv_enobufs, __ATOMIC_RELAXED);
     // Count active peers from hash table.
     for (int j = 0; j < kHtCapacity; j++) {
       if (w->ht[j].occupied == 1) {
@@ -115,7 +118,8 @@ static AggregatedStats CollectStats(Ctx* ctx) {
 
 // -- Route handlers ----------------------------------------------------------
 
-static void RegisterRoutes(MetricsServer* ms) {
+static void RegisterRoutes(MetricsServer* ms,
+                           bool enable_debug) {
   // Prometheus scrape endpoint.
   CROW_ROUTE(ms->app, "/metrics")
   ([ms]() {
@@ -141,6 +145,9 @@ static void RegisterRoutes(MetricsServer* ms) {
          {"other", s.send_other_err}});
     WriteCounter(out, "hyper_derp_send_drops_total",
                  "Total send drops", s.send_drops);
+    WriteCounter(out, "hyper_derp_recv_enobufs_total",
+                 "Provided buffer pool exhaustions",
+                 s.recv_enobufs);
     WriteGauge(out, "hyper_derp_peers_active",
                "Currently connected peers",
                s.peers_active);
@@ -172,6 +179,8 @@ static void RegisterRoutes(MetricsServer* ms) {
     j["send_bytes"] = s.send_bytes;
     return crow::response(200, j);
   });
+
+  if (!enable_debug) return;
 
   // Per-worker stats breakdown.
   CROW_ROUTE(ms->app, "/debug/workers")
@@ -252,7 +261,7 @@ MetricsServer* MetricsStart(const MetricsConfig& config,
   ms->ctx = ctx;
   ms->start_time = std::chrono::steady_clock::now();
 
-  RegisterRoutes(ms);
+  RegisterRoutes(ms, config.enable_debug);
 
   // Suppress Crow's internal logging noise.
   ms->app.loglevel(crow::LogLevel::Warning);

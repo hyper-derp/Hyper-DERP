@@ -1000,8 +1000,12 @@ static void HandleRecvCqe(Worker* w,
 
   if (w->use_provided_bufs) {
     if (cqe->res == -ENOBUFS || cqe->res == -EINVAL) {
+      if (cqe->res == -ENOBUFS) {
+        w->stats.recv_enobufs++;
+      }
       if (cqe->res == -EINVAL) {
-        // Kernel doesn't support multishot recv; fall back.
+        // Kernel doesn't support multishot recv;
+        // fall back.
         w->use_multishot_recv = 0;
       }
       int fd = UdFd(cqe->user_data);
@@ -1479,6 +1483,9 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
   w->id = id;
   w->ctx = ctx;
   w->running = 1;
+  w->pipe_wr = -1;
+  w->event_fd = -1;
+  w->xfer_efd = -1;
 
   int pipefd[2];
   if (pipe(pipefd) < 0) {
@@ -1490,32 +1497,36 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
   w->event_fd =
       eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (w->event_fd < 0) {
-    close(pipefd[0]);
-    close(w->pipe_wr);
-    return -1;
+    goto fail;
   }
 
   w->xfer_efd =
       eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (w->xfer_efd < 0) {
-    close(pipefd[0]);
-    close(w->pipe_wr);
-    close(w->event_fd);
-    return -1;
+    goto fail;
   }
 
   RingInit(&w->cmd_ring);
   XferRingInit(&w->xfer_ring);
 
   if (SlabInit(w) < 0) {
-    close(pipefd[0]);
-    close(w->pipe_wr);
-    close(w->event_fd);
-    close(w->xfer_efd);
-    return -1;
+    goto fail;
   }
 
   return 0;
+
+fail:
+  if (w->xfer_efd >= 0) close(w->xfer_efd);
+  if (w->event_fd >= 0) close(w->event_fd);
+  if (w->pipe_wr >= 0) close(w->pipe_wr);
+  if (ctx->pipe_rds[id] >= 0) {
+    close(ctx->pipe_rds[id]);
+    ctx->pipe_rds[id] = -1;
+  }
+  w->pipe_wr = -1;
+  w->event_fd = -1;
+  w->xfer_efd = -1;
+  return -1;
 }
 
 /// Initialize the io_uring ring, file table, and provided

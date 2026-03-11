@@ -34,6 +34,8 @@ static void PrintUsage(const char* prog) {
       "(0=disabled)\n"
       "  --tls-cert <path>     TLS certificate for metrics\n"
       "  --tls-key <path>      TLS key for metrics\n"
+      "  --debug-endpoints     Enable /debug/* metrics "
+      "endpoints\n"
       "  --log-level <level>   Log level "
       "(debug|info|warn|error)\n"
       "  --help                Show this help\n"
@@ -91,6 +93,7 @@ int main(int argc, char* argv[]) {
   const char* tls_key = nullptr;
   const char* pin_spec = nullptr;
   const char* log_level = nullptr;
+  bool debug_endpoints = false;
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -136,6 +139,8 @@ int main(int argc, char* argv[]) {
       tls_cert = argv[++i];
     } else if (arg == "--tls-key"sv && i + 1 < argc) {
       tls_key = argv[++i];
+    } else if (arg == "--debug-endpoints"sv) {
+      debug_endpoints = true;
     } else if (arg == "--log-level"sv && i + 1 < argc) {
       log_level = argv[++i];
     } else {
@@ -183,6 +188,7 @@ int main(int argc, char* argv[]) {
       metrics_port);
   if (tls_cert) config.metrics.tls_cert = tls_cert;
   if (tls_key) config.metrics.tls_key = tls_key;
+  config.metrics.enable_debug = debug_endpoints;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,

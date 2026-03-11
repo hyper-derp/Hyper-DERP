@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <ctime>
 #include <expected>
@@ -22,6 +23,32 @@
 #include "hyper_derp/http.h"
 
 namespace hyper_derp {
+
+// Rate-limited warning: at most once per second.
+static std::chrono::steady_clock::time_point
+    g_last_hs_warn;
+static uint64_t g_hs_warn_suppressed = 0;
+
+static void WarnHandshake(int fd,
+                          const std::string& msg,
+                          const std::string_view& code) {
+  auto now = std::chrono::steady_clock::now();
+  if (now - g_last_hs_warn < std::chrono::seconds(1)) {
+    g_hs_warn_suppressed++;
+    return;
+  }
+  g_last_hs_warn = now;
+  if (g_hs_warn_suppressed > 0) {
+    spdlog::warn(
+        "handshake failed for fd {}: {} ({}) "
+        "[{} similar warnings suppressed]",
+        fd, msg, code, g_hs_warn_suppressed);
+    g_hs_warn_suppressed = 0;
+  } else {
+    spdlog::warn("handshake failed for fd {}: {} ({})",
+                 fd, msg, code);
+  }
+}
 
 static void SetTcpNodelay(int fd) {
   int flag = 1;
@@ -175,9 +202,8 @@ static void HandleConnection(Server* server, int fd) {
   ClientInfo info;
   auto hs = PerformHandshake(fd, &server->keys, &info);
   if (!hs) {
-    spdlog::warn("handshake failed for fd {}: {} ({})",
-                 fd, hs.error().message,
-                 HandshakeErrorName(hs.error().code));
+    WarnHandshake(fd, hs.error().message,
+                  HandshakeErrorName(hs.error().code));
     close(fd);
     return;
   }

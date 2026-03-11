@@ -17,6 +17,8 @@ struct MetricsConfig {
   uint16_t port = 0;  // 0 = disabled
   std::string tls_cert;
   std::string tls_key;
+  /// Enable /debug/* endpoints (exposes peer keys).
+  bool enable_debug = false;
 };
 
 /// Opaque metrics server handle.

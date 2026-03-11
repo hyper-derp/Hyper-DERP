@@ -155,6 +155,7 @@ struct WorkerStats {
   uint64_t send_econnreset;
   uint64_t send_eagain;
   uint64_t send_other_err;
+  uint64_t recv_enobufs;
 };
 
 /// SPSC ring buffer for commands to a worker.
