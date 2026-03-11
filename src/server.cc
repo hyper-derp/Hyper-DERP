@@ -203,14 +203,12 @@ static void HandleConnection(Server* server, int fd) {
                   info.public_key, fd);
 }
 
-static void* AcceptLoop(void* arg) {
-  auto* server = static_cast<Server*>(arg);
-
+static void AcceptLoop(Server* server) {
   spdlog::info("accept loop started on port {}",
                server->config.port);
 
-  while (__atomic_load_n(&server->running,
-                         __ATOMIC_ACQUIRE)) {
+  while (server->running.load(
+             std::memory_order_acquire)) {
     sockaddr_in addr{};
     socklen_t addr_len = sizeof(addr);
     int fd = accept(server->listen_fd,
@@ -220,8 +218,8 @@ static void* AcceptLoop(void* arg) {
       if (errno == EINTR || errno == EAGAIN) {
         continue;
       }
-      if (__atomic_load_n(&server->running,
-                          __ATOMIC_ACQUIRE)) {
+      if (server->running.load(
+              std::memory_order_acquire)) {
         spdlog::error("accept failed: {}",
                       strerror(errno));
       }
@@ -230,15 +228,14 @@ static void* AcceptLoop(void* arg) {
 
     HandleConnection(server, fd);
   }
-
-  return nullptr;
 }
 
 auto ServerInit(Server* server,
                 const ServerConfig* config)
     -> std::expected<void, Error<ServerError>> {
-  *server = {};
   server->config = *config;
+  server->listen_fd = -1;
+  server->running.store(0, std::memory_order_relaxed);
 
   auto keys = GenerateServerKeys(&server->keys);
   if (!keys) {
@@ -315,27 +312,30 @@ auto ServerInit(Server* server,
   }
 
   server->listen_fd = lfd;
-  server->running = 1;
+  server->running.store(1, std::memory_order_release);
   return {};
 }
 
 auto ServerRun(Server* server)
     -> std::expected<void, Error<ServerError>> {
   // Start control plane thread.
-  int rc = pthread_create(&server->control_thread,
-                          nullptr, CpRunLoop,
-                          &server->control_plane);
-  if (rc != 0) {
+  try {
+    server->control_thread = std::thread(
+        CpRunLoop, &server->control_plane);
+  } catch (const std::system_error&) {
     spdlog::error("failed to start control thread");
     return MakeError(ServerError::ThreadCreateFailed,
                      "control thread");
   }
 
   // Start accept thread.
-  rc = pthread_create(&server->accept_thread, nullptr,
-                      AcceptLoop, server);
-  if (rc != 0) {
+  try {
+    server->accept_thread = std::thread(
+        AcceptLoop, server);
+  } catch (const std::system_error&) {
     spdlog::error("failed to start accept thread");
+    CpStop(&server->control_plane);
+    server->control_thread.join();
     return MakeError(ServerError::ThreadCreateFailed,
                      "accept thread");
   }
@@ -344,22 +344,25 @@ auto ServerRun(Server* server)
                server->data_plane.num_workers);
 
   // Run data plane (blocks until DpStop is called).
-  rc = DpRun(&server->data_plane);
+  int rc = DpRun(&server->data_plane);
 
   // Wait for accept thread to finish.
-  __atomic_store_n(&server->running, 0,
-                   __ATOMIC_RELEASE);
+  server->running.store(0, std::memory_order_release);
   // Closing listen_fd unblocks accept().
   if (server->listen_fd >= 0) {
     shutdown(server->listen_fd, SHUT_RDWR);
     close(server->listen_fd);
     server->listen_fd = -1;
   }
-  pthread_join(server->accept_thread, nullptr);
+  if (server->accept_thread.joinable()) {
+    server->accept_thread.join();
+  }
 
   // Stop and join the control thread.
   CpStop(&server->control_plane);
-  pthread_join(server->control_thread, nullptr);
+  if (server->control_thread.joinable()) {
+    server->control_thread.join();
+  }
 
   if (rc < 0) {
     return MakeError(ServerError::DataPlaneRunFailed,
@@ -398,8 +401,7 @@ void ServerStop(Server* server) {
       "other={}",
       ep, ecr, eag, eoth);
 
-  __atomic_store_n(&server->running, 0,
-                   __ATOMIC_RELEASE);
+  server->running.store(0, std::memory_order_release);
   CpStop(&server->control_plane);
   DpStop(&server->data_plane);
   if (server->listen_fd >= 0) {

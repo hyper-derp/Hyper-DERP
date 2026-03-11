@@ -6,10 +6,11 @@
 #define INCLUDE_HYPER_DERP_SERVER_H_
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <expected>
-#include <pthread.h>
 #include <string_view>
+#include <thread>
 
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
@@ -74,9 +75,9 @@ struct Server {
   Ctx data_plane{};
   ControlPlane control_plane{};
   int listen_fd = -1;
-  int running = 0;
-  pthread_t accept_thread{};
-  pthread_t control_thread{};
+  std::atomic<int> running{0};
+  std::thread accept_thread;
+  std::thread control_thread;
 };
 
 /// @brief Initializes the server.

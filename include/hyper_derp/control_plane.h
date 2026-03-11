@@ -13,8 +13,9 @@
 #ifndef INCLUDE_HYPER_DERP_CONTROL_PLANE_H_
 #define INCLUDE_HYPER_DERP_CONTROL_PLANE_H_
 
+#include <atomic>
 #include <cstdint>
-#include <pthread.h>
+#include <mutex>
 
 #include "hyper_derp/protocol.h"
 #include "hyper_derp/types.h"
@@ -45,31 +46,31 @@ struct CpPeer {
 ///   reassembly.
 struct PipeReader {
   uint8_t buf[kPipeBufSize];
-  int len;
+  int len = 0;
 };
 
 /// @brief Control plane state.
 struct ControlPlane {
-  Ctx* data_plane;
+  Ctx* data_plane = nullptr;
 
   // Peer registry (open-addressing hash table).
-  CpPeer peers[kCpMaxPeers];
-  CpPeer* fd_map[kMaxFd];
-  int peer_count;
+  CpPeer peers[kCpMaxPeers]{};
+  CpPeer* fd_map[kMaxFd]{};
+  int peer_count = 0;
 
   // Watcher fds (peers that sent WatchConns).
-  int watcher_fds[kCpMaxWatchers];
-  int watcher_count;
+  int watcher_fds[kCpMaxWatchers]{};
+  int watcher_count = 0;
 
   // Per-worker pipe readers.
   PipeReader readers[kMaxWorkers];
 
   // epoll fd for multiplexing pipe reads.
-  int epoll_fd;
+  int epoll_fd = -1;
 
   // Thread synchronization.
-  pthread_mutex_t mutex;
-  int running;
+  std::mutex mutex;
+  std::atomic<int> running{0};
 };
 
 /// @brief Initialize the control plane.
@@ -119,9 +120,8 @@ void CpProcessFrame(ControlPlane* cp, int fd,
 /// Reads from all data plane control pipes via epoll,
 /// parses pipe messages, and dispatches to CpProcessFrame.
 /// Blocks until CpStop is called.
-/// @param arg Pointer to ControlPlane.
-/// @returns nullptr.
-void* CpRunLoop(void* arg);
+/// @param cp Control plane.
+void CpRunLoop(ControlPlane* cp);
 
 /// @brief Signal the control thread to stop.
 /// @param cp Control plane.

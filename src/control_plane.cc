@@ -16,6 +16,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <sys/epoll.h>
 #include <unistd.h>
 
@@ -35,6 +36,9 @@ static uint32_t CpFnv1a(const uint8_t* data, int len) {
 }
 
 // -- Peer registry (open-addressing, linear probe) --
+//
+// All registry functions are called with the mutex held
+// (or from the control thread via DoConnect/DoDisconnect).
 
 static CpPeer* CpRegistryLookup(ControlPlane* cp,
                                  const uint8_t* key) {
@@ -172,6 +176,33 @@ static void CpNotifyWatchers(ControlPlane* cp,
   }
 }
 
+// -- Internal state mutations (called with mutex
+//    held) ----------------------------------------
+
+/// Register a peer and notify watchers. Must be called
+/// while the mutex is held.
+static void DoConnect(ControlPlane* cp,
+                      const Key& key, int fd) {
+  CpRegistryInsert(cp, key, fd);
+
+  uint8_t frame[kFrameHeaderSize + kKeySize];
+  int n = BuildPeerPresent(frame, key);
+  CpNotifyWatchers(cp, frame, n);
+}
+
+/// Remove a peer, clean up watchers, and notify. Must
+/// be called while the mutex is held.
+static void DoDisconnect(ControlPlane* cp,
+                         const Key& key, int fd,
+                         PeerGoneReason reason) {
+  CpRemoveWatcher(cp, fd);
+  CpRegistryRemove(cp, key.data());
+
+  uint8_t frame[kFrameHeaderSize + kKeySize + 1];
+  int n = BuildPeerGone(frame, key, reason);
+  CpNotifyWatchers(cp, frame, n);
+}
+
 // -- Control frame handlers -------------------------
 
 static void HandleWatchConns(ControlPlane* cp, int fd) {
@@ -236,21 +267,18 @@ static void HandleClosePeer(ControlPlane* cp, int fd,
   spdlog::info("fd {} requested close of peer", fd);
   Key target_key = ToKey(payload);
   DpRemovePeer(cp->data_plane, target_key);
-  CpOnPeerGone(cp, target_key, target->fd,
+  // Call internal DoDisconnect (mutex already held).
+  DoDisconnect(cp, target_key, target->fd,
                PeerGoneReason::kDisconnected);
 }
 
 // -- Public API -------------------------------------
 
 void CpInit(ControlPlane* cp, Ctx* dp) {
-  std::memset(cp, 0, sizeof(*cp));
   cp->data_plane = dp;
   cp->epoll_fd = -1;
-  cp->running = 0;
   cp->peer_count = 0;
   cp->watcher_count = 0;
-  std::memset(cp->fd_map, 0, sizeof(cp->fd_map));
-  pthread_mutex_init(&cp->mutex, nullptr);
 }
 
 void CpDestroy(ControlPlane* cp) {
@@ -258,44 +286,26 @@ void CpDestroy(ControlPlane* cp) {
     close(cp->epoll_fd);
     cp->epoll_fd = -1;
   }
-  pthread_mutex_destroy(&cp->mutex);
 }
 
 void CpOnPeerConnect(ControlPlane* cp,
                      const Key& key, int fd) {
-  pthread_mutex_lock(&cp->mutex);
-
-  CpRegistryInsert(cp, key, fd);
-
-  // Notify all watchers.
-  uint8_t frame[kFrameHeaderSize + kKeySize];
-  int n = BuildPeerPresent(frame, key);
-  CpNotifyWatchers(cp, frame, n);
-
-  pthread_mutex_unlock(&cp->mutex);
+  std::lock_guard lock(cp->mutex);
+  DoConnect(cp, key, fd);
 }
 
 void CpOnPeerGone(ControlPlane* cp,
                   const Key& key, int fd,
                   PeerGoneReason reason) {
-  pthread_mutex_lock(&cp->mutex);
-
-  CpRemoveWatcher(cp, fd);
-  CpRegistryRemove(cp, key.data());
-
-  // Notify all watchers.
-  uint8_t frame[kFrameHeaderSize + kKeySize + 1];
-  int n = BuildPeerGone(frame, key, reason);
-  CpNotifyWatchers(cp, frame, n);
-
-  pthread_mutex_unlock(&cp->mutex);
+  std::lock_guard lock(cp->mutex);
+  DoDisconnect(cp, key, fd, reason);
 }
 
 void CpProcessFrame(ControlPlane* cp, int fd,
                     FrameType type,
                     const uint8_t* payload,
                     int payload_len) {
-  pthread_mutex_lock(&cp->mutex);
+  std::lock_guard lock(cp->mutex);
 
   switch (type) {
     case FrameType::kWatchConns:
@@ -314,7 +324,9 @@ void CpProcessFrame(ControlPlane* cp, int fd,
       if (payload_len >= kKeySize) {
         Key gone_key = ToKey(payload);
         CpRegistryRemove(cp, payload);
-        CpOnPeerGone(cp, gone_key, fd,
+        // Call internal DoDisconnect (mutex already
+        // held).
+        DoDisconnect(cp, gone_key, fd,
                      PeerGoneReason::kDisconnected);
         DpRemovePeer(cp->data_plane, gone_key);
       }
@@ -328,19 +340,16 @@ void CpProcessFrame(ControlPlane* cp, int fd,
           static_cast<int>(type), fd);
       break;
   }
-
-  pthread_mutex_unlock(&cp->mutex);
 }
 
-void* CpRunLoop(void* arg) {
-  auto* cp = static_cast<ControlPlane*>(arg);
+void CpRunLoop(ControlPlane* cp) {
   int nworkers = cp->data_plane->num_workers;
 
   // Set up epoll to watch all worker control pipes.
   cp->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
   if (cp->epoll_fd < 0) {
     spdlog::error("epoll_create1: {}", strerror(errno));
-    return nullptr;
+    return;
   }
 
   for (int i = 0; i < nworkers; i++) {
@@ -359,14 +368,13 @@ void* CpRunLoop(void* arg) {
     }
   }
 
-  __atomic_store_n(&cp->running, 1, __ATOMIC_RELEASE);
+  cp->running.store(1, std::memory_order_release);
   spdlog::info("control plane running ({} pipes)",
                nworkers);
 
   epoll_event events[kMaxWorkers];
 
-  while (__atomic_load_n(&cp->running,
-                         __ATOMIC_ACQUIRE)) {
+  while (cp->running.load(std::memory_order_acquire)) {
     int nev = epoll_wait(cp->epoll_fd, events,
                          kMaxWorkers, 500);
     if (nev < 0) {
@@ -439,11 +447,10 @@ void* CpRunLoop(void* arg) {
   }
 
   spdlog::info("control plane stopped");
-  return nullptr;
 }
 
 void CpStop(ControlPlane* cp) {
-  __atomic_store_n(&cp->running, 0, __ATOMIC_RELEASE);
+  cp->running.store(0, std::memory_order_release);
 }
 
 }  // namespace hyper_derp

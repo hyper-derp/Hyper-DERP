@@ -19,8 +19,7 @@ static Key MakeKey(uint8_t val) {
 class ControlPlaneTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    memset(&cp_, 0, sizeof(cp_));
-    memset(&ctx_, 0, sizeof(ctx_));
+    ctx_ = {};
     ctx_.num_workers = 0;
     CpInit(&cp_, &ctx_);
   }
