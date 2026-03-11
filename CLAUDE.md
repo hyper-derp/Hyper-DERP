@@ -11,6 +11,7 @@ Linux-only, io_uring-based, pure data-oriented design. Aimed at establishing mec
 - the datacollection will be as important as the code, really get cpu cycles, cache fill anything that will help us make it go faster.
 - do commit often so we can recover if we regress
 - we are always testing against the derp go variant
+- target payload size is 1400B (WireGuard MTU) — always include this size in benchmarks
 - for now use virtual machines for testing you have access to libvirt - clone multipe debian vms if needed, use tap network bc of speed.
 
 ## Build

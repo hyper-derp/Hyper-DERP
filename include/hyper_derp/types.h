@@ -41,6 +41,7 @@ inline constexpr int kReadBufSize =
 /// bursts where recv batches produce hundreds of frames.
 inline constexpr int kSlabSize = 65536;
 
+
 /// io_uring submission queue depth.
 inline constexpr int kUringQueueDepth = 4096;
 
@@ -51,6 +52,18 @@ inline constexpr int kUringQueueDepth = 4096;
 /// bursts — a single provided-buffer recv can contain
 /// hundreds of small frames.
 inline constexpr int kMaxSendsInflight = 512;
+
+/// Maximum queued sends per peer. Hard safety limit to
+/// prevent slab exhaustion. Most backpressure should come
+/// from recv-side flow control (see kSendPressure* below).
+inline constexpr int kMaxSendQueueDepth = 16384;
+
+/// Per-worker send pressure thresholds (total queued sends
+/// across all peers). When total exceeds the high watermark,
+/// recv is paused — TCP flow control propagates to senders.
+/// When total drops below the low watermark, recv resumes.
+inline constexpr int kSendPressureHigh = 4096;
+inline constexpr int kSendPressureLow = 1024;
 
 /// Maximum concurrent recv SQEs per worker.
 inline constexpr int kRecvBudget = 512;
@@ -106,6 +119,7 @@ struct Peer {
   SendItem* send_tail;
   SendItem* send_next;
   int send_inflight;
+  int send_queued;
   int no_zc;
   int zc_draining;
   int poll_write_pending;
@@ -156,6 +170,9 @@ struct WorkerStats {
   uint64_t send_eagain;
   uint64_t send_other_err;
   uint64_t recv_enobufs;
+  uint64_t send_queue_drops;
+  uint64_t sq_overflow;
+  uint64_t recv_pauses;
 };
 
 /// SPSC ring buffer for commands to a worker.
@@ -230,12 +247,17 @@ struct Worker {
   int recv_defer_head;
   int recv_defer_tail;
 
+  // Send-pressure-based recv pause.
+  int send_pressure;  // Total queued sends across all peers.
+  int recv_paused;    // 1 = recv paused due to send pressure.
+
   // Multishot recv support (kernel 6.0+).
   int use_multishot_recv;
 
   // Slab allocator for SendItem nodes.
   SendItem* slab_items;
   SendItem* slab_item_free;
+
 
   // Per-worker stats.
   WorkerStats stats;

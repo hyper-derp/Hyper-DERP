@@ -46,6 +46,7 @@ namespace hyper_derp {
 static void SlabFreeItem(Worker* w, SendItem* item);
 static inline void FrameFree(uint8_t* buf);
 static int WorkerInitRing(Worker* w);
+static void DrainDeferredRecvs(Worker* w);
 
 // -- user_data encoding ------------------------------------------------------
 
@@ -145,6 +146,7 @@ static int HtInsert(Worker* w, int fd,
   p->send_tail = nullptr;
   p->send_next = nullptr;
   p->send_inflight = 0;
+  p->send_queued = 0;
   p->no_zc = 0;
   p->zc_draining = 0;
   p->poll_write_pending = 0;
@@ -171,11 +173,23 @@ static void HtRemove(Worker* w, const Key& key) {
     SlabFreeItem(w, item);
     item = next;
   }
+  w->send_pressure -= p->send_queued;
+  if (w->send_pressure < 0) {
+    w->send_pressure = 0;
+  }
   p->send_head = nullptr;
   p->send_tail = nullptr;
   p->send_next = nullptr;
   p->send_inflight = 0;
+  p->send_queued = 0;
   p->occupied = 2;
+
+  // Resume recv if removing this peer relieved pressure.
+  if (w->recv_paused &&
+      w->send_pressure <= kSendPressureLow) {
+    w->recv_paused = 0;
+    DrainDeferredRecvs(w);
+  }
 }
 
 // -- Replicated routing table ------------------------------------------------
@@ -419,10 +433,23 @@ static inline void FrameFree(uint8_t* buf) {
 
 // -- Enqueue helpers (called from control plane) -----------------------------
 
-static void EnqueueCmd(Worker* w, const Cmd* cmd) {
-  while (RingPush(&w->cmd_ring, cmd) != 0) {
+/// Maximum retries before dropping a command. Prevents
+/// the accept loop from spinning forever when a worker's
+/// command ring is full under extreme load.
+static constexpr int kCmdPushRetries = 10000;
+
+static int EnqueueCmd(Worker* w, const Cmd* cmd) {
+  for (int i = 0; i < kCmdPushRetries; i++) {
+    if (RingPush(&w->cmd_ring, cmd) == 0) {
+      SignalEventfd(w->event_fd);
+      return 0;
+    }
+    // Yield to let the worker drain commands.
+    sched_yield();
   }
+  // Worker is overwhelmed — signal anyway so it drains.
   SignalEventfd(w->event_fd);
+  return -1;
 }
 
 void DpAddPeer(Ctx* ctx, int fd, const Key& key) {
@@ -505,7 +532,11 @@ static inline struct io_uring_sqe* GetSqe(Worker* w) {
   }
   // SQ full — flush pending submissions and retry.
   io_uring_submit(&w->ring);
-  return io_uring_get_sqe(&w->ring);
+  sqe = io_uring_get_sqe(&w->ring);
+  if (!sqe) {
+    w->stats.sq_overflow++;
+  }
+  return sqe;
 }
 
 static void DeferRecv(Worker* w, int fd) {
@@ -554,7 +585,7 @@ static void SubmitRecv(Worker* w, int fd) {
   if (fd < 0 || fd >= kMaxFd || !w->fd_map[fd]) {
     return;
   }
-  if (w->recv_inflight >= kRecvBudget) {
+  if (w->recv_inflight >= kRecvBudget || w->recv_paused) {
     DeferRecv(w, fd);
     return;
   }
@@ -563,7 +594,8 @@ static void SubmitRecv(Worker* w, int fd) {
 
 static void DrainDeferredRecvs(Worker* w) {
   while (w->recv_defer_tail != w->recv_defer_head &&
-         w->recv_inflight < kRecvBudget) {
+         w->recv_inflight < kRecvBudget &&
+         !w->recv_paused) {
     int fd = w->recv_defer_buf[w->recv_defer_tail];
     w->recv_defer_tail =
         (w->recv_defer_tail + 1) % kRecvDeferSize;
@@ -641,6 +673,13 @@ static inline void SubmitPeerSend(Worker* w, Peer* peer,
 
 static void EnqueueSend(Worker* w, Peer* peer,
                         uint8_t* data, int len) {
+  // Drop newest when queue is full (backpressure).
+  if (peer->send_queued >= kMaxSendQueueDepth) {
+    w->stats.send_queue_drops++;
+    FrameFree(data);
+    return;
+  }
+
   SendItem* item = SlabAllocItem(w);
   if (!item) {
     w->stats.slab_exhausts++;
@@ -657,6 +696,8 @@ static void EnqueueSend(Worker* w, Peer* peer,
     peer->send_head = item;
   }
   peer->send_tail = item;
+  peer->send_queued++;
+  w->send_pressure++;
 
   if (!peer->send_next) {
     peer->send_next = item;
@@ -669,6 +710,14 @@ static void EnqueueSend(Worker* w, Peer* peer,
                    peer->send_next->len, more);
     peer->send_next = peer->send_next->next;
     peer->send_inflight++;
+  }
+
+  // Pause recv when send queues are deep — TCP flow
+  // control propagates backpressure to senders.
+  if (!w->recv_paused &&
+      w->send_pressure >= kSendPressureHigh) {
+    w->recv_paused = 1;
+    w->stats.recv_pauses++;
   }
 }
 
@@ -687,6 +736,15 @@ static void DrainSendQueue(Worker* w, Peer* peer,
     } else {
       FrameFree(done->data);
       SlabFreeItem(w, done);
+    }
+    peer->send_queued--;
+    w->send_pressure--;
+
+    // Resume recv when send pressure drops.
+    if (w->recv_paused &&
+        w->send_pressure <= kSendPressureLow) {
+      w->recv_paused = 0;
+      DrainDeferredRecvs(w);
     }
   }
 
@@ -999,6 +1057,15 @@ static void HandleRecvCqe(Worker* w,
   }
 
   if (w->use_provided_bufs) {
+    int fd = UdFd(cqe->user_data);
+    // EOF or connection reset without a buffer attached.
+    if (cqe->res == 0 || cqe->res == -ECONNRESET) {
+      if (fd >= 0 && fd < kMaxFd && w->fd_map[fd]) {
+        NotifyPeerClose(w, w->fd_map[fd]);
+        w->fd_map[fd] = nullptr;
+      }
+      return;
+    }
     if (cqe->res == -ENOBUFS || cqe->res == -EINVAL) {
       if (cqe->res == -ENOBUFS) {
         w->stats.recv_enobufs++;
@@ -1008,7 +1075,6 @@ static void HandleRecvCqe(Worker* w,
         // fall back.
         w->use_multishot_recv = 0;
       }
-      int fd = UdFd(cqe->user_data);
       if (fd >= 0 && fd < kMaxFd && w->fd_map[fd]) {
         SubmitRecv(w, fd);
       }
@@ -1379,24 +1445,45 @@ static void* WorkerRun(void* arg) {
 
   struct __kernel_timespec ts {};
   ts.tv_sec = 0;
-  ts.tv_nsec = 100000000;  // 100ms
+  ts.tv_nsec = 1000000;  // 1ms
+
+  /// Maximum idle spins before falling back to a blocking
+  /// wait. Keeps latency low under load (no blocking
+  /// syscall needed when CQEs are ready) while avoiding
+  /// 100% CPU burn when idle.
+  static constexpr int kBusySpins = 256;
+  int idle_spins = 0;
 
   while (__atomic_load_n(&w->running, __ATOMIC_ACQUIRE)) {
-    io_uring_submit(&w->ring);
-
+    // Peek for ready CQEs without entering the kernel.
     struct io_uring_cqe* cqe = nullptr;
-    int ret = io_uring_wait_cqe_timeout(
-        &w->ring, &cqe, &ts);
-    if (ret == -ETIME) {
-      continue;
-    }
-    if (ret < 0) {
-      if (ret == -EINTR) {
+    int ret = io_uring_peek_cqe(&w->ring, &cqe);
+
+    if (ret == -EAGAIN) {
+      // No CQEs. Submit pending SQEs — on kernel 6.1+
+      // with DEFER_TASKRUN, io_uring_enter processes
+      // deferred task work on entry, making new CQEs
+      // visible for the next peek.
+      io_uring_submit(&w->ring);
+      if (idle_spins++ < kBusySpins) {
+        ProcessXfer(w);
+        DrainDeferredRecvs(w);
         continue;
       }
-      break;
+      // Idle too long — block until an event arrives.
+      ret = io_uring_wait_cqe_timeout(
+          &w->ring, &cqe, &ts);
+      if (ret == -ETIME || ret == -EINTR) {
+        idle_spins = 0;
+        continue;
+      }
+      if (ret < 0) {
+        break;
+      }
     }
 
+    // Process ALL available CQEs in one batch.
+    idle_spins = 0;
     {
       unsigned head;
       struct io_uring_cqe* c = nullptr;
@@ -1412,9 +1499,17 @@ static void* WorkerRun(void* arg) {
             break;
           case kOpPollCmd:
             ProcessCommands(w);
+            if (!(c->flags & IORING_CQE_F_MORE)) {
+              SubmitPollMultishot(
+                  w, w->event_fd, kOpPollCmd);
+            }
             break;
           case kOpPollXfer:
             ProcessXfer(w);
+            if (!(c->flags & IORING_CQE_F_MORE)) {
+              SubmitPollMultishot(
+                  w, w->xfer_efd, kOpPollXfer);
+            }
             break;
           case kOpPollWrite:
             HandlePollWrite(w, c);
@@ -1425,6 +1520,8 @@ static void* WorkerRun(void* arg) {
       io_uring_cq_advance(&w->ring, nr);
     }
 
+    // Submit all SQEs batched during CQE processing.
+    io_uring_submit(&w->ring);
     ProcessXfer(w);
     DrainDeferredRecvs(w);
   }
