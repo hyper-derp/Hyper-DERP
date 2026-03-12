@@ -18,8 +18,12 @@ uint16_t FindFreePort();
 /// @brief Start relay server in a forked child process.
 /// @param port Port to listen on.
 /// @param num_workers Number of data plane workers.
+/// @param tls_cert Optional TLS cert path for kTLS.
+/// @param tls_key Optional TLS key path for kTLS.
 /// @returns Child PID, or -1 on error.
-pid_t StartRelay(uint16_t port, int num_workers);
+pid_t StartRelay(uint16_t port, int num_workers,
+                 const char* tls_cert = nullptr,
+                 const char* tls_key = nullptr);
 
 /// @brief Wait until relay accepts TCP connections.
 /// @param port Relay port.

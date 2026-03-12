@@ -105,6 +105,15 @@ auto ClientConnect(DerpClient* c, const char* host,
                    uint16_t port)
     -> std::expected<void, Error<ClientError>>;
 
+/// @brief Upgrade connection to TLS 1.3 with kTLS.
+/// After this call, read()/write() on the fd operate on
+/// plaintext via kernel TLS offload. Must be called after
+/// ClientConnect and before ClientUpgrade.
+/// @param c Connected client.
+/// @returns void on success, or ClientError.
+auto ClientTlsConnect(DerpClient* c)
+    -> std::expected<void, Error<ClientError>>;
+
 /// @brief Send HTTP upgrade request and read 101 response.
 /// @param c Connected client.
 /// @returns void on success, or ClientError.

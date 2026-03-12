@@ -14,6 +14,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
 
@@ -109,6 +113,51 @@ auto ClientConnect(DerpClient* c, const char* host,
   c->host = host;
   c->port = port;
   c->connected = true;
+  return {};
+}
+
+auto ClientTlsConnect(DerpClient* c)
+    -> std::expected<void, Error<ClientError>> {
+  SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+  if (!ctx) {
+    return MakeError(ClientError::IoFailed,
+                     "SSL_CTX_new failed");
+  }
+
+  SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+  SSL_CTX_set_options(ctx, SSL_OP_ENABLE_KTLS);
+  SSL_CTX_set_num_tickets(ctx, 0);
+
+  SSL* ssl = SSL_new(ctx);
+  if (!ssl) {
+    SSL_CTX_free(ctx);
+    return MakeError(ClientError::IoFailed,
+                     "SSL_new failed");
+  }
+
+  SSL_set_fd(ssl, c->fd);
+  int ret = SSL_connect(ssl);
+  if (ret != 1) {
+    char buf[256];
+    ERR_error_string_n(ERR_get_error(), buf, sizeof(buf));
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    return MakeError(ClientError::IoFailed,
+                     std::string("SSL_connect: ") + buf);
+  }
+
+  // Detach fd from SSL so SSL_free doesn't close it.
+  BIO* wbio = SSL_get_wbio(ssl);
+  BIO* rbio = SSL_get_rbio(ssl);
+  if (wbio) BIO_set_close(wbio, BIO_NOCLOSE);
+  if (rbio && rbio != wbio) {
+    BIO_set_close(rbio, BIO_NOCLOSE);
+  }
+
+  SSL_set_quiet_shutdown(ssl, 1);
+  SSL_free(ssl);
+  SSL_CTX_free(ctx);
   return {};
 }
 
@@ -272,23 +321,34 @@ auto ClientSendPacket(DerpClient* c,
                      "packet exceeds max frame payload");
   }
 
-  uint8_t hdr[kFrameHeaderSize];
-  WriteFrameHeader(hdr, FrameType::kSendPacket,
-                   static_cast<uint32_t>(payload_len));
+  // Single write produces one TLS record under kTLS.
+  // Three separate writes would create three records,
+  // tripling per-frame crypto overhead.
+  int frame_len = kFrameHeaderSize + payload_len;
+  uint8_t stack[kFrameHeaderSize + kKeySize + 2048];
+  uint8_t* buf = stack;
+  bool heap = false;
+  if (frame_len > static_cast<int>(sizeof(stack))) {
+    buf = new uint8_t[frame_len];
+    heap = true;
+  }
 
-  if (WriteAll(c->fd, hdr, kFrameHeaderSize) < 0) {
-    return MakeError(ClientError::IoFailed,
-                     "write SendPacket header failed");
-  }
-  if (WriteAll(c->fd, dst_key.data(), kKeySize) < 0) {
-    return MakeError(ClientError::IoFailed,
-                     "write SendPacket key failed");
-  }
+  WriteFrameHeader(buf, FrameType::kSendPacket,
+                   static_cast<uint32_t>(payload_len));
+  std::memcpy(buf + kFrameHeaderSize,
+              dst_key.data(), kKeySize);
   if (data_len > 0) {
-    if (WriteAll(c->fd, data, data_len) < 0) {
-      return MakeError(ClientError::IoFailed,
-                       "write SendPacket data failed");
-    }
+    std::memcpy(buf + kFrameHeaderSize + kKeySize,
+                data, data_len);
+  }
+
+  int rc = WriteAll(c->fd, buf, frame_len);
+  if (heap) {
+    delete[] buf;
+  }
+  if (rc < 0) {
+    return MakeError(ClientError::IoFailed,
+                     "write SendPacket failed");
   }
   return {};
 }

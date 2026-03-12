@@ -46,24 +46,29 @@ inline constexpr int kSlabSize = 65536;
 inline constexpr int kUringQueueDepth = 4096;
 
 /// Maximum concurrent in-flight sends per peer.
-/// SEND_ZC completions are near-zero cost until the
-/// notification CQE arrives; this can go high. Must be
-/// large enough to drain the send queue between recv
-/// bursts — a single provided-buffer recv can contain
-/// hundreds of small frames.
-inline constexpr int kMaxSendsInflight = 512;
+/// At 250 peers/worker, 16 × 250 = 4000 fits within the
+/// 4096-entry SQ with headroom for recv and poll SQEs.
+inline constexpr int kMaxSendsInflight = 16;
 
-/// Maximum queued sends per peer. Hard safety limit to
-/// prevent slab exhaustion. Most backpressure should come
-/// from recv-side flow control (see kSendPressure* below).
-inline constexpr int kMaxSendQueueDepth = 16384;
+/// Maximum sends submitted per POLLOUT event. Prevents
+/// a single peer from monopolizing the SQ after becoming
+/// writable.
+inline constexpr int kPollWriteBatch = 16;
+
+/// Maximum CQEs processed per batch iteration. Prevents
+/// recv burst avalanches from generating unbounded SQEs.
+inline constexpr int kMaxCqeBatch = 256;
+
+/// Maximum queued sends per peer. Per-peer drop limit.
+inline constexpr int kMaxSendQueueDepth = 2048;
 
 /// Per-worker send pressure thresholds (total queued sends
-/// across all peers). When total exceeds the high watermark,
-/// recv is paused — TCP flow control propagates to senders.
-/// When total drops below the low watermark, recv resumes.
-inline constexpr int kSendPressureHigh = 4096;
-inline constexpr int kSendPressureLow = 1024;
+/// across all peers). High threshold allows deep pipelining
+/// before recv pauses; at 250 peers this is ~131 items/peer.
+/// Low threshold resumes recv promptly to keep ingest rate
+/// high. Both must stay below kSlabSize to avoid exhaustion.
+inline constexpr int kSendPressureHigh = 32768;
+inline constexpr int kSendPressureLow = 8192;
 
 /// Maximum concurrent recv SQEs per worker.
 inline constexpr int kRecvBudget = 512;
@@ -183,10 +188,12 @@ struct CmdRing {
 };
 
 /// MPSC ring buffer for cross-shard transfers.
+/// head/tail are on separate cache lines to avoid
+/// false sharing between producer and consumer.
 struct XferRing {
   Xfer items[kXferRingSize];
-  uint32_t head;
-  uint32_t tail;
+  alignas(64) uint32_t head;
+  alignas(64) uint32_t tail;
   char lock;
   uint32_t push_count;
 };

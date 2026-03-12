@@ -48,7 +48,9 @@ uint16_t FindFreePort() {
   return port;
 }
 
-pid_t StartRelay(uint16_t port, int num_workers) {
+pid_t StartRelay(uint16_t port, int num_workers,
+                 const char* tls_cert,
+                 const char* tls_key) {
   pid_t pid = fork();
   if (pid < 0) {
     return -1;
@@ -63,6 +65,10 @@ pid_t StartRelay(uint16_t port, int num_workers) {
     ServerConfig config;
     config.port = port;
     config.num_workers = num_workers;
+    if (tls_cert && tls_key) {
+      config.tls_cert = tls_cert;
+      config.tls_key = tls_key;
+    }
 
     Server server;
     if (!ServerInit(&server, &config)) {

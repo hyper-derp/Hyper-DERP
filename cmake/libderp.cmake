@@ -17,6 +17,7 @@ add_library(libderp_obj OBJECT
   src/control_plane.cc
   src/tun.cc
   src/metrics.cc
+  src/ktls.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include

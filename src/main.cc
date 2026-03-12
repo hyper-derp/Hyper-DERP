@@ -199,8 +199,12 @@ int main(int argc, char* argv[]) {
   config.max_accept_per_sec = max_accept_rate;
   config.metrics.port = static_cast<uint16_t>(
       metrics_port);
-  if (tls_cert) config.metrics.tls_cert = tls_cert;
-  if (tls_key) config.metrics.tls_key = tls_key;
+  if (tls_cert) {
+    config.tls_cert = tls_cert;
+    config.tls_key = tls_key;
+    config.metrics.tls_cert = tls_cert;
+    config.metrics.tls_key = tls_key;
+  }
   config.metrics.enable_debug = debug_endpoints;
 
   if (pin_spec) {

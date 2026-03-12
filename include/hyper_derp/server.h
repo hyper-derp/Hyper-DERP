@@ -16,6 +16,7 @@
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
+#include "hyper_derp/ktls.h"
 #include "hyper_derp/metrics.h"
 
 namespace hyper_derp {
@@ -36,6 +37,8 @@ enum class ServerError {
   ThreadCreateFailed,
   /// Data plane run loop returned an error.
   DataPlaneRunFailed,
+  /// kTLS initialization failed.
+  KtlsInitFailed,
 };
 
 /// Human-readable name for a ServerError code.
@@ -56,6 +59,8 @@ constexpr auto ServerErrorName(ServerError e)
       return "ThreadCreateFailed";
     case ServerError::DataPlaneRunFailed:
       return "DataPlaneRunFailed";
+    case ServerError::KtlsInitFailed:
+      return "KtlsInitFailed";
   }
   return "Unknown";
 }
@@ -70,6 +75,10 @@ struct ServerConfig {
   /// Maximum accepted connections per second.
   /// 0 = unlimited (no rate limiting).
   int max_accept_per_sec = 0;
+  /// TLS certificate + key for data plane connections.
+  /// If both are set, kTLS is enabled.
+  std::string tls_cert;
+  std::string tls_key;
   /// Metrics HTTP server configuration.
   MetricsConfig metrics;
   std::array<int, kMaxWorkers> pin_cores{};
@@ -83,6 +92,8 @@ struct Server {
   ServerKeys keys;
   Ctx data_plane{};
   ControlPlane control_plane{};
+  KtlsCtx ktls_ctx{};
+  bool ktls_enabled = false;
   int listen_fd = -1;
   std::atomic<int> running{0};
   std::thread accept_thread;

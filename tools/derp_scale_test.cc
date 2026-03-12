@@ -50,6 +50,7 @@ static int g_msg_size = 1024;
 static int g_duration_sec = 5;
 static double g_rate_mbps = 100;  // Mbps, 0 = unlimited
 static bool g_json = false;
+static bool g_use_tls = false;
 
 // Traffic thread state.
 static std::atomic<int> g_stop{0};
@@ -67,14 +68,22 @@ static void* SenderThread(void* arg) {
   PeerState* s = &g_peers[ta->sender_idx];
   PeerState* r = &g_peers[ta->receiver_idx];
 
-  // Send timeout to avoid blocking forever.
-  struct timeval tv = {1, 0};
+  // Short send timeout — prevents blocking past deadline.
+  struct timeval tv = {0, 100000};
   setsockopt(s->client.fd, SOL_SOCKET, SO_SNDTIMEO,
              &tv, sizeof(tv));
 
-  auto* payload = new uint8_t[g_msg_size];
+  // Pre-build the complete DERP SendPacket frame.
+  int payload_len = kKeySize + g_msg_size;
+  int frame_len = kFrameHeaderSize + payload_len;
+  auto* frame = new uint8_t[frame_len];
+  WriteFrameHeader(frame, FrameType::kSendPacket,
+                   static_cast<uint32_t>(payload_len));
+  std::memcpy(frame + kFrameHeaderSize,
+              r->client.public_key.data(), kKeySize);
   for (int i = 0; i < g_msg_size; i++) {
-    payload[i] = static_cast<uint8_t>(i & 0xff);
+    frame[kFrameHeaderSize + kKeySize + i] =
+        static_cast<uint8_t>(i & 0xff);
   }
 
   // Stop 1s before duration ends to let pipeline drain.
@@ -119,19 +128,39 @@ static void* SenderThread(void* arg) {
       }
     }
 
-    if (!ClientSendPacket(&s->client,
-                          r->client.public_key,
-                          payload, g_msg_size)) {
-      ta->result.send_errors++;
-      continue;
+    // Write frame, breaking on EAGAIN to check deadline.
+    {
+      int total = 0;
+      bool ok = true;
+      while (total < frame_len) {
+        int w = write(s->client.fd, frame + total,
+                      frame_len - total);
+        if (w < 0) {
+          if (errno == EINTR) continue;
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            ta->result.send_errors++;
+            ok = false;
+            break;
+          }
+          ok = false;
+          break;
+        }
+        if (w == 0) {
+          ok = false;
+          break;
+        }
+        total += w;
+      }
+      if (ok) {
+        ta->result.msgs_sent++;
+        ta->result.bytes_sent += g_msg_size;
+        total_bytes_paced += g_msg_size;
+      }
     }
-    ta->result.msgs_sent++;
-    ta->result.bytes_sent += g_msg_size;
-    total_bytes_paced += g_msg_size;
   }
 done:
 
-  delete[] payload;
+  delete[] frame;
   return nullptr;
 }
 
@@ -145,15 +174,23 @@ static void* ReceiverThread(void* arg) {
   int buf_len;
   FrameType ftype;
   int idle = 0;
+  uint64_t drain_deadline = 0;
 
   while (true) {
     auto result = ClientRecvFrame(
         &r->client, &ftype, buf, &buf_len, sizeof(buf));
     if (!result) {
       if (g_stop.load()) {
+        // Hard drain deadline: 2s after senders stop.
+        // Prevents 100+ second drain tails from relay
+        // queue backlog inflating throughput denominator.
+        if (drain_deadline == 0) {
+          drain_deadline =
+              NowNs() + 2000000000ULL;
+        }
+        if (NowNs() >= drain_deadline) break;
         idle++;
-        // 50 * 100ms = 5s of drain.
-        if (idle >= 50) break;
+        if (idle >= 20) break;
       }
       continue;
     }
@@ -173,6 +210,12 @@ static void* ReceiverThread(void* arg) {
 static bool ConnectPeer(PeerState* p) {
   if (!ClientConnect(&p->client, g_host, g_port)) {
     return false;
+  }
+  if (g_use_tls) {
+    if (!ClientTlsConnect(&p->client)) {
+      ClientClose(&p->client);
+      return false;
+    }
   }
   if (!ClientUpgrade(&p->client)) {
     ClientClose(&p->client);
@@ -210,6 +253,8 @@ int main(int argc, char** argv) {
       g_rate_mbps = atof(argv[++i]);
     } else if (strcmp(argv[i], "--json") == 0) {
       g_json = true;
+    } else if (strcmp(argv[i], "--tls") == 0) {
+      g_use_tls = true;
     } else {
       fprintf(stderr,
           "Usage: derp-scale-test [options]\n"
@@ -221,6 +266,7 @@ int main(int argc, char** argv) {
           "  --rate-mbps F       Aggregate send rate "
           "(100, 0=unlimited)\n"
           "  --host/--port       Relay address\n"
+          "  --tls               TLS 1.3 (kTLS offload)\n"
           "  --json              JSON to stdout\n");
       return 1;
     }

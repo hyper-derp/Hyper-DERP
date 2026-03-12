@@ -140,6 +140,21 @@ static void HandleConnection(Server* server, int fd) {
   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv,
              sizeof(tv));
 
+  // TLS handshake + kTLS installation (if enabled).
+  // OpenSSL auto-installs kTLS during SSL_accept.
+  // After this, read()/write() on fd operate on
+  // plaintext — the kernel handles AES-GCM.
+  if (server->ktls_enabled) {
+    auto tls = KtlsAccept(&server->ktls_ctx, fd);
+    if (!tls) {
+      spdlog::debug("kTLS failed for fd {}: {} ({})",
+                    fd, tls.error().message,
+                    KtlsErrorName(tls.error().code));
+      close(fd);
+      return;
+    }
+  }
+
   HttpRequest req;
   if (ReadHttpRequest(fd, &req) < 0) {
     close(fd);
@@ -350,6 +365,32 @@ auto ServerInit(Server* server,
 
   CpInit(&server->control_plane, &server->data_plane);
 
+  // Initialize kTLS if cert + key are configured.
+  if (!config->tls_cert.empty() &&
+      !config->tls_key.empty()) {
+    auto probe = ProbeKtls();
+    if (!probe) {
+      spdlog::error("kTLS not available: {}",
+                    probe.error().message);
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::KtlsInitFailed,
+                       probe.error().message);
+    }
+    auto init = KtlsCtxInit(
+        &server->ktls_ctx,
+        config->tls_cert.c_str(),
+        config->tls_key.c_str());
+    if (!init) {
+      spdlog::error("kTLS ctx init failed: {}",
+                    init.error().message);
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::KtlsInitFailed,
+                       init.error().message);
+    }
+    server->ktls_enabled = true;
+    spdlog::info("kTLS enabled (TLS 1.3 AES-GCM)");
+  }
+
   // Create TCP listener.
   int lfd = socket(AF_INET, SOCK_STREAM, 0);
   if (lfd < 0) {
@@ -529,6 +570,10 @@ void ServerStop(Server* server) {
 void ServerDestroy(Server* server) {
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;
+  if (server->ktls_enabled) {
+    KtlsCtxDestroy(&server->ktls_ctx);
+    server->ktls_enabled = false;
+  }
   CpDestroy(&server->control_plane);
   DpDestroy(&server->data_plane);
   if (server->listen_fd >= 0) {

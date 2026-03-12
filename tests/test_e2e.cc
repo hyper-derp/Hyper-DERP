@@ -7,12 +7,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 #include <gtest/gtest.h>
 #include <sodium.h>
 
 #include "hyper_derp/client.h"
+#include "hyper_derp/ktls.h"
 #include "hyper_derp/protocol.h"
 
 namespace hyper_derp {
@@ -518,6 +522,184 @@ TEST_F(E2ETest, BidirectionalRelay) {
 
   EXPECT_EQ(ra, 'P') << "A did not receive B's message";
   EXPECT_EQ(rb, 'P') << "B did not receive A's message";
+}
+
+class E2EKtlsTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_TRUE(sodium_init() >= 0);
+
+    auto probe = ProbeKtls();
+    if (!probe) {
+      GTEST_SKIP() << "kTLS not available: "
+                   << probe.error().message;
+    }
+
+    char tmpl[] = "/tmp/e2e_ktls_XXXXXX";
+    char* dir = mkdtemp(tmpl);
+    ASSERT_NE(dir, nullptr);
+    tmpdir_ = dir;
+    cert_ = tmpdir_ + "/cert.pem";
+    key_ = tmpdir_ + "/key.pem";
+
+    std::string cmd =
+        "openssl req -x509 -newkey ec "
+        "-pkeyopt ec_paramgen_curve:prime256v1 "
+        "-keyout " + key_ +
+        " -out " + cert_ +
+        " -days 1 -nodes -subj '/CN=localhost' "
+        "2>/dev/null";
+    ASSERT_EQ(system(cmd.c_str()), 0);
+
+    port_ = test::FindFreePort();
+    ASSERT_NE(port_, 0);
+    relay_pid_ = test::StartRelay(
+        port_, 1, cert_.c_str(), key_.c_str());
+    ASSERT_GT(relay_pid_, 0);
+    ASSERT_EQ(test::WaitRelayReady(port_, 5000), 0);
+  }
+
+  void TearDown() override {
+    if (relay_pid_ > 0) {
+      test::StopRelay(relay_pid_);
+    }
+    if (!tmpdir_.empty()) {
+      std::filesystem::remove_all(tmpdir_);
+    }
+  }
+
+  std::string tmpdir_;
+  std::string cert_;
+  std::string key_;
+  uint16_t port_ = 0;
+  pid_t relay_pid_ = -1;
+};
+
+TEST_F(E2EKtlsTest, SinglePacketOverTls) {
+  uint8_t pub_a[kKeySize], priv_a[kKeySize];
+  uint8_t pub_b[kKeySize], priv_b[kKeySize];
+  crypto_box_keypair(pub_a, priv_a);
+  crypto_box_keypair(pub_b, priv_b);
+
+  int b_ready[2];
+  int result_pipe[2];
+  ASSERT_EQ(pipe(b_ready), 0);
+  ASSERT_EQ(pipe(result_pipe), 0);
+
+  const char* test_data = "hello-over-ktls";
+  int test_data_len = static_cast<int>(strlen(test_data));
+
+  pid_t pid_b = fork();
+  ASSERT_GE(pid_b, 0);
+
+  if (pid_b == 0) {
+    close(b_ready[0]);
+    close(result_pipe[0]);
+
+    DerpClient client;
+    ClientInitWithKeys(&client, pub_b, priv_b);
+
+    bool ok = true;
+    ok = ok && ClientConnect(
+        &client, "127.0.0.1", port_).has_value();
+    ok = ok && ClientTlsConnect(&client).has_value();
+    ok = ok && ClientUpgrade(&client).has_value();
+    ok = ok && ClientHandshake(&client).has_value();
+
+    write(b_ready[1], "R", 1);
+    close(b_ready[1]);
+
+    if (!ok) {
+      write(result_pipe[1], "F", 1);
+      close(result_pipe[1]);
+      _exit(1);
+    }
+
+    (void)ClientSetTimeout(&client, 5000);
+
+    uint8_t buf[kMaxFramePayload];
+    int buf_len = 0;
+    FrameType ftype;
+    bool got_packet = false;
+
+    for (int i = 0; i < 20; i++) {
+      if (!ClientRecvFrame(&client, &ftype, buf,
+                           &buf_len, sizeof(buf))) {
+        break;
+      }
+      if (ftype == FrameType::kRecvPacket) {
+        if (buf_len >= kKeySize + test_data_len &&
+            memcmp(buf, pub_a, kKeySize) == 0 &&
+            memcmp(buf + kKeySize, test_data,
+                   test_data_len) == 0) {
+          got_packet = true;
+        }
+        break;
+      }
+    }
+
+    ClientClose(&client);
+    write(result_pipe[1], got_packet ? "P" : "F", 1);
+    close(result_pipe[1]);
+    _exit(got_packet ? 0 : 1);
+  }
+
+  close(b_ready[1]);
+  close(result_pipe[1]);
+
+  char sig = 0;
+  ASSERT_EQ(read(b_ready[0], &sig, 1), 1);
+  ASSERT_EQ(sig, 'R');
+  close(b_ready[0]);
+
+  usleep(100000);
+
+  pid_t pid_a = fork();
+  ASSERT_GE(pid_a, 0);
+
+  if (pid_a == 0) {
+    close(result_pipe[0]);
+
+    DerpClient client;
+    ClientInitWithKeys(&client, pub_a, priv_a);
+
+    bool ok = true;
+    ok = ok && ClientConnect(
+        &client, "127.0.0.1", port_).has_value();
+    ok = ok && ClientTlsConnect(&client).has_value();
+    ok = ok && ClientUpgrade(&client).has_value();
+    ok = ok && ClientHandshake(&client).has_value();
+
+    if (!ok) _exit(1);
+
+    usleep(100000);
+
+    auto rc = ClientSendPacket(
+        &client, ToKey(pub_b),
+        reinterpret_cast<const uint8_t*>(test_data),
+        test_data_len);
+
+    ClientClose(&client);
+    _exit(rc.has_value() ? 0 : 1);
+  }
+
+  int status_a;
+  waitpid(pid_a, &status_a, 0);
+  EXPECT_TRUE(WIFEXITED(status_a));
+  EXPECT_EQ(WEXITSTATUS(status_a), 0)
+      << "Client A (sender) failed";
+
+  int status_b;
+  waitpid(pid_b, &status_b, 0);
+  EXPECT_TRUE(WIFEXITED(status_b));
+  EXPECT_EQ(WEXITSTATUS(status_b), 0)
+      << "Client B (receiver) failed";
+
+  char result = 0;
+  ASSERT_EQ(read(result_pipe[0], &result, 1), 1);
+  EXPECT_EQ(result, 'P')
+      << "Client B did not receive expected packet";
+  close(result_pipe[0]);
 }
 
 }  // namespace

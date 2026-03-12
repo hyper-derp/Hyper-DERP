@@ -14,7 +14,6 @@
 
 #include "hyper_derp/data_plane.h"
 
-#include <sodium.h>
 #include <spdlog/spdlog.h>
 
 #include <cerrno>
@@ -107,7 +106,7 @@ static int HtFind(Worker* w, const uint8_t* key,
       }
       continue;
     }
-    if (sodium_memcmp(p->key.data(), key, kKeySize) == 0) {
+    if (memcmp(p->key.data(), key, kKeySize) == 0) {
       *out = p;
       return static_cast<int>(idx);
     }
@@ -125,7 +124,7 @@ static Peer* HtLookup(Worker* w, const uint8_t* key) {
   Peer* p = nullptr;
   HtFind(w, key, &p);
   if (p && p->occupied == 1 &&
-      sodium_memcmp(p->key.data(), key, kKeySize) == 0) {
+      memcmp(p->key.data(), key, kKeySize) == 0) {
     return p;
   }
   return nullptr;
@@ -221,7 +220,7 @@ static int RouteFind(Route* routes,
       }
       continue;
     }
-    if (sodium_memcmp(r->key.data(), key, kKeySize) == 0) {
+    if (memcmp(r->key.data(), key, kKeySize) == 0) {
       *out = r;
       return static_cast<int>(idx);
     }
@@ -241,8 +240,7 @@ static Route* RouteLookup(Route* routes,
   RouteFind(routes, key, &r);
   if (r &&
       __atomic_load_n(&r->occupied, __ATOMIC_ACQUIRE) == 1
-      && sodium_memcmp(r->key.data(), key,
-                       kKeySize) == 0) {
+      && memcmp(r->key.data(), key, kKeySize) == 0) {
     return r;
   }
   return nullptr;
@@ -555,6 +553,7 @@ static void SubmitRecvNow(Worker* w, int fd) {
   }
   struct io_uring_sqe* sqe = GetSqe(w);
   if (!sqe) {
+    DeferRecv(w, fd);
     return;
   }
   if (w->use_provided_bufs) {
@@ -605,12 +604,12 @@ static void DrainDeferredRecvs(Worker* w) {
   }
 }
 
-static void SubmitSend(Worker* w, int fd,
+static bool SubmitSend(Worker* w, int fd,
                        const uint8_t* data, int len,
                        int extra_flags) {
   struct io_uring_sqe* sqe = GetSqe(w);
   if (!sqe) {
-    return;
+    return false;
   }
   io_uring_prep_send(sqe, fd, data, len,
                      MSG_NOSIGNAL | extra_flags);
@@ -619,14 +618,15 @@ static void SubmitSend(Worker* w, int fd,
   }
   io_uring_sqe_set_data64(
       sqe, MakeUserData(kOpSend, fd));
+  return true;
 }
 
-static void SubmitSendZc(Worker* w, int fd,
+static bool SubmitSendZc(Worker* w, int fd,
                          const uint8_t* data, int len,
                          int extra_flags) {
   struct io_uring_sqe* sqe = GetSqe(w);
   if (!sqe) {
-    return;
+    return false;
   }
   io_uring_prep_send_zc(sqe, fd, data, len,
                         MSG_NOSIGNAL | extra_flags, 0);
@@ -635,6 +635,7 @@ static void SubmitSendZc(Worker* w, int fd,
   }
   io_uring_sqe_set_data64(
       sqe, MakeUserData(kOpSend, fd));
+  return true;
 }
 
 static void SubmitPollMultishot(Worker* w, int fd,
@@ -658,14 +659,14 @@ static void SubmitPollMultishot(Worker* w, int fd,
 // per-packet kernel overhead for small packets.
 static constexpr int kZcThreshold = 1024;
 
-static inline void SubmitPeerSend(Worker* w, Peer* peer,
+static inline bool SubmitPeerSend(Worker* w, Peer* peer,
                                   const uint8_t* data,
                                   int len, int more) {
   int flags = more ? MSG_MORE : 0;
   if (peer->no_zc || len <= kZcThreshold) {
-    SubmitSend(w, peer->fd, data, len, flags);
+    return SubmitSend(w, peer->fd, data, len, flags);
   } else {
-    SubmitSendZc(w, peer->fd, data, len, flags);
+    return SubmitSendZc(w, peer->fd, data, len, flags);
   }
 }
 
@@ -706,10 +707,11 @@ static void EnqueueSend(Worker* w, Peer* peer,
   if (peer->send_inflight < kMaxSendsInflight &&
       peer->send_next && !peer->zc_draining) {
     int more = (peer->send_next->next != nullptr);
-    SubmitPeerSend(w, peer, peer->send_next->data,
-                   peer->send_next->len, more);
-    peer->send_next = peer->send_next->next;
-    peer->send_inflight++;
+    if (SubmitPeerSend(w, peer, peer->send_next->data,
+                       peer->send_next->len, more)) {
+      peer->send_next = peer->send_next->next;
+      peer->send_inflight++;
+    }
   }
 
   // Pause recv when send queues are deep — TCP flow
@@ -753,10 +755,11 @@ static void DrainSendQueue(Worker* w, Peer* peer,
   if (peer->send_next &&
       peer->send_inflight < kMaxSendsInflight) {
     int more = (peer->send_next->next != nullptr);
-    SubmitPeerSend(w, peer, peer->send_next->data,
-                   peer->send_next->len, more);
-    peer->send_next = peer->send_next->next;
-    peer->send_inflight++;
+    if (SubmitPeerSend(w, peer, peer->send_next->data,
+                       peer->send_next->len, more)) {
+      peer->send_next = peer->send_next->next;
+      peer->send_inflight++;
+    }
   }
 }
 
@@ -1130,11 +1133,15 @@ static void HandleSendCqe(Worker* w,
                    kMaxSendsInflight) {
           int more =
               (peer->send_next->next != nullptr);
-          SubmitPeerSend(w, peer,
-                         peer->send_next->data,
-                         peer->send_next->len, more);
-          peer->send_next = peer->send_next->next;
-          peer->send_inflight++;
+          if (SubmitPeerSend(w, peer,
+                             peer->send_next->data,
+                             peer->send_next->len,
+                             more)) {
+            peer->send_next = peer->send_next->next;
+            peer->send_inflight++;
+          } else {
+            break;
+          }
         }
       }
       return;
@@ -1240,11 +1247,13 @@ static void HandleSendCqe(Worker* w,
           peer->send_inflight < kMaxSendsInflight) {
         int more =
             (peer->send_next->next != nullptr);
-        SubmitPeerSend(w, peer,
-                       peer->send_next->data,
-                       peer->send_next->len, more);
-        peer->send_next = peer->send_next->next;
-        peer->send_inflight++;
+        if (SubmitPeerSend(w, peer,
+                           peer->send_next->data,
+                           peer->send_next->len,
+                           more)) {
+          peer->send_next = peer->send_next->next;
+          peer->send_inflight++;
+        }
       }
       return;
     }
@@ -1255,7 +1264,11 @@ static void HandleSendCqe(Worker* w,
     if (!peer->send_tail) {
       peer->send_tail = ni;
     }
-    SubmitSend(w, fd, newbuf, remaining, 0);
+    if (!SubmitSend(w, fd, newbuf, remaining, 0)) {
+      // SQ full — count as a completed send so
+      // DrainSendQueue can re-submit later.
+      peer->send_inflight--;
+    }
     return;
   }
 
@@ -1272,13 +1285,34 @@ static void HandlePollWrite(Worker* w,
   }
   Peer* peer = w->fd_map[fd];
   peer->poll_write_pending = 0;
+  int submitted = 0;
   while (peer->send_next &&
-         peer->send_inflight < kMaxSendsInflight) {
+         peer->send_inflight < kMaxSendsInflight &&
+         submitted < kPollWriteBatch) {
     int more = (peer->send_next->next != nullptr);
-    SubmitPeerSend(w, peer, peer->send_next->data,
-                   peer->send_next->len, more);
-    peer->send_next = peer->send_next->next;
-    peer->send_inflight++;
+    if (SubmitPeerSend(w, peer, peer->send_next->data,
+                       peer->send_next->len, more)) {
+      peer->send_next = peer->send_next->next;
+      peer->send_inflight++;
+      submitted++;
+    } else {
+      break;
+    }
+  }
+  // Re-arm POLLOUT if more sends remain.
+  if (peer->send_next &&
+      peer->send_inflight < kMaxSendsInflight &&
+      !peer->poll_write_pending) {
+    struct io_uring_sqe* sqe = GetSqe(w);
+    if (sqe) {
+      io_uring_prep_poll_add(sqe, fd, POLLOUT);
+      if (w->use_fixed_files) {
+        sqe->flags |= IOSQE_FIXED_FILE;
+      }
+      io_uring_sqe_set_data64(
+          sqe, MakeUserData(kOpPollWrite, fd));
+      peer->poll_write_pending = 1;
+    }
   }
 }
 
@@ -1482,13 +1516,15 @@ static void* WorkerRun(void* arg) {
       }
     }
 
-    // Process ALL available CQEs in one batch.
+    // Process available CQEs, capped to prevent
+    // recv burst avalanches from generating unbounded SQEs.
     idle_spins = 0;
     {
       unsigned head;
       struct io_uring_cqe* c = nullptr;
       int nr = 0;
       io_uring_for_each_cqe(&w->ring, head, c) {
+        if (nr >= kMaxCqeBatch) break;
         uint8_t op = UdOp(c->user_data);
         switch (op) {
           case kOpRecv:

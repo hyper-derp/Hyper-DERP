@@ -8,3 +8,6 @@ target_link_libraries(derp-tun-proxy PRIVATE libderp)
 
 add_executable(derp-scale-test derp_scale_test.cc)
 target_link_libraries(derp-scale-test PRIVATE libderp)
+
+add_executable(derp-scale-test-uring derp_scale_test_uring.cc)
+target_link_libraries(derp-scale-test-uring PRIVATE libderp)

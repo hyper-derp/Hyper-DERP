@@ -49,6 +49,7 @@ static void Usage() {
       "  --size N        Payload size bytes (default: 64)\n"
       "  --duration N    Test duration seconds (flood/sink)\n"
       "  --warmup N      Discard first N from stats (0)\n"
+      "  --tls           TLS 1.3 connect (kTLS offload)\n"
       "  --core N        Pin to CPU core\n"
       "  --timeout MS    Recv timeout ms (default: 5000)\n"
       "  --ready-fd N    Write 'R' to this fd when ready\n"
@@ -533,6 +534,7 @@ int main(int argc, char** argv) {
   int num_workers = 0;
   bool json = false;
   bool raw_latency = false;
+  bool use_tls = false;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--host") == 0 && i + 1 < argc) {
@@ -567,6 +569,8 @@ int main(int argc, char** argv) {
     } else if (strcmp(argv[i], "--ready-fd") == 0 &&
                i + 1 < argc) {
       ready_fd = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--tls") == 0) {
+      use_tls = true;
     } else if (strcmp(argv[i], "--json") == 0) {
       json = true;
     } else if (strcmp(argv[i], "--raw-latency") == 0) {
@@ -637,6 +641,13 @@ int main(int argc, char** argv) {
   if (!ClientConnect(&client, host, port)) {
     fprintf(stderr, "Connect failed\n");
     return 1;
+  }
+  if (use_tls) {
+    if (!ClientTlsConnect(&client)) {
+      fprintf(stderr, "TLS connect failed\n");
+      return 1;
+    }
+    fprintf(stderr, "TLS 1.3 connected (kTLS)\n");
   }
   if (!ClientUpgrade(&client)) {
     fprintf(stderr, "Upgrade failed\n");
