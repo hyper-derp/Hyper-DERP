@@ -88,4 +88,22 @@ TEST(TypesTest, MaxSendsInflightFitsInRing) {
   EXPECT_LE(250 * kMaxSendsInflight, kUringQueueDepth);
 }
 
+// -- Frame pool constant checks --
+
+TEST(TypesTest, FramePoolCoversWireGuardMTU) {
+  // Typical forwarded frame: 5B header + 32B key + 1400B.
+  int typical = kFrameHeaderSize + kKeySize + 1400;
+  EXPECT_LE(typical, kFramePoolBufSize);
+}
+
+TEST(TypesTest, FramePoolBufSizeIsPowerOfTwo) {
+  EXPECT_GT(kFramePoolBufSize, 0);
+  EXPECT_EQ(kFramePoolBufSize & (kFramePoolBufSize - 1), 0);
+}
+
+TEST(TypesTest, FramePoolCountIsPowerOfTwo) {
+  EXPECT_GT(kFramePoolCount, 0);
+  EXPECT_EQ(kFramePoolCount & (kFramePoolCount - 1), 0);
+}
+
 }  // namespace hyper_derp

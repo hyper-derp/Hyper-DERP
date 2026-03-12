@@ -556,6 +556,18 @@ void ServerStop(Server* server) {
       "other={}",
       ep, ecr, eag, eoth);
 
+  uint64_t fph = 0, fpm = 0;
+  for (int i = 0; i < server->data_plane.num_workers;
+       i++) {
+    Worker* w = server->data_plane.workers[i];
+    if (!w) continue;
+    fph += __atomic_load_n(&w->stats.frame_pool_hits,
+                           __ATOMIC_RELAXED);
+    fpm += __atomic_load_n(&w->stats.frame_pool_misses,
+                           __ATOMIC_RELAXED);
+  }
+  spdlog::info("frame pool: hits={} misses={}", fph, fpm);
+
   // Stop metrics server before data plane teardown.
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;

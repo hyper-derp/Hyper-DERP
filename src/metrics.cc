@@ -76,6 +76,8 @@ struct AggregatedStats {
   uint64_t send_eagain = 0;
   uint64_t send_other_err = 0;
   uint64_t recv_enobufs = 0;
+  uint64_t frame_pool_hits = 0;
+  uint64_t frame_pool_misses = 0;
   int64_t peers_active = 0;
   int num_workers = 0;
 };
@@ -106,6 +108,10 @@ static AggregatedStats CollectStats(Ctx* ctx) {
         &w->stats.send_other_err, __ATOMIC_RELAXED);
     s.recv_enobufs += __atomic_load_n(
         &w->stats.recv_enobufs, __ATOMIC_RELAXED);
+    s.frame_pool_hits += __atomic_load_n(
+        &w->stats.frame_pool_hits, __ATOMIC_RELAXED);
+    s.frame_pool_misses += __atomic_load_n(
+        &w->stats.frame_pool_misses, __ATOMIC_RELAXED);
     // Count active peers from hash table.
     for (int j = 0; j < kHtCapacity; j++) {
       if (w->ht[j].occupied == 1) {
@@ -154,6 +160,12 @@ static void RegisterRoutes(MetricsServer* ms,
     WriteGauge(out, "hyper_derp_workers",
                "Number of data plane workers",
                s.num_workers);
+    WriteCounter(out, "hyper_derp_frame_pool_hits_total",
+                 "Frame pool allocations from pool",
+                 s.frame_pool_hits);
+    WriteCounter(out, "hyper_derp_frame_pool_misses_total",
+                 "Frame pool allocations via malloc",
+                 s.frame_pool_misses);
 
     auto resp = crow::response(200, out.str());
     resp.set_header("Content-Type",

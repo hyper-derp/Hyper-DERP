@@ -106,6 +106,14 @@ inline constexpr int kPbufCount = 512;
 /// Provided buffer size per buffer.
 inline constexpr int kPbufSize = kReadBufSize;
 
+/// Frame pool buffer size (per worker). Covers typical
+/// forwarded WireGuard frames (5 + 32 + 1400 = 1437 bytes).
+/// Frames larger than this fall back to malloc.
+inline constexpr int kFramePoolBufSize = 2048;
+
+/// Frame pool count per worker (2048 * 4096 = 8 MiB).
+inline constexpr int kFramePoolCount = 4096;
+
 // -- Operation and command tags ----------------------------------------------
 
 /// io_uring operation tags encoded in user_data.
@@ -202,6 +210,8 @@ struct WorkerStats {
   uint64_t send_queue_drops;
   uint64_t sq_overflow;
   uint64_t recv_pauses;
+  uint64_t frame_pool_hits;
+  uint64_t frame_pool_misses;
 };
 
 /// SPSC ring buffer for commands to a worker.
@@ -294,6 +304,13 @@ struct Worker {
   SendItem* slab_items;
   SendItem* slab_item_free;
 
+  // Frame pool allocator (fixed-size buffer pool).
+  uint8_t* frame_pool;
+  void* frame_pool_free;
+
+  // MPSC return stack for cross-worker buffer returns.
+  // Separated from frame_pool_free to avoid false sharing.
+  alignas(64) void* frame_return_head;
 
   // Per-worker stats.
   WorkerStats stats;

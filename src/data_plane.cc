@@ -43,7 +43,7 @@ namespace hyper_derp {
 // -- Internal forward declarations -------------------------------------------
 
 static void SlabFreeItem(Worker* w, SendItem* item);
-static inline void FrameFree(uint8_t* buf);
+static void FrameFree(Worker* w, uint8_t* buf);
 static int WorkerInitRing(Worker* w);
 static void DrainDeferredRecvs(Worker* w);
 
@@ -172,7 +172,7 @@ static void HtRemove(Worker* w, const Key& key) {
   }
   while (item) {
     SendItem* next = item->next;
-    FrameFree(item->data);
+    FrameFree(w, item->data);
     SlabFreeItem(w, item);
     item = next;
   }
@@ -427,11 +427,127 @@ static void SlabFreeItem(Worker* w, SendItem* item) {
   }
 }
 
-static inline uint8_t* FrameAlloc(int size) {
+// -- Per-worker frame pool allocator -----------------------------------------
+
+/// Freelist node overlaid on the first 8 bytes of each
+/// free pool buffer. Only valid when the buffer is free.
+struct FrameNode {
+  FrameNode* next;
+};
+
+static int FramePoolInit(Worker* w) {
+  w->frame_pool = static_cast<uint8_t*>(
+      calloc(kFramePoolCount, kFramePoolBufSize));
+  if (!w->frame_pool) {
+    return -1;
+  }
+  auto* head = reinterpret_cast<FrameNode*>(w->frame_pool);
+  w->frame_pool_free = head;
+  for (int i = 0; i < kFramePoolCount - 1; i++) {
+    auto* cur = reinterpret_cast<FrameNode*>(
+        w->frame_pool + i * kFramePoolBufSize);
+    auto* nxt = reinterpret_cast<FrameNode*>(
+        w->frame_pool + (i + 1) * kFramePoolBufSize);
+    cur->next = nxt;
+  }
+  auto* last = reinterpret_cast<FrameNode*>(
+      w->frame_pool +
+      (kFramePoolCount - 1) * kFramePoolBufSize);
+  last->next = nullptr;
+  w->frame_return_head = nullptr;
+  return 0;
+}
+
+static void FramePoolDestroy(Worker* w) {
+  free(w->frame_pool);
+  w->frame_pool = nullptr;
+  w->frame_pool_free = nullptr;
+  w->frame_return_head = nullptr;
+}
+
+/// Push a buffer to a (possibly foreign) worker's return
+/// stack. Lock-free Treiber stack via CAS.
+static void FrameReturnPush(Worker* ow, uint8_t* buf) {
+  auto* node = reinterpret_cast<FrameNode*>(buf);
+  FrameNode* old_head;
+  do {
+    old_head = static_cast<FrameNode*>(
+        __atomic_load_n(&ow->frame_return_head,
+                        __ATOMIC_ACQUIRE));
+    node->next = old_head;
+  } while (!__atomic_compare_exchange_n(
+      reinterpret_cast<FrameNode**>(
+          &ow->frame_return_head),
+      &old_head, node,
+      false, __ATOMIC_RELEASE, __ATOMIC_RELAXED));
+}
+
+/// Drain returned buffers back into the local freelist.
+static void FrameReturnDrain(Worker* w) {
+  auto* list = static_cast<FrameNode*>(
+      __atomic_exchange_n(&w->frame_return_head,
+                          nullptr, __ATOMIC_ACQUIRE));
+  while (list) {
+    FrameNode* next = list->next;
+    list->next = static_cast<FrameNode*>(
+        w->frame_pool_free);
+    w->frame_pool_free = list;
+    list = next;
+  }
+}
+
+/// Check if buf belongs to the given worker's pool.
+static inline bool FramePoolOwns(const Worker* w,
+                                 const uint8_t* buf) {
+  return buf >= w->frame_pool &&
+         buf < w->frame_pool +
+                   kFramePoolCount * kFramePoolBufSize;
+}
+
+static uint8_t* FrameAlloc(Worker* w, int size) {
+  if (size <= kFramePoolBufSize) {
+    if (w->frame_pool_free) {
+      auto* node = static_cast<FrameNode*>(
+          w->frame_pool_free);
+      w->frame_pool_free = node->next;
+      w->stats.frame_pool_hits++;
+      return reinterpret_cast<uint8_t*>(node);
+    }
+    // Try reclaiming cross-worker returns.
+    FrameReturnDrain(w);
+    if (w->frame_pool_free) {
+      auto* node = static_cast<FrameNode*>(
+          w->frame_pool_free);
+      w->frame_pool_free = node->next;
+      w->stats.frame_pool_hits++;
+      return reinterpret_cast<uint8_t*>(node);
+    }
+  }
+  w->stats.frame_pool_misses++;
   return static_cast<uint8_t*>(malloc(size));
 }
 
-static inline void FrameFree(uint8_t* buf) {
+static void FrameFree(Worker* w, uint8_t* buf) {
+  if (!buf) return;
+  // Fast path: local pool buffer.
+  if (FramePoolOwns(w, buf)) {
+    auto* node = reinterpret_cast<FrameNode*>(buf);
+    node->next = static_cast<FrameNode*>(
+        w->frame_pool_free);
+    w->frame_pool_free = node;
+    return;
+  }
+  // Check other workers' pools (cross-shard return).
+  Ctx* ctx = w->ctx;
+  for (int i = 0; i < ctx->num_workers; i++) {
+    Worker* ow = ctx->workers[i];
+    if (ow == w) continue;
+    if (FramePoolOwns(ow, buf)) {
+      FrameReturnPush(ow, buf);
+      return;
+    }
+  }
+  // Oversize or pre-pool buffer — malloc'd.
   free(buf);
 }
 
@@ -683,14 +799,14 @@ static void EnqueueSend(Worker* w, Peer* peer,
   // Drop newest when queue is full (backpressure).
   if (peer->send_queued >= kMaxSendQueueDepth) {
     w->stats.send_queue_drops++;
-    FrameFree(data);
+    FrameFree(w, data);
     return;
   }
 
   SendItem* item = SlabAllocItem(w);
   if (!item) {
     w->stats.slab_exhausts++;
-    FrameFree(data);
+    FrameFree(w, data);
     return;
   }
   item->data = data;
@@ -754,7 +870,7 @@ static void DrainSendQueue(Worker* w, Peer* peer,
       done->next = w->notif_map[peer->fd];
       w->notif_map[peer->fd] = done;
     } else {
-      FrameFree(done->data);
+      FrameFree(w, done->data);
       SlabFreeItem(w, done);
     }
     if (peer->send_queued > 0) peer->send_queued--;
@@ -878,7 +994,7 @@ static void ForwardMsg(Worker* w, FrameType type,
   // Build a RecvPacket frame for the destination.
   int frame_len =
       kFrameHeaderSize + kKeySize + pkt_len;
-  uint8_t* frame = FrameAlloc(frame_len);
+  uint8_t* frame = FrameAlloc(w, frame_len);
   if (!frame) {
     return;
   }
@@ -894,7 +1010,7 @@ static void ForwardMsg(Worker* w, FrameType type,
   // Cross-shard: lookup in replicated routing table.
   Route* route = RouteLookup(w->routes, dst_key);
   if (!route) {
-    FrameFree(frame);
+    FrameFree(w, frame);
     return;
   }
 
@@ -909,7 +1025,7 @@ static void ForwardMsg(Worker* w, FrameType type,
   if (rc == 1) {
     SignalEventfd(dst_w->xfer_efd);
   } else if (rc == -1) {
-    FrameFree(frame);
+    FrameFree(w, frame);
     w->stats.xfer_drops++;
   }
 }
@@ -1151,7 +1267,7 @@ static void HandleSendCqe(Worker* w,
     if (fd >= 0 && fd < kMaxFd && w->notif_map[fd]) {
       SendItem* item = w->notif_map[fd];
       w->notif_map[fd] = item->next;
-      FrameFree(item->data);
+      FrameFree(w, item->data);
       SlabFreeItem(w, item);
     }
     return;
@@ -1163,7 +1279,7 @@ static void HandleSendCqe(Worker* w,
       while (w->notif_map[fd]) {
         SendItem* item = w->notif_map[fd];
         w->notif_map[fd] = item->next;
-        FrameFree(item->data);
+        FrameFree(w, item->data);
         SlabFreeItem(w, item);
       }
     }
@@ -1274,7 +1390,7 @@ static void HandleSendCqe(Worker* w,
     int sent = cqe->res;
     SendItem* item = peer->send_head;
     int remaining = item->len - sent;
-    uint8_t* newbuf = FrameAlloc(remaining);
+    uint8_t* newbuf = FrameAlloc(w, remaining);
     if (!newbuf) {
       DrainSendQueue(w, peer, defer_notif);
       return;
@@ -1288,13 +1404,13 @@ static void HandleSendCqe(Worker* w,
       item->next = w->notif_map[fd];
       w->notif_map[fd] = item;
     } else {
-      FrameFree(item->data);
+      FrameFree(w, item->data);
       SlabFreeItem(w, item);
     }
     SendItem* ni = SlabAllocItem(w);
     if (!ni) {
       w->stats.slab_exhausts++;
-      FrameFree(newbuf);
+      FrameFree(w, newbuf);
       peer->send_inflight--;
       if (peer->send_next &&
           peer->send_inflight < kMaxSendsInflight) {
@@ -1442,7 +1558,7 @@ static void ProcessCmdWrite(Worker* w, Cmd* cmd) {
   if (p) {
     // Build a DERP frame wrapping the data.
     int frame_len = kFrameHeaderSize + cmd->data_len;
-    uint8_t* frame = FrameAlloc(frame_len);
+    uint8_t* frame = FrameAlloc(w, frame_len);
     if (frame) {
       // Control plane writes are opaque; use the raw
       // data as the frame payload. The caller is
@@ -1484,12 +1600,12 @@ static void ProcessXfer(Worker* w) {
   while (XferPop(&w->xfer_ring, &x) == 0) {
     if (x.dst_fd < 0 || x.dst_fd >= kMaxFd ||
         !w->fd_map[x.dst_fd]) {
-      free(x.frame);
+      FrameFree(w, x.frame);
       continue;
     }
     Peer* peer = w->fd_map[x.dst_fd];
     if (x.dst_gen != w->fd_gen[x.dst_fd]) {
-      free(x.frame);
+      FrameFree(w, x.frame);
       continue;
     }
     EnqueueSend(w, peer, x.frame, x.frame_len);
@@ -1556,6 +1672,7 @@ static void* WorkerRun(void* arg) {
       if (idle_spins++ < kBusySpins) {
         ProcessXfer(w);
         DrainDeferredRecvs(w);
+        FrameReturnDrain(w);
         continue;
       }
       // Idle too long — block until an event arrives.
@@ -1704,6 +1821,11 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
     goto fail;
   }
 
+  if (FramePoolInit(w) < 0) {
+    SlabDestroy(w);
+    goto fail;
+  }
+
   return 0;
 
 fail:
@@ -1805,7 +1927,7 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
       SendItem* item = p->send_head;
       while (item) {
         SendItem* next = item->next;
-        FrameFree(item->data);
+        FrameFree(w, item->data);
         SlabFreeItem(w, item);
         item = next;
       }
@@ -1818,7 +1940,7 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
     while (w->notif_map[i]) {
       SendItem* item = w->notif_map[i];
       w->notif_map[i] = item->next;
-      FrameFree(item->data);
+      FrameFree(w, item->data);
       SlabFreeItem(w, item);
     }
   }
@@ -1858,6 +1980,7 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
     }
   }
 
+  FramePoolDestroy(w);
   SlabDestroy(w);
 }
 
