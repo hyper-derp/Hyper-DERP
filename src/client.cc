@@ -9,6 +9,7 @@
 #include <expected>
 #include <format>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sodium.h>
 #include <string_view>
 #include <sys/socket.h>
@@ -46,7 +47,11 @@ static int WriteAll(int fd, const uint8_t* buf, int n) {
   while (total < n) {
     int w = write(fd, buf + total, n - total);
     if (w < 0) {
-      if (errno == EINTR || errno == EAGAIN) {
+      if (errno == EINTR) continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        struct pollfd pfd = {fd, POLLOUT, 0};
+        int r = poll(&pfd, 1, 5000);
+        if (r <= 0) return -1;
         continue;
       }
       return -1;

@@ -62,13 +62,36 @@ inline constexpr int kMaxCqeBatch = 256;
 /// Maximum queued sends per peer. Per-peer drop limit.
 inline constexpr int kMaxSendQueueDepth = 2048;
 
-/// Per-worker send pressure thresholds (total queued sends
-/// across all peers). High threshold allows deep pipelining
-/// before recv pauses; at 250 peers this is ~131 items/peer.
-/// Low threshold resumes recv promptly to keep ingest rate
-/// high. Both must stay below kSlabSize to avoid exhaustion.
-inline constexpr int kSendPressureHigh = 32768;
-inline constexpr int kSendPressureLow = 8192;
+/// Absolute cap on send pressure before recv pauses.
+/// Adaptive threshold scales with peer count but is clamped
+/// to this value. Must stay below kSlabSize.
+inline constexpr int kSendPressureMax = 32768;
+
+/// Per-peer contribution to the adaptive send pressure
+/// threshold. Effective high = min(kSendPressureMax,
+/// peer_count * kPressurePerPeer).
+inline constexpr int kPressurePerPeer = 512;
+
+/// Resume ratio: recv resumes when pressure drops to 1/4
+/// of the effective high threshold.
+inline constexpr int kPressureResumeDiv = 4;
+
+/// Compute the adaptive recv-pause threshold for a given
+/// peer count. Scales linearly so low peer counts get a
+/// tight threshold (preventing per-peer drops) while high
+/// counts get a looser one.
+inline constexpr int SendPressureHigh(int peer_count) {
+  int h = peer_count * kPressurePerPeer;
+  if (h < kPressurePerPeer) h = kPressurePerPeer;
+  if (h > kSendPressureMax) h = kSendPressureMax;
+  return h;
+}
+
+/// Compute the recv-resume threshold (1/kPressureResumeDiv
+/// of the high threshold).
+inline constexpr int SendPressureLow(int peer_count) {
+  return SendPressureHigh(peer_count) / kPressureResumeDiv;
+}
 
 /// Maximum concurrent recv SQEs per worker.
 inline constexpr int kRecvBudget = 512;
@@ -257,6 +280,7 @@ struct Worker {
   // Send-pressure-based recv pause.
   int send_pressure;  // Total queued sends across all peers.
   int recv_paused;    // 1 = recv paused due to send pressure.
+  int peer_count;     // Active peers on this worker.
 
   // Multishot recv support (kernel 6.0+).
   int use_multishot_recv;

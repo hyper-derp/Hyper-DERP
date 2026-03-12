@@ -58,12 +58,20 @@ ns_relay() { ip netns exec "$NS_RELAY" "$@"; }
 ns_client() { ip netns exec "$NS_CLIENT" "$@"; }
 
 PIDS=()
+kill_relays() {
+  killall -9 hyper-derp derper derp-scale-test \
+    derp-test-client 2>/dev/null || true
+  sleep 0.5
+}
+
 cleanup() {
   log "Cleaning up..."
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
+  PIDS=()
+  kill_relays
   ip netns del "$NS_RELAY" 2>/dev/null || true
   ip netns del "$NS_CLIENT" 2>/dev/null || true
   ip link del "$VETH_RELAY_HOST" 2>/dev/null || true
@@ -386,6 +394,7 @@ for i in range(start, len(text)):
 test_ts() {
   log ""
   log "========== Tailscale derper =========="
+  kill_relays
 
   ns_relay "$DERPER" -dev \
     2>"${OUTPUT_DIR}/derper.log" &
@@ -413,12 +422,14 @@ test_ts() {
 
   kill "$TS_PID" 2>/dev/null || true
   wait "$TS_PID" 2>/dev/null || true
+  PIDS=()
   sleep 2
 }
 
 test_hd() {
   log ""
   log "========== Hyper-DERP (plain TCP) =========="
+  kill_relays
 
   ns_relay "$RELAY" --port "$HD_PORT" --workers "$WORKERS" \
     --pin-workers "$HD_CORES" \
@@ -447,12 +458,14 @@ test_hd() {
 
   kill "$HD_PID" 2>/dev/null || true
   wait "$HD_PID" 2>/dev/null || true
+  PIDS=()
   sleep 2
 }
 
 test_hd_ktls() {
   log ""
   log "========== Hyper-DERP (kTLS) =========="
+  kill_relays
 
   # Generate self-signed cert for kTLS.
   local cert_dir="${OUTPUT_DIR}/certs"
@@ -497,6 +510,7 @@ test_hd_ktls() {
 
   kill "$HD_PID" 2>/dev/null || true
   wait "$HD_PID" 2>/dev/null || true
+  PIDS=()
   sleep 2
 }
 

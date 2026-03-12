@@ -152,6 +152,9 @@ static int HtInsert(Worker* w, int fd,
   return 0;
 }
 
+// Forward declaration (needed by HtRemove).
+static void DrainDeferredRecvs(Worker* w);
+
 static void HtRemove(Worker* w, const Key& key) {
   Peer* p = HtLookup(w, key.data());
   if (!p) {
@@ -182,10 +185,11 @@ static void HtRemove(Worker* w, const Key& key) {
   p->send_inflight = 0;
   p->send_queued = 0;
   p->occupied = 2;
+  w->peer_count--;
 
   // Resume recv if removing this peer relieved pressure.
   if (w->recv_paused &&
-      w->send_pressure <= kSendPressureLow) {
+      w->send_pressure <= SendPressureLow(w->peer_count)) {
     w->recv_paused = 0;
     DrainDeferredRecvs(w);
   }
@@ -717,7 +721,7 @@ static void EnqueueSend(Worker* w, Peer* peer,
   // Pause recv when send queues are deep — TCP flow
   // control propagates backpressure to senders.
   if (!w->recv_paused &&
-      w->send_pressure >= kSendPressureHigh) {
+      w->send_pressure >= SendPressureHigh(w->peer_count)) {
     w->recv_paused = 1;
     w->stats.recv_pauses++;
   }
@@ -744,7 +748,7 @@ static void DrainSendQueue(Worker* w, Peer* peer,
 
     // Resume recv when send pressure drops.
     if (w->recv_paused &&
-        w->send_pressure <= kSendPressureLow) {
+        w->send_pressure <= SendPressureLow(w->peer_count)) {
       w->recv_paused = 0;
       DrainDeferredRecvs(w);
     }
@@ -1329,6 +1333,7 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
   }
   w->fd_map[cmd->fd] = p;
   w->fd_gen[cmd->fd]++;
+  w->peer_count++;
 
   BroadcastRouteAdd(w->ctx, cmd->key, w->id, cmd->fd);
 
