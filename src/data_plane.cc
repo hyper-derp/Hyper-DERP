@@ -187,7 +187,7 @@ static void HtRemove(Worker* w, const Key& key) {
   p->send_queued = 0;
   p->send_pending = 0;
   p->occupied = 2;
-  w->peer_count--;
+  if (w->peer_count > 0) w->peer_count--;
 
   // Resume recv if removing this peer relieved pressure.
   if (w->recv_paused &&
@@ -757,8 +757,8 @@ static void DrainSendQueue(Worker* w, Peer* peer,
       FrameFree(done->data);
       SlabFreeItem(w, done);
     }
-    peer->send_queued--;
-    w->send_pressure--;
+    if (peer->send_queued > 0) peer->send_queued--;
+    if (w->send_pressure > 0) w->send_pressure--;
 
     // Resume recv when send pressure drops.
     if (w->recv_paused &&
@@ -768,7 +768,9 @@ static void DrainSendQueue(Worker* w, Peer* peer,
     }
   }
 
-  peer->send_inflight--;
+  if (peer->send_inflight > 0) {
+    peer->send_inflight--;
+  }
 
   if (peer->send_next &&
       peer->send_inflight < kMaxSendsInflight) {

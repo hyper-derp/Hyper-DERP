@@ -524,6 +524,290 @@ TEST_F(E2ETest, BidirectionalRelay) {
   EXPECT_EQ(rb, 'P') << "B did not receive A's message";
 }
 
+// -- Multi-peer / cross-shard test with 2 workers --
+
+class E2EMultiPeerTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_TRUE(sodium_init() >= 0);
+    port_ = test::FindFreePort();
+    ASSERT_NE(port_, 0);
+    relay_pid_ = test::StartRelay(port_, 2);
+    ASSERT_GT(relay_pid_, 0);
+    ASSERT_EQ(test::WaitRelayReady(port_, 5000), 0);
+  }
+
+  void TearDown() override {
+    if (relay_pid_ > 0) {
+      test::StopRelay(relay_pid_);
+    }
+  }
+
+  uint16_t port_ = 0;
+  pid_t relay_pid_ = -1;
+};
+
+TEST_F(E2EMultiPeerTest, MultiPeerRelay) {
+  // 10 peers form 5 sender-receiver pairs.
+  // Uses 2 workers, so some pairs will cross shards.
+  static constexpr int kPairs = 5;
+  static constexpr int kTotal = kPairs * 2;
+
+  uint8_t pubs[kTotal][kKeySize];
+  uint8_t privs[kTotal][kKeySize];
+  for (int i = 0; i < kTotal; i++) {
+    crypto_box_keypair(pubs[i], privs[i]);
+  }
+
+  // Result pipe: each receiver writes 'P' or 'F'.
+  int result_pipe[2];
+  ASSERT_EQ(pipe(result_pipe), 0);
+
+  // Ready pipe: each peer writes 'R' when connected.
+  int ready_pipe[2];
+  ASSERT_EQ(pipe(ready_pipe), 0);
+
+  pid_t pids[kTotal];
+
+  // Fork all peers.
+  for (int i = 0; i < kTotal; i++) {
+    pids[i] = fork();
+    ASSERT_GE(pids[i], 0);
+
+    if (pids[i] == 0) {
+      close(ready_pipe[0]);
+      close(result_pipe[0]);
+
+      DerpClient client;
+      ClientInitWithKeys(&client, pubs[i], privs[i]);
+
+      bool ok = true;
+      ok = ok && ClientConnect(
+          &client, "127.0.0.1", port_).has_value();
+      ok = ok && ClientUpgrade(&client).has_value();
+      ok = ok && ClientHandshake(&client).has_value();
+
+      write(ready_pipe[1], "R", 1);
+      close(ready_pipe[1]);
+
+      if (!ok) {
+        if (i >= kPairs) {
+          write(result_pipe[1], "F", 1);
+        }
+        close(result_pipe[1]);
+        _exit(1);
+      }
+
+      (void)ClientSetTimeout(&client, 10000);
+
+      // Wait for all peers to connect.
+      usleep(500000);
+
+      if (i < kPairs) {
+        // Sender: send one packet to the paired receiver.
+        int dst = i + kPairs;
+        uint8_t payload[64];
+        memset(payload, 0, sizeof(payload));
+        payload[0] = static_cast<uint8_t>(i);
+        (void)ClientSendPacket(
+            &client, ToKey(pubs[dst]),
+            payload, sizeof(payload));
+        usleep(500000);
+      } else {
+        // Receiver: wait for one RecvPacket.
+        uint8_t buf[kMaxFramePayload];
+        int buf_len = 0;
+        FrameType ftype;
+        bool got = false;
+
+        for (int a = 0; a < 30; a++) {
+          if (!ClientRecvFrame(&client, &ftype, buf,
+                               &buf_len, sizeof(buf))) {
+            break;
+          }
+          if (ftype == FrameType::kRecvPacket) {
+            int src = i - kPairs;
+            if (buf_len >= kKeySize + 1 &&
+                memcmp(buf, pubs[src], kKeySize) == 0 &&
+                buf[kKeySize] ==
+                    static_cast<uint8_t>(src)) {
+              got = true;
+            }
+            break;
+          }
+        }
+        write(result_pipe[1], got ? "P" : "F", 1);
+      }
+
+      ClientClose(&client);
+      close(result_pipe[1]);
+      _exit(0);
+    }
+  }
+
+  close(ready_pipe[1]);
+  close(result_pipe[1]);
+
+  // Wait for all peers to connect.
+  for (int i = 0; i < kTotal; i++) {
+    char sig = 0;
+    ASSERT_EQ(read(ready_pipe[0], &sig, 1), 1);
+    ASSERT_EQ(sig, 'R') << "Peer " << i
+                         << " failed to connect";
+  }
+  close(ready_pipe[0]);
+
+  // Wait for all children.
+  for (int i = 0; i < kTotal; i++) {
+    int status;
+    waitpid(pids[i], &status, 0);
+    EXPECT_TRUE(WIFEXITED(status))
+        << "Peer " << i << " did not exit cleanly";
+  }
+
+  // Check receiver results.
+  int received = 0;
+  for (int i = 0; i < kPairs; i++) {
+    char r = 0;
+    ASSERT_EQ(read(result_pipe[0], &r, 1), 1);
+    if (r == 'P') received++;
+  }
+  close(result_pipe[0]);
+
+  EXPECT_EQ(received, kPairs)
+      << "Only " << received << "/" << kPairs
+      << " receivers got their packet";
+}
+
+TEST_F(E2ETest, SenderDisconnectMidBurst) {
+  // Verify the relay handles a sender disconnecting
+  // while sends are in-flight without crashing.
+  uint8_t pub_a[kKeySize], priv_a[kKeySize];
+  uint8_t pub_b[kKeySize], priv_b[kKeySize];
+  crypto_box_keypair(pub_a, priv_a);
+  crypto_box_keypair(pub_b, priv_b);
+
+  int b_ready[2], result_pipe[2];
+  ASSERT_EQ(pipe(b_ready), 0);
+  ASSERT_EQ(pipe(result_pipe), 0);
+
+  // Fork receiver B.
+  pid_t pid_b = fork();
+  ASSERT_GE(pid_b, 0);
+
+  if (pid_b == 0) {
+    close(b_ready[0]);
+    close(result_pipe[0]);
+
+    DerpClient client;
+    ClientInitWithKeys(&client, pub_b, priv_b);
+
+    bool ok = true;
+    ok = ok && ClientConnect(
+        &client, "127.0.0.1", port_).has_value();
+    ok = ok && ClientUpgrade(&client).has_value();
+    ok = ok && ClientHandshake(&client).has_value();
+
+    write(b_ready[1], "R", 1);
+    close(b_ready[1]);
+
+    if (!ok) {
+      write(result_pipe[1], "F", 1);
+      close(result_pipe[1]);
+      _exit(1);
+    }
+
+    (void)ClientSetTimeout(&client, 5000);
+
+    // Receive whatever arrives. Some packets expected
+    // before sender disconnects.
+    uint8_t buf[kMaxFramePayload];
+    int buf_len = 0;
+    FrameType ftype;
+    int received = 0;
+
+    for (int a = 0; a < 200; a++) {
+      if (!ClientRecvFrame(&client, &ftype, buf,
+                           &buf_len, sizeof(buf))) {
+        break;
+      }
+      if (ftype == FrameType::kRecvPacket) {
+        received++;
+      }
+    }
+
+    ClientClose(&client);
+    // Pass if we got at least one packet and didn't hang.
+    bool pass = (received >= 1);
+    write(result_pipe[1], pass ? "P" : "F", 1);
+    close(result_pipe[1]);
+    _exit(pass ? 0 : 1);
+  }
+
+  close(b_ready[1]);
+  close(result_pipe[1]);
+
+  char sig = 0;
+  ASSERT_EQ(read(b_ready[0], &sig, 1), 1);
+  ASSERT_EQ(sig, 'R');
+  close(b_ready[0]);
+
+  usleep(100000);
+
+  // Fork sender A: sends 50 packets then abruptly closes.
+  pid_t pid_a = fork();
+  ASSERT_GE(pid_a, 0);
+
+  if (pid_a == 0) {
+    close(result_pipe[0]);
+
+    DerpClient client;
+    ClientInitWithKeys(&client, pub_a, priv_a);
+
+    bool ok = true;
+    ok = ok && ClientConnect(
+        &client, "127.0.0.1", port_).has_value();
+    ok = ok && ClientUpgrade(&client).has_value();
+    ok = ok && ClientHandshake(&client).has_value();
+
+    if (!ok) _exit(1);
+
+    usleep(100000);
+
+    uint8_t payload[256];
+    memset(payload, 0xAB, sizeof(payload));
+
+    for (int i = 0; i < 50; i++) {
+      payload[0] = static_cast<uint8_t>(i);
+      if (!ClientSendPacket(&client, ToKey(pub_b),
+                            payload, sizeof(payload))) {
+        break;
+      }
+    }
+
+    // Abrupt close — no graceful shutdown.
+    close(client.fd);
+    _exit(0);
+  }
+
+  int status_a;
+  waitpid(pid_a, &status_a, 0);
+  EXPECT_TRUE(WIFEXITED(status_a));
+
+  int status_b;
+  waitpid(pid_b, &status_b, 0);
+  EXPECT_TRUE(WIFEXITED(status_b));
+  EXPECT_EQ(WEXITSTATUS(status_b), 0)
+      << "Receiver B failed or hung";
+
+  char result = 0;
+  ASSERT_EQ(read(result_pipe[0], &result, 1), 1);
+  EXPECT_EQ(result, 'P')
+      << "Receiver did not get any packets before "
+      << "sender disconnect";
+  close(result_pipe[0]);
+}
+
 class E2EKtlsTest : public ::testing::Test {
  protected:
   void SetUp() override {
