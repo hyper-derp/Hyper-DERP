@@ -151,6 +151,7 @@ struct Peer {
   int no_zc;
   int zc_draining;
   int poll_write_pending;
+  int send_pending;  // Queued items await first submit.
 
   // Cold: accessed on connect/disconnect.
   Key key;
@@ -281,6 +282,10 @@ struct Worker {
   int send_pressure;  // Total queued sends across all peers.
   int recv_paused;    // 1 = recv paused due to send pressure.
   int peer_count;     // Active peers on this worker.
+
+  // Deferred send flush (batch coalescing).
+  int pending_fds[kMaxCqeBatch];
+  int pending_count;
 
   // Multishot recv support (kernel 6.0+).
   int use_multishot_recv;

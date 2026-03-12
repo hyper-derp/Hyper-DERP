@@ -149,6 +149,7 @@ static int HtInsert(Worker* w, int fd,
   p->no_zc = 0;
   p->zc_draining = 0;
   p->poll_write_pending = 0;
+  p->send_pending = 0;
   return 0;
 }
 
@@ -184,6 +185,7 @@ static void HtRemove(Worker* w, const Key& key) {
   p->send_next = nullptr;
   p->send_inflight = 0;
   p->send_queued = 0;
+  p->send_pending = 0;
   p->occupied = 2;
   w->peer_count--;
 
@@ -708,8 +710,20 @@ static void EnqueueSend(Worker* w, Peer* peer,
     peer->send_next = item;
   }
 
-  if (peer->send_inflight < kMaxSendsInflight &&
-      peer->send_next && !peer->zc_draining) {
+  // Defer first send to allow batch coalescing: multiple
+  // frames for the same peer accumulate during CQE
+  // processing, then get flushed together with MSG_MORE.
+  if (peer->send_inflight == 0 && !peer->send_pending &&
+      !peer->zc_draining) {
+    peer->send_pending = 1;
+    if (w->pending_count < kMaxCqeBatch) {
+      w->pending_fds[w->pending_count++] = peer->fd;
+    }
+  } else if (peer->send_inflight > 0 &&
+             peer->send_inflight < kMaxSendsInflight &&
+             peer->send_next && !peer->zc_draining) {
+    // Peer already has inflight sends — keep pipeline
+    // full immediately (no benefit from deferring).
     int more = (peer->send_next->next != nullptr);
     if (SubmitPeerSend(w, peer, peer->send_next->data,
                        peer->send_next->len, more)) {
@@ -765,6 +779,39 @@ static void DrainSendQueue(Worker* w, Peer* peer,
       peer->send_inflight++;
     }
   }
+}
+
+/// Flush peers that deferred their first send during CQE
+/// batch processing. Submitting them here means all frames
+/// that arrived in the batch are already queued, so MSG_MORE
+/// is set correctly and the kernel can coalesce TCP segments.
+static void FlushPendingSends(Worker* w) {
+  for (int i = 0; i < w->pending_count; i++) {
+    int fd = w->pending_fds[i];
+    if (fd < 0 || fd >= kMaxFd || !w->fd_map[fd]) {
+      continue;
+    }
+    Peer* peer = w->fd_map[fd];
+    peer->send_pending = 0;
+    if (!peer->send_next || peer->zc_draining) {
+      continue;
+    }
+    int submitted = 0;
+    while (peer->send_next &&
+           peer->send_inflight < kMaxSendsInflight &&
+           submitted < kPollWriteBatch) {
+      int more = (peer->send_next->next != nullptr);
+      if (SubmitPeerSend(w, peer, peer->send_next->data,
+                         peer->send_next->len, more)) {
+        peer->send_next = peer->send_next->next;
+        peer->send_inflight++;
+        submitted++;
+      } else {
+        break;
+      }
+    }
+  }
+  w->pending_count = 0;
 }
 
 // -- Forwarding (DERP protocol) ----------------------------------------------
@@ -1561,9 +1608,13 @@ static void* WorkerRun(void* arg) {
       io_uring_cq_advance(&w->ring, nr);
     }
 
+    // Flush deferred first-sends with coalesced MSG_MORE.
+    FlushPendingSends(w);
+
     // Submit all SQEs batched during CQE processing.
     io_uring_submit(&w->ring);
     ProcessXfer(w);
+    FlushPendingSends(w);
     DrainDeferredRecvs(w);
   }
 
