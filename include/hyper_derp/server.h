@@ -79,6 +79,8 @@ struct ServerConfig {
   /// If both are set, kTLS is enabled.
   std::string tls_cert;
   std::string tls_key;
+  /// Use SQPOLL mode (kernel thread polls SQ).
+  bool sqpoll = false;
   /// Metrics HTTP server configuration.
   MetricsConfig metrics;
   std::array<int, kMaxWorkers> pin_cores{};

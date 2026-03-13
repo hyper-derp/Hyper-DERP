@@ -23,6 +23,10 @@ RestrictSUIDs=yes
 MemoryDenyWriteExecute=yes
 LockPersonality=yes
 
+# SQPOLL needs CAP_SYS_NICE, io_uring needs MEMLOCK
+AmbientCapabilities=CAP_SYS_NICE
+LimitMEMLOCK=infinity
+
 # io_uring needs these
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service io_uring_enter io_uring_setup io_uring_register

@@ -36,6 +36,8 @@ static void PrintUsage(const char* prog) {
       "  --tls-key <path>      TLS key for metrics\n"
       "  --max-accept-rate <n> Max accepts/sec "
       "(0=unlimited)\n"
+      "  --sqpoll              Use io_uring SQPOLL mode "
+      "(needs CAP_SYS_NICE)\n"
       "  --debug-endpoints     Enable /debug/* metrics "
       "endpoints\n"
       "  --log-level <level>   Log level "
@@ -97,6 +99,7 @@ int main(int argc, char* argv[]) {
   const char* pin_spec = nullptr;
   const char* log_level = nullptr;
   bool debug_endpoints = false;
+  bool sqpoll = false;
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -153,6 +156,8 @@ int main(int argc, char* argv[]) {
       tls_key = argv[++i];
     } else if (arg == "--debug-endpoints"sv) {
       debug_endpoints = true;
+    } else if (arg == "--sqpoll"sv) {
+      sqpoll = true;
     } else if (arg == "--log-level"sv && i + 1 < argc) {
       log_level = argv[++i];
     } else {
@@ -206,6 +211,7 @@ int main(int argc, char* argv[]) {
     config.metrics.tls_key = tls_key;
   }
   config.metrics.enable_debug = debug_endpoints;
+  config.sqpoll = sqpoll;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,

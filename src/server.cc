@@ -357,6 +357,7 @@ auto ServerInit(Server* server,
 
   // Apply configuration to data plane context.
   server->data_plane.sockbuf_size = config->sockbuf_size;
+  server->data_plane.sqpoll = config->sqpoll ? 1 : 0;
   for (int i = 0; i < num_workers && i < kMaxWorkers;
        i++) {
     server->data_plane.pin_cores[i] =

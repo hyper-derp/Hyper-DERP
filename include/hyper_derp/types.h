@@ -111,8 +111,11 @@ inline constexpr int kPbufSize = kReadBufSize;
 /// Frames larger than this fall back to malloc.
 inline constexpr int kFramePoolBufSize = 2048;
 
-/// Frame pool count per worker (2048 * 4096 = 8 MiB).
-inline constexpr int kFramePoolCount = 4096;
+/// Frame pool count per worker (2048 * 16384 = 32 MiB).
+/// Sized for ~500us of in-flight sends at 20 Gbps
+/// (1.7M frames/sec × 0.5ms ≈ 850 outstanding).
+/// 16384 provides 19× headroom for cross-shard delays.
+inline constexpr int kFramePoolCount = 16384;
 
 // -- Operation and command tags ----------------------------------------------
 
@@ -144,6 +147,8 @@ struct SendItem {
 
 /// Per-peer mutable state. Stored in a flat hash table
 /// indexed by peer key. Fields are ordered hot-to-cold.
+/// rbuf is allocated separately to keep the hot struct
+/// small for hash table probing (~96 bytes vs ~1540).
 struct Peer {
   // Hot: accessed every packet.
   int fd;
@@ -164,8 +169,8 @@ struct Peer {
   // Cold: accessed on connect/disconnect.
   Key key;
 
-  // Per-peer read buffer for frame reassembly.
-  uint8_t rbuf[kReadBufSize];
+  // Per-peer read buffer for frame reassembly (heap).
+  uint8_t* rbuf;
 };
 
 /// Replicated routing table entry. Each worker has a full
@@ -300,6 +305,9 @@ struct Worker {
   // Multishot recv support (kernel 6.0+).
   int use_multishot_recv;
 
+  // SQPOLL mode (kernel thread submits on our behalf).
+  int use_sqpoll;
+
   // Slab allocator for SendItem nodes.
   SendItem* slab_items;
   SendItem* slab_item_free;
@@ -327,6 +335,8 @@ struct Ctx {
   int pin_cores[kMaxWorkers];  // -1 = no pinning
   /// Per-socket send/recv buffer size. 0 = OS default.
   int sockbuf_size;
+  /// SQPOLL mode: kernel thread polls SQ on our behalf.
+  int sqpoll;
 };
 
 }  // namespace hyper_derp

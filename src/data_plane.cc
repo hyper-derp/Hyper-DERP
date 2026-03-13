@@ -23,6 +23,7 @@
 #include <poll.h>
 #include <sched.h>
 #include <sys/eventfd.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -33,6 +34,9 @@
 #endif
 #ifndef IORING_SETUP_DEFER_TASKRUN
 #define IORING_SETUP_DEFER_TASKRUN (1U << 13)
+#endif
+#ifndef IORING_SETUP_SQPOLL
+#define IORING_SETUP_SQPOLL (1U << 1)
 #endif
 #ifndef IORING_RECV_MULTISHOT
 #define IORING_RECV_MULTISHOT (1U << 1)
@@ -137,6 +141,14 @@ static int HtInsert(Worker* w, int fd,
   if (!p) {
     return -1;
   }
+  // Allocate rbuf on connect (kept off the hot struct).
+  if (!p->rbuf) {
+    p->rbuf = static_cast<uint8_t*>(
+        malloc(kReadBufSize));
+    if (!p->rbuf) {
+      return -1;
+    }
+  }
   p->fd = fd;
   p->key = key;
   p->rbuf_len = 0;
@@ -186,6 +198,9 @@ static void HtRemove(Worker* w, const Key& key) {
   p->send_inflight = 0;
   p->send_queued = 0;
   p->send_pending = 0;
+  free(p->rbuf);
+  p->rbuf = nullptr;
+  p->rbuf_len = 0;
   p->occupied = 2;
   if (w->peer_count > 0) w->peer_count--;
 
@@ -329,6 +344,7 @@ static void XferRingInit(XferRing* r) {
 
 static void XferLock(XferRing* r) {
   while (__atomic_test_and_set(&r->lock, __ATOMIC_ACQUIRE)) {
+    __builtin_ia32_pause();
   }
 }
 
@@ -393,6 +409,10 @@ static int SlabInit(Worker* w) {
   if (!w->slab_items) {
     return -1;
   }
+  // Hint THP for the slab allocation.
+  madvise(w->slab_items,
+          kSlabSize * sizeof(SendItem),
+          MADV_HUGEPAGE);
   w->slab_item_free = &w->slab_items[0];
   for (int i = 0; i < kSlabSize - 1; i++) {
     w->slab_items[i].next = &w->slab_items[i + 1];
@@ -441,6 +461,11 @@ static int FramePoolInit(Worker* w) {
   if (!w->frame_pool) {
     return -1;
   }
+  // Hint THP for the frame pool (8 MiB).
+  madvise(w->frame_pool,
+          static_cast<size_t>(kFramePoolCount) *
+              kFramePoolBufSize,
+          MADV_HUGEPAGE);
   auto* head = reinterpret_cast<FrameNode*>(w->frame_pool);
   w->frame_pool_free = head;
   for (int i = 0; i < kFramePoolCount - 1; i++) {
@@ -527,6 +552,21 @@ static uint8_t* FrameAlloc(Worker* w, int size) {
   return static_cast<uint8_t*>(malloc(size));
 }
 
+/// Find which worker owns a pool buffer. Returns the
+/// owning worker, or nullptr if buf is not from any pool.
+static inline Worker* FramePoolOwner(
+    Worker* w, uint8_t* buf) {
+  // Fast path: check local pool first (common case).
+  if (FramePoolOwns(w, buf)) return w;
+  // Check other workers' pools.
+  Ctx* ctx = w->ctx;
+  for (int i = 0; i < ctx->num_workers; i++) {
+    Worker* ow = ctx->workers[i];
+    if (ow != w && FramePoolOwns(ow, buf)) return ow;
+  }
+  return nullptr;
+}
+
 static void FrameFree(Worker* w, uint8_t* buf) {
   if (!buf) return;
   // Fast path: local pool buffer.
@@ -537,15 +577,11 @@ static void FrameFree(Worker* w, uint8_t* buf) {
     w->frame_pool_free = node;
     return;
   }
-  // Check other workers' pools (cross-shard return).
-  Ctx* ctx = w->ctx;
-  for (int i = 0; i < ctx->num_workers; i++) {
-    Worker* ow = ctx->workers[i];
-    if (ow == w) continue;
-    if (FramePoolOwns(ow, buf)) {
-      FrameReturnPush(ow, buf);
-      return;
-    }
+  // Cross-shard return via Treiber stack.
+  Worker* ow = FramePoolOwner(w, buf);
+  if (ow) {
+    FrameReturnPush(ow, buf);
+    return;
   }
   // Oversize or pre-pool buffer — malloc'd.
   free(buf);
@@ -774,12 +810,11 @@ static void SubmitPollMultishot(Worker* w, int fd,
 }
 
 /// Threshold below which regular send is used instead of
-/// SEND_ZC. For small frames the copy cost is negligible
-/// but ZC notification doubles CQE count.
-// Frames at or below this size use regular send() instead
-// of SEND_ZC to avoid the extra notification CQE, halving
-// per-packet kernel overhead for small packets.
-static constexpr int kZcThreshold = 1024;
+/// SEND_ZC. At WireGuard MTU (1437B framed), ZC's extra
+/// notification CQE and page-pinning cost exceed the
+/// memcpy it avoids. Only use ZC for jumbo frames where
+/// copy cost actually dominates.
+static constexpr int kZcThreshold = 4096;
 
 static inline bool SubmitPeerSend(Worker* w, Peer* peer,
                                   const uint8_t* data,
@@ -1114,11 +1149,11 @@ static void HandleRecvProvided(Worker* w,
     }
 
     // Process complete frames from provided buffer.
-    while (off + kFrameHeaderSize <= n) {
-      if (!__atomic_load_n(
-              &w->running, __ATOMIC_ACQUIRE)) {
-        goto return_buf;
-      }
+    // Cache running flag — worst case we process one
+    // extra batch after shutdown signal.
+    int running = __atomic_load_n(
+        &w->running, __ATOMIC_ACQUIRE);
+    while (running && off + kFrameHeaderSize <= n) {
       uint32_t payload_len =
           ReadPayloadLen(buf + off);
       if (!IsValidPayloadLen(payload_len)) {
@@ -1177,11 +1212,9 @@ static void HandleRecvSingle(Worker* w,
   w->stats.recv_bytes += n;
   peer->rbuf_len += n;
 
-  while (peer->rbuf_len >= kFrameHeaderSize) {
-    if (!__atomic_load_n(
-            &w->running, __ATOMIC_ACQUIRE)) {
-      return;
-    }
+  int running = __atomic_load_n(
+      &w->running, __ATOMIC_ACQUIRE);
+  while (running && peer->rbuf_len >= kFrameHeaderSize) {
     uint32_t payload_len =
         ReadPayloadLen(peer->rbuf);
     if (!IsValidPayloadLen(payload_len)) {
@@ -1668,11 +1701,10 @@ static void* WorkerRun(void* arg) {
       // with DEFER_TASKRUN, io_uring_enter processes
       // deferred task work on entry, making new CQEs
       // visible for the next peek.
-      io_uring_submit(&w->ring);
+      if (io_uring_sq_ready(&w->ring) > 0) {
+        io_uring_submit(&w->ring);
+      }
       if (idle_spins++ < kBusySpins) {
-        ProcessXfer(w);
-        DrainDeferredRecvs(w);
-        FrameReturnDrain(w);
         continue;
       }
       // Idle too long — block until an event arrives.
@@ -1730,11 +1762,13 @@ static void* WorkerRun(void* arg) {
     // Flush deferred first-sends with coalesced MSG_MORE.
     FlushPendingSends(w);
 
-    // Submit all SQEs batched during CQE processing.
-    io_uring_submit(&w->ring);
+    // Drain cross-shard transfers and deferred recvs,
+    // then submit all batched SQEs in one syscall.
     ProcessXfer(w);
     FlushPendingSends(w);
     DrainDeferredRecvs(w);
+    FrameReturnDrain(w);
+    io_uring_submit(&w->ring);
   }
 
   // Drain in-flight sends and ZC notifications.
@@ -1848,25 +1882,69 @@ fail:
 /// submitter task.
 static int WorkerInitRing(Worker* w) {
   struct io_uring_params params {};
-  params.flags = IORING_SETUP_SINGLE_ISSUER |
-                 IORING_SETUP_DEFER_TASKRUN;
-  int ret = io_uring_queue_init_params(
-      kUringQueueDepth, &w->ring, &params);
+  int ret = -1;
+  w->use_sqpoll = 0;
+
+  // Try SQPOLL mode if requested. SQPOLL and DEFER_TASKRUN
+  // are mutually exclusive (kernel rejects the combo).
+  if (w->ctx->sqpoll) {
+    params.flags = IORING_SETUP_SQPOLL |
+                   IORING_SETUP_COOP_TASKRUN |
+                   IORING_SETUP_SINGLE_ISSUER;
+    params.sq_thread_idle = 2000;
+    int pin = w->ctx->pin_cores[w->id];
+    if (pin >= 0) {
+      params.flags |= IORING_SETUP_SQ_AFF;
+      params.sq_thread_cpu =
+          static_cast<unsigned>(pin);
+    }
+    ret = io_uring_queue_init_params(
+        kUringQueueDepth, &w->ring, &params);
+    if (ret == 0) {
+      w->use_sqpoll = 1;
+      spdlog::info("worker {} using SQPOLL", w->id);
+    } else {
+      spdlog::warn(
+          "worker {} SQPOLL failed ({}), falling back",
+          w->id, strerror(-ret));
+    }
+  }
+
+  // Standard init chain (also used as SQPOLL fallback).
+  if (ret < 0) {
+    memset(&params, 0, sizeof(params));
+    params.flags = IORING_SETUP_SINGLE_ISSUER |
+                   IORING_SETUP_DEFER_TASKRUN;
+    ret = io_uring_queue_init_params(
+        kUringQueueDepth, &w->ring, &params);
+    if (ret == 0) {
+      spdlog::info(
+          "worker {} using DEFER_TASKRUN", w->id);
+    }
+  }
   if (ret < 0) {
     // Fall back to COOP_TASKRUN (kernel < 6.1).
     memset(&params, 0, sizeof(params));
     params.flags = IORING_SETUP_COOP_TASKRUN;
     ret = io_uring_queue_init_params(
         kUringQueueDepth, &w->ring, &params);
-    if (ret < 0) {
-      // Fall back to no flags.
-      memset(&params, 0, sizeof(params));
-      ret = io_uring_queue_init_params(
-          kUringQueueDepth, &w->ring, &params);
-      if (ret < 0) {
-        return -1;
-      }
+    if (ret == 0) {
+      spdlog::info(
+          "worker {} using COOP_TASKRUN", w->id);
     }
+  }
+  if (ret < 0) {
+    // Fall back to no flags.
+    memset(&params, 0, sizeof(params));
+    ret = io_uring_queue_init_params(
+        kUringQueueDepth, &w->ring, &params);
+    if (ret == 0) {
+      spdlog::info(
+          "worker {} using basic io_uring", w->id);
+    }
+  }
+  if (ret < 0) {
+    return -1;
   }
 
   // Register sparse file table.
@@ -1893,6 +1971,10 @@ static int WorkerInitRing(Worker* w) {
           4096,
           static_cast<size_t>(kPbufCount) * kPbufSize));
   if (w->provided_bufs) {
+    // Hint THP for provided buffer ring.
+    madvise(w->provided_bufs,
+            static_cast<size_t>(kPbufCount) * kPbufSize,
+            MADV_HUGEPAGE);
     int br_ret;
     w->buf_ring = io_uring_setup_buf_ring(
         &w->ring, kPbufCount, w->id, 0, &br_ret);
@@ -1934,6 +2016,9 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
       p->send_head = nullptr;
       p->send_tail = nullptr;
     }
+    // Free heap-allocated rbuf regardless of state.
+    free(p->rbuf);
+    p->rbuf = nullptr;
   }
 
   for (int i = 0; i < kMaxFd; i++) {
