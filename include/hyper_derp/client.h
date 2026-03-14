@@ -10,6 +10,8 @@
 #include <string>
 #include <string_view>
 
+#include <openssl/ssl.h>
+
 #include "hyper_derp/error.h"
 #include "hyper_derp/protocol.h"
 
@@ -80,6 +82,10 @@ struct DerpClient {
   bool connected = false;
   std::string host;
   uint16_t port = 0;
+  // Userspace TLS (non-kTLS fallback). When set, all I/O
+  // uses SSL_read/SSL_write instead of raw read/write.
+  SSL* ssl = nullptr;
+  SSL_CTX* ssl_ctx = nullptr;
 };
 
 /// @brief Initialize client with random Curve25519 keys.

@@ -31,13 +31,89 @@ Start with the most expensive VM and work down. If something goes
 wrong (script bug, config error), you find out on the first run and
 fix it before burning hours on the full matrix.
 
+## TLS Strategy
+
+### Hypothesis: kTLS will eliminate the high-worker-count regression
+
+Earlier testing with the NetBird Go relay showed that TLS
+backpressure eliminated loss on loopback. The mechanism is sound:
+TLS encryption on the send path adds per-record overhead that
+rate-limits output, preventing SPSC ring overflow. **However, this
+has NOT been confirmed for HD's kTLS path yet.** The worker scaling
+test must include kTLS runs on HD to verify.
+
+Key evidence so far:
+- Increasing SPSC ring capacity from 4096 to 16384 did NOT fix
+  the plain TCP 8-worker collapse — 94.5% loss still observed at
+  20G. This rules out ring overflow (H1) as the sole cause.
+- The issue is N² cross-shard polling/signaling overhead that
+  manifests when the send path is unconstrained (plain TCP).
+- kTLS *should* throttle sends via per-record crypto overhead,
+  preventing the cascade — but this needs confirmation on HD.
+
+### Implications (pending kTLS confirmation)
+
+- **If kTLS fixes HD's 8-worker collapse:** plain TCP benchmarks
+  are a stress test, not representative of production. The 16 vCPU
+  regression wouldn't exist in production. Phase B becomes the
+  primary dataset for publication.
+- **If kTLS does NOT fix it:** the N² overhead is real regardless
+  of transport. Deployment guidance becomes "cap at 4-6 workers"
+  and the architecture may need work for high worker counts.
+- **TS will likely degrade more under TLS than HD.** Go's
+  `crypto/tls` runs in userspace (goroutine per connection),
+  burning CPU on AES-GCM. HD offloads to the kernel via kTLS —
+  near-zero userspace cost. NetBird relay testing showed Go relays
+  collapse much sooner with TLS enabled.
+
+### Approach: Two-phase sweep
+
+**Phase A (done):** Plain TCP sweep across all configs.
+Established raw relay ceiling, exposed the cross-shard scaling
+issue at high worker counts, and confirmed SPSC architecture
+works correctly at 2-6 workers.
+
+**Phase B (next):** kTLS sweep across all configs. Same
+methodology as Phase A. Key questions:
+- **Does kTLS fix HD's 8-worker collapse?** (must answer first)
+- How much throughput does kTLS cost HD at each config?
+- How much does TLS hurt TS? (expect significant degradation,
+  especially at 2-4 vCPU)
+- Does the HD/TS ratio increase with TLS? (expected: yes)
+- Does HD's latency advantage hold or grow with crypto overhead?
+
+If kTLS fixes the 8-worker issue, Phase B becomes the primary
+dataset for publication. If not, the 2/4/8 vCPU plain TCP data
+remains the lead story, with a note about 16 vCPU worker limits.
+
+Phase B uses identical parameters (rates, runs, latency loads)
+for direct comparison. The TS ceiling **will shift** with TLS —
+rerun the probe phase to determine new latency load levels.
+
+### Phase B additional considerations
+
+- **Run a quick kTLS sanity check on 16 vCPU / 8 workers before
+  the full sweep.** 5 runs at 15G and 20G. If 8w is still broken
+  under kTLS, adjust the 16 vCPU config to 4 workers before
+  committing to the full overnight run.
+- TS ceiling will likely drop significantly with TLS. Adjust
+  rate selection per config accordingly — high rates may need
+  to come down.
+- TS may not survive high rates at 2 vCPU with TLS at all.
+  Be prepared for TS to become unmeasurable at offered rates
+  above 1-2G.
+- Report both Phase A and Phase B in final publication:
+  Phase A shows the architectural ceiling, Phase B shows the
+  production reality.
+
 ## Rate Sweep
 
-### Parameters (unchanged)
+### Parameters
 - 20 peers, 10 active pairs
 - 15 seconds per run
 - 1400 byte payload (WireGuard MTU)
-- DERP over plain TCP, no TLS
+- **Phase A: DERP over plain TCP, no TLS**
+- **Phase B: DERP over kTLS (follow-up run)**
 
 ### Runs per rate
 - Low rates (500M, 1G, 2G, 3G): **5 runs**
@@ -283,6 +359,8 @@ Before starting:
 
 - [ ] Go derper: `go version -m ./derper` — no debug flags, clean version
 - [ ] HD binary: built from correct commit with SPSC changes
+- [ ] **Phase B only:** `modprobe tls` on relay VM, verify `lsmod | grep tls`,
+      check HD startup log for `BIO_get_ktls_send` confirmation
 - [ ] Confirm worker count matches table above for each VM size
 - [ ] Test connectivity: bench client → relay VM, port open
 - [ ] Verify isolation: no other user processes on relay VM
@@ -315,3 +393,52 @@ Before analyzing:
 
 - **Socket buffer tuning**: Defaults only. Buffer tuning is a
   separate single-variable experiment, not part of the comparison.
+
+- **TLS**: Two-phase approach. Phase A (this run) is plain TCP to
+  establish raw relay ceiling and expose architectural issues.
+  Phase B (follow-up) adds kTLS to get production-relevant numbers.
+  See TLS Strategy section above.
+
+## Results Informing Phase B
+
+### Answered by worker scaling test
+
+1. **Ring size fix (4096 → 16384):** Did NOT fix the plain TCP
+   8-worker collapse. 94.5% loss still observed at 20G with 4x
+   larger rings. Rules out ring overflow as sole cause. Keep
+   larger rings anyway — no downside.
+
+2. **Worker count cliff:** Degradation starts between 6 and 8
+   workers on plain TCP. 2w and 4w are stable; 6w mostly stable;
+   8w collapses.
+
+### Open — must answer before full Phase B sweep
+
+1. **Does kTLS fix HD's 8-worker collapse?** NetBird Go relay
+   showed TLS backpressure helped on loopback, but HD has not
+   been tested yet. Run a quick sanity check: 16 vCPU / 8w,
+   kTLS, 5 runs at 15G and 20G. This determines whether 16 vCPU
+   keeps 8 workers or drops to 4 for Phase B.
+   **Pre-requisite:** `modprobe tls` on the relay VM before
+   starting HD. Verify with `lsmod | grep tls`. Without this,
+   OpenSSL falls back to userspace TLS and kTLS offload is
+   silently disabled.
+
+### Still required before Phase B
+
+1. **Rerun TS ceiling probes with TLS.** TS performance will drop
+   significantly — expect ceilings to shift down by 30-60%.
+   Latency load levels must be recalculated from new TS ceilings.
+
+2. **kTLS prerequisites.** Verify kTLS is active on the relay VM:
+   check HD startup log for `BIO_get_ktls_send` confirmation.
+   Verify kernel supports TLS offload: `modprobe tls` and check
+   `/proc/net/tls_stat`. Generate or deploy test certificates.
+
+3. **Decide rate ranges for Phase B.** If TS ceiling drops from
+   ~5G to ~2G at 8 vCPU, testing up to 20G is wasteful. Adjust
+   per config after probes complete.
+
+4. **Verify bench client supports TLS connections.** The bench
+   harness may need a flag or config change to connect over TLS
+   instead of plain TCP.

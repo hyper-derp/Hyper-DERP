@@ -21,10 +21,10 @@ inline constexpr int kHtCapacity = 4096;
 inline constexpr int kCmdRingSize = 1024;
 
 /// Per-source SPSC transfer ring size (must be power of 2).
-/// Each worker has one ring per source worker. Smaller than
-/// the old MPSC ring since each only carries traffic from
-/// one source. N workers → N×N rings total.
-inline constexpr int kXferSpscSize = 4096;
+/// Each worker has one ring per source worker. Sized to
+/// prevent xfer_drops at high worker counts under load.
+/// N workers → N×N rings total.
+inline constexpr int kXferSpscSize = 16384;
 
 /// Maximum worker threads.
 inline constexpr int kMaxWorkers = 32;
@@ -306,6 +306,13 @@ struct Worker {
   // Bit i set means worker i needs a signal after this
   // CQE batch finishes.
   uint32_t xfer_signal_pending;
+
+  // Bitmask of source workers with pending data in this
+  // worker's xfer_inbox. Set atomically by senders
+  // (fetch_or), consumed atomically by ProcessXfer
+  // (exchange). On separate cache line from writer-side
+  // fields to avoid false sharing with senders.
+  alignas(64) uint32_t pending_sources;
 
   // Multishot recv support (kernel 6.0+).
   int use_multishot_recv;

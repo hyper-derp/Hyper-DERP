@@ -255,6 +255,8 @@ int main(int argc, char** argv) {
       g_json = true;
     } else if (strcmp(argv[i], "--tls") == 0) {
       g_use_tls = true;
+    } else if (strcmp(argv[i], "--insecure") == 0) {
+      // No-op: client already uses SSL_VERIFY_NONE.
     } else {
       fprintf(stderr,
           "Usage: derp-scale-test [options]\n"

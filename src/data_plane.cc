@@ -1053,11 +1053,17 @@ static void ForwardMsg(Worker* w, FrameType type,
   x.dst_gen = __atomic_load_n(
       &dst_w->fd_gen[route->fd], __ATOMIC_ACQUIRE);
   int rc = XferSpscPush(dst_w->xfer_inbox[w->id], &x);
-  if (rc == 1) {
-    // Ring was empty — mark for batched signal.
-    w->xfer_signal_pending |=
-        (1u << static_cast<unsigned>(dst_id));
-  } else if (rc == -1) {
+  if (rc >= 0) {
+    // Tell destination which inbox has data.
+    __atomic_fetch_or(&dst_w->pending_sources,
+                      1u << static_cast<unsigned>(w->id),
+                      __ATOMIC_RELEASE);
+    if (rc == 1) {
+      // Ring was empty — mark for batched signal.
+      w->xfer_signal_pending |=
+          (1u << static_cast<unsigned>(dst_id));
+    }
+  } else {
     FrameFree(w, frame);
     w->stats.xfer_drops++;
   }
@@ -1625,11 +1631,17 @@ static void ProcessCommands(Worker* w) {
 
 // -- Cross-shard inbox processing --------------------------------------------
 
+/// Drain cross-shard inboxes using the pending_sources
+/// bitmask. Only checks inboxes that senders marked as
+/// having data — O(active sources) instead of O(N-1).
 static void ProcessXfer(Worker* w) {
-  DrainEventfd(w->xfer_efd);
-  int n = w->ctx->num_workers;
+  uint32_t mask = __atomic_exchange_n(
+      &w->pending_sources, 0, __ATOMIC_ACQUIRE);
+  if (!mask) return;
   Xfer x{};
-  for (int src = 0; src < n; src++) {
+  while (mask) {
+    int src = __builtin_ctz(mask);
+    mask &= mask - 1;
     XferSpscRing* ring = w->xfer_inbox[src];
     while (XferSpscPop(ring, &x) == 0) {
       if (x.dst_fd < 0 || x.dst_fd >= kMaxFd ||
@@ -1763,6 +1775,7 @@ static void* WorkerRun(void* arg) {
             }
             break;
           case kOpPollXfer:
+            DrainEventfd(w->xfer_efd);
             ProcessXfer(w);
             if (!(c->flags & IORING_CQE_F_MORE)) {
               SubmitPollMultishot(

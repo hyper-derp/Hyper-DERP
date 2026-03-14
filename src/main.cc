@@ -207,8 +207,8 @@ int main(int argc, char* argv[]) {
   if (tls_cert) {
     config.tls_cert = tls_cert;
     config.tls_key = tls_key;
-    config.metrics.tls_cert = tls_cert;
-    config.metrics.tls_key = tls_key;
+    // Metrics endpoint stays on plain HTTP — it's for
+    // internal monitoring and shouldn't require TLS.
   }
   config.metrics.enable_debug = debug_endpoints;
   config.sqpoll = sqpoll;

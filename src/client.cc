@@ -24,7 +24,7 @@
 
 namespace hyper_derp {
 
-static int ReadAll(int fd, uint8_t* buf, int n) {
+static int ReadAllFd(int fd, uint8_t* buf, int n) {
   int total = 0;
   while (total < n) {
     int r = read(fd, buf + total, n - total);
@@ -42,7 +42,22 @@ static int ReadAll(int fd, uint8_t* buf, int n) {
   return 0;
 }
 
-static int WriteAll(int fd, const uint8_t* buf, int n) {
+static int ReadAllSsl(SSL* ssl, uint8_t* buf, int n) {
+  int total = 0;
+  while (total < n) {
+    int r = SSL_read(ssl, buf + total, n - total);
+    if (r <= 0) return -1;
+    total += r;
+  }
+  return 0;
+}
+
+static int ReadAll(DerpClient* c, uint8_t* buf, int n) {
+  if (c->ssl) return ReadAllSsl(c->ssl, buf, n);
+  return ReadAllFd(c->fd, buf, n);
+}
+
+static int WriteAllFd(int fd, const uint8_t* buf, int n) {
   int total = 0;
   while (total < n) {
     int w = write(fd, buf + total, n - total);
@@ -62,6 +77,23 @@ static int WriteAll(int fd, const uint8_t* buf, int n) {
     total += w;
   }
   return 0;
+}
+
+static int WriteAllSsl(SSL* ssl, const uint8_t* buf,
+                       int n) {
+  int total = 0;
+  while (total < n) {
+    int w = SSL_write(ssl, buf + total, n - total);
+    if (w <= 0) return -1;
+    total += w;
+  }
+  return 0;
+}
+
+static int WriteAll(DerpClient* c, const uint8_t* buf,
+                    int n) {
+  if (c->ssl) return WriteAllSsl(c->ssl, buf, n);
+  return WriteAllFd(c->fd, buf, n);
 }
 
 auto ClientInit(DerpClient* c)
@@ -142,6 +174,8 @@ auto ClientTlsConnect(DerpClient* c)
   }
 
   SSL_set_fd(ssl, c->fd);
+  // Set SNI for servers that require it (e.g. Go's TLS).
+  SSL_set_tlsext_host_name(ssl, c->host.c_str());
   int ret = SSL_connect(ssl);
   if (ret != 1) {
     char buf[256];
@@ -152,17 +186,13 @@ auto ClientTlsConnect(DerpClient* c)
                      std::string("SSL_connect: ") + buf);
   }
 
-  // Detach fd from SSL so SSL_free doesn't close it.
-  BIO* wbio = SSL_get_wbio(ssl);
-  BIO* rbio = SSL_get_rbio(ssl);
-  if (wbio) BIO_set_close(wbio, BIO_NOCLOSE);
-  if (rbio && rbio != wbio) {
-    BIO_set_close(rbio, BIO_NOCLOSE);
-  }
-
-  SSL_set_quiet_shutdown(ssl, 1);
-  SSL_free(ssl);
-  SSL_CTX_free(ctx);
+  // Keep SSL alive for userspace TLS. Using SSL_read/
+  // SSL_write ensures compatibility with all TLS servers
+  // (kTLS and Go's crypto/tls). The test client doesn't
+  // benefit from client-side kTLS — it's the server's
+  // kTLS that matters for throughput.
+  c->ssl = ssl;
+  c->ssl_ctx = ctx;
   return {};
 }
 
@@ -178,7 +208,7 @@ auto ClientUpgrade(DerpClient* c)
       c->host, c->port);
   *r.out = '\0';
   int req_len = static_cast<int>(r.size);
-  if (WriteAll(c->fd,
+  if (WriteAll(c,
                reinterpret_cast<const uint8_t*>(req),
                req_len) < 0) {
     return MakeError(ClientError::IoFailed,
@@ -191,7 +221,12 @@ auto ClientUpgrade(DerpClient* c)
   uint8_t buf[1024];
   int total = 0;
   while (total < static_cast<int>(sizeof(buf)) - 1) {
-    int n = read(c->fd, buf + total, 1);
+    int n;
+    if (c->ssl) {
+      n = SSL_read(c->ssl, buf + total, 1);
+    } else {
+      n = read(c->fd, buf + total, 1);
+    }
     if (n <= 0) {
       return MakeError(ClientError::IoFailed,
                        "read upgrade response failed");
@@ -220,7 +255,7 @@ auto ClientHandshake(DerpClient* c)
     -> std::expected<void, Error<ClientError>> {
   // Receive ServerKey frame.
   uint8_t hdr[kFrameHeaderSize];
-  if (ReadAll(c->fd, hdr, kFrameHeaderSize) < 0) {
+  if (ReadAll(c, hdr, kFrameHeaderSize) < 0) {
     return MakeError(ClientError::IoFailed,
                      "read ServerKey header failed");
   }
@@ -235,7 +270,7 @@ auto ClientHandshake(DerpClient* c)
   }
 
   uint8_t sk_payload[kServerKeyPayloadSize];
-  if (ReadAll(c->fd, sk_payload,
+  if (ReadAll(c, sk_payload,
               static_cast<int>(plen)) < 0) {
     return MakeError(ClientError::IoFailed,
                      "read ServerKey payload failed");
@@ -286,13 +321,13 @@ auto ClientHandshake(DerpClient* c)
                      "crypto_box_easy failed");
   }
 
-  if (WriteAll(c->fd, ci_buf, ci_frame_len) < 0) {
+  if (WriteAll(c, ci_buf, ci_frame_len) < 0) {
     return MakeError(ClientError::IoFailed,
                      "write ClientInfo failed");
   }
 
   // Receive ServerInfo frame.
-  if (ReadAll(c->fd, hdr, kFrameHeaderSize) < 0) {
+  if (ReadAll(c, hdr, kFrameHeaderSize) < 0) {
     return MakeError(ClientError::IoFailed,
                      "read ServerInfo header failed");
   }
@@ -307,7 +342,7 @@ auto ClientHandshake(DerpClient* c)
   }
 
   uint8_t si_buf[1024];
-  if (ReadAll(c->fd, si_buf,
+  if (ReadAll(c, si_buf,
               static_cast<int>(plen)) < 0) {
     return MakeError(ClientError::IoFailed,
                      "read ServerInfo payload failed");
@@ -347,7 +382,7 @@ auto ClientSendPacket(DerpClient* c,
                 data, data_len);
   }
 
-  int rc = WriteAll(c->fd, buf, frame_len);
+  int rc = WriteAll(c, buf, frame_len);
   if (heap) {
     delete[] buf;
   }
@@ -363,7 +398,7 @@ auto ClientRecvFrame(DerpClient* c, FrameType* type,
                      int buf_size)
     -> std::expected<void, Error<ClientError>> {
   uint8_t hdr[kFrameHeaderSize];
-  if (ReadAll(c->fd, hdr, kFrameHeaderSize) < 0) {
+  if (ReadAll(c, hdr, kFrameHeaderSize) < 0) {
     return MakeError(ClientError::IoFailed,
                      "read frame header failed");
   }
@@ -376,7 +411,7 @@ auto ClientRecvFrame(DerpClient* c, FrameType* type,
   }
 
   if (len > 0) {
-    if (ReadAll(c->fd, payload,
+    if (ReadAll(c, payload,
                 static_cast<int>(len)) < 0) {
       return MakeError(ClientError::IoFailed,
                        "read frame payload failed");
@@ -387,6 +422,16 @@ auto ClientRecvFrame(DerpClient* c, FrameType* type,
 }
 
 void ClientClose(DerpClient* c) {
+  if (c->ssl) {
+    SSL_set_quiet_shutdown(c->ssl, 1);
+    SSL_shutdown(c->ssl);
+    SSL_free(c->ssl);
+    c->ssl = nullptr;
+  }
+  if (c->ssl_ctx) {
+    SSL_CTX_free(c->ssl_ctx);
+    c->ssl_ctx = nullptr;
+  }
   if (c->fd >= 0) {
     close(c->fd);
     c->fd = -1;
