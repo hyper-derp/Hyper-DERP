@@ -1,0 +1,19 @@
+# started on Wed Mar 11 13:46:13 2026
+
+
+ Performance counter stats for process id '57476':
+
+         17,553.95 msec task-clock                       #    1.755 CPUs utilized             
+         2,983,824      cpu_atom/cycles/                 #    0.000 GHz                         (0.01%)
+    89,288,243,143      cpu_core/cycles/                 #    5.087 GHz                         (99.99%)
+           802,331      cpu_atom/instructions/           #    0.27  insn per cycle              (0.01%)
+   101,524,296,671      cpu_core/instructions/           #    1.14  insn per cycle              (99.99%)
+            20,689      cpu_atom/cache-misses/           #   25.80% of all cache refs           (0.01%)
+       207,858,397      cpu_core/cache-misses/           #   23.26% of all cache refs           (99.99%)
+            80,179      cpu_atom/cache-references/       #    4.568 K/sec                       (0.01%)
+       893,685,889      cpu_core/cache-references/       #   50.911 M/sec                       (99.99%)
+             3,041      context-switches                 #  173.237 /sec                      
+                 4      cpu-migrations                   #    0.228 /sec                      
+
+      10.001897128 seconds time elapsed
+

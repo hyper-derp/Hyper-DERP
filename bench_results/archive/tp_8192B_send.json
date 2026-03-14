@@ -1,0 +1,17 @@
+{
+  "test": "tp_8192B_send",
+  "mode": "send",
+  "timestamp": "2026-03-10T11:54:12Z",
+  "config": {
+    "packet_count": 50000,
+    "packet_size": 8192,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 417962748,
+  "elapsed_ms": 417.963,
+  "packets": 50000,
+  "bytes": 409600000,
+  "throughput_pps": 119627.9,
+  "throughput_mbps": 7839.933
+}

@@ -1,0 +1,16 @@
+=== Phase 1: Connecting 4 peers ===
+  4/4 connected (0 failed)
+Connected 4/4 in 10 ms
+
+=== Phase 2: Traffic (2 active pairs, 5s, 1400B msgs, 500 Mbps cap) ===
+
+=== Results ===
+Peers:         4 / 4 connected
+Connect time:  10 ms
+Active pairs:  2
+Traffic time:  9.2 s
+Messages sent: 178550
+Messages recv: 178297
+Message loss:  0.14%
+Send errors:   0
+Throughput:    216.0 Mbps (recv)

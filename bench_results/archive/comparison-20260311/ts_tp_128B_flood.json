@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_128B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-11T09:28:17Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 128,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 10000002399,
+  "elapsed_ms": 10000.002,
+  "packets": 1882137,
+  "bytes": 240913536,
+  "throughput_pps": 188213.7,
+  "throughput_mbps": 192.731
+}

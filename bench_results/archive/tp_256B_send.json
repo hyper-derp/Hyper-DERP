@@ -1,0 +1,17 @@
+{
+  "test": "tp_256B_send",
+  "mode": "send",
+  "timestamp": "2026-03-10T11:54:10Z",
+  "config": {
+    "packet_count": 100000,
+    "packet_size": 256,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 735632512,
+  "elapsed_ms": 735.633,
+  "packets": 100000,
+  "bytes": 25600000,
+  "throughput_pps": 135937.4,
+  "throughput_mbps": 278.400
+}

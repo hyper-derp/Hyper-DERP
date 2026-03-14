@@ -1,0 +1,18 @@
+date: 2026-03-11
+relay_vm: 10.101.1.1 (2 vCPU pinned to cores 4-5, 2GB RAM)
+client_vm: 10.101.1.2 (2 vCPU pinned to cores 6-7, 2GB RAM)
+kernel: 6.12.73+deb13-amd64
+cpu: 13th Gen Intel Core i5-13600KF
+workers: 2
+peers: 20
+pairs: 10
+duration: 5s
+size: 1400B
+rates: 10 50 100 250 500 1000 2000 5000
+
+changes:
+- Per-peer send queue depth limit (kMaxSendQueueDepth=2048)
+- Bounded DpAddPeer (kCmdPushRetries=10000 + sched_yield)
+- SQ overflow counting in GetSqe
+- Busy-poll main loop (io_uring_peek_cqe + spin before blocking)
+- sysctl: net.core.wmem_max=4MB, tcp_wmem default=262KB

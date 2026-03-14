@@ -1,0 +1,17 @@
+{
+  "test": "pinned_8192B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-10T12:06:10Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 8192,
+    "num_workers": 0,
+    "core": 2
+  },
+  "elapsed_ns": 12053541571,
+  "elapsed_ms": 12053.542,
+  "packets": 985103,
+  "bytes": 8069963776,
+  "throughput_pps": 81727.3,
+  "throughput_mbps": 5356.078
+}

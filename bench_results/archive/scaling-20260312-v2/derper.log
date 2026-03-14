@@ -1,0 +1,25 @@
+2026/03/12 09:39:48 Running in dev mode.
+2026/03/12 09:39:48 STUN server listening on [::]:3478
+2026/03/12 09:39:48 No mesh key specified for dev via TAILSCALE_DERPER_MESH_KEY
+2026/03/12 09:39:48 No mesh key configured for --dev mode
+2026/03/12 09:39:48 derper: serving on :3340
+2026/03/12 09:41:15 derp client 10.101.2.2:52668[Z9yA6]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:52668: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:52668: client [Z9yA6]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:52668: use of closed network connection
+2026/03/12 09:41:15 derp client 10.101.2.2:52692[tEuXy]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:52692: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:52692: client [tEuXy]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:52692: use of closed network connection
+2026/03/12 09:41:15 derp client 10.101.2.2:51682[aVGJ9]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51682: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:51682: client [aVGJ9]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51682: use of closed network connection
+2026/03/12 09:41:15 derp client 10.101.2.2:51740[7GQ6d]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51740: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:51740: client [7GQ6d]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51740: use of closed network connection
+2026/03/12 09:41:15 derp client 10.101.2.2:51716[dhL2W]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51716: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:51716: client [dhL2W]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51716: use of closed network connection
+2026/03/12 09:41:15 derp client 10.101.2.2:51770[rIWkR]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51770: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:51770: client [rIWkR]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51770: use of closed network connection
+2026/03/12 09:41:15 derp client 10.101.2.2:51730[R5qUg]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51730: i/o timeout
+2026/03/12 09:41:15 derp: 10.101.2.2:51730: client [R5qUg]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51730: use of closed network connection
+2026/03/12 09:41:16 derp client 10.101.2.2:51688[AR6Qn]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51688: i/o timeout
+2026/03/12 09:41:16 derp: 10.101.2.2:51688: client [AR6Qn]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51688: use of closed network connection
+2026/03/12 09:41:16 derp client 10.101.2.2:52618[ZM7Bt]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:52618: i/o timeout
+2026/03/12 09:41:16 derp: 10.101.2.2:52618: client [ZM7Bt]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:52618: use of closed network connection
+2026/03/12 09:41:16 derp client 10.101.2.2:52646[6xNCm]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:52646: i/o timeout
+2026/03/12 09:41:16 derp: 10.101.2.2:52646: client [6xNCm]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:52646: use of closed network connection

@@ -1,0 +1,17 @@
+{
+  "test": "pinned_64B_flood",
+  "mode": "flood",
+  "timestamp": "2026-03-10T12:05:27Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": 3
+  },
+  "elapsed_ns": 10000002032,
+  "elapsed_ms": 10000.002,
+  "packets": 1100482,
+  "bytes": 70430848,
+  "throughput_pps": 110048.2,
+  "throughput_mbps": 56.345
+}

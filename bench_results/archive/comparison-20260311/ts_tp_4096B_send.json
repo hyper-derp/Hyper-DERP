@@ -1,0 +1,17 @@
+{
+  "test": "ts_tp_4096B_send",
+  "mode": "send",
+  "timestamp": "2026-03-11T09:57:12Z",
+  "config": {
+    "packet_count": 20000,
+    "packet_size": 4096,
+    "num_workers": 0,
+    "core": -1
+  },
+  "elapsed_ns": 40479737,
+  "elapsed_ms": 40.480,
+  "packets": 20000,
+  "bytes": 81920000,
+  "throughput_pps": 494074.4,
+  "throughput_mbps": 16189.829
+}

@@ -1,0 +1,17 @@
+{
+  "test": "pinned_1024B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-10T12:05:49Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 1024,
+    "num_workers": 0,
+    "core": 2
+  },
+  "elapsed_ns": 12071598305,
+  "elapsed_ms": 12071.598,
+  "packets": 3219151,
+  "bytes": 3296421038,
+  "throughput_pps": 266671.5,
+  "throughput_mbps": 2184.580
+}

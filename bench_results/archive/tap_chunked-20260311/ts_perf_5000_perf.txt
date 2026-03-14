@@ -1,0 +1,15 @@
+# started on Wed Mar 11 16:17:50 2026
+
+
+ Performance counter stats for 'system wide':
+
+        120,047.18 msec task-clock                       #   12.003 CPUs utilized             
+   187,530,144,808      cpu_core/cycles/                 #    1.562 GHz                       
+   191,863,162,316      cpu_core/instructions/           #    1.02  insn per cycle            
+       457,151,141      cpu_core/cache-misses/           #   13.64% of all cache refs         
+     3,350,982,676      cpu_core/cache-references/       #   27.914 M/sec                     
+         2,469,761      context-switches                 #   20.573 K/sec                     
+            86,801      cpu-migrations                   #  723.057 /sec                      
+
+      10.001698319 seconds time elapsed
+

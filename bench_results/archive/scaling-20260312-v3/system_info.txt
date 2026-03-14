@@ -1,0 +1,12 @@
+date: 2026-03-12T09:47:35+01:00
+kernel: 6.12.73+deb13-amd64
+cpu: 13th Gen Intel(R) Core(TM) i5-13600KF
+cores: 20
+governor: performance
+relay_cores: 4,5
+client_cores: 12,13,14,15
+workers: 2
+size: 1400B
+duration: 5s
+rate: unlimited
+pair_counts: 1 2 5 10 25 50 100 250 500

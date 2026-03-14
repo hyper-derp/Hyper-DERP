@@ -1,0 +1,6 @@
+2026/03/12 13:44:19 Running in dev mode.
+2026/03/12 13:44:19 STUN server listening on [::]:3478
+2026/03/12 13:44:19 No mesh key specified for dev via TAILSCALE_DERPER_MESH_KEY
+2026/03/12 13:44:19 No mesh key configured for --dev mode
+2026/03/12 13:44:19 derper: serving on :3340
+2026/03/12 13:45:27 derp: 10.101.2.2:54512: client [y44Pc]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:54512: read: connection reset by peer

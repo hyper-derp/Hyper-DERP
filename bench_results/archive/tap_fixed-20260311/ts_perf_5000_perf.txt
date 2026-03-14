@@ -1,0 +1,19 @@
+# started on Wed Mar 11 16:01:34 2026
+
+
+ Performance counter stats for process id '121476':
+
+     <not counted> msec task-clock                                                            
+     <not counted>      cpu_atom/cycles/                                                      
+     <not counted>      cpu_core/cycles/                                                      
+     <not counted>      cpu_atom/instructions/                                                
+     <not counted>      cpu_core/instructions/                                                
+     <not counted>      cpu_atom/cache-misses/                                                
+     <not counted>      cpu_core/cache-misses/                                                
+     <not counted>      cpu_atom/cache-references/                                            
+     <not counted>      cpu_core/cache-references/                                            
+     <not counted>      context-switches                                                      
+     <not counted>      cpu-migrations                                                        
+
+      10.000836442 seconds time elapsed
+

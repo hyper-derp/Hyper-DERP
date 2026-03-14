@@ -1,0 +1,15 @@
+2026/03/12 12:39:34 Running in dev mode.
+2026/03/12 12:39:34 STUN server listening on [::]:3478
+2026/03/12 12:39:34 No mesh key specified for dev via TAILSCALE_DERPER_MESH_KEY
+2026/03/12 12:39:34 No mesh key configured for --dev mode
+2026/03/12 12:39:34 derper: serving on :3340
+2026/03/12 12:40:50 derp client 10.101.2.2:49414[eritT]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:49414: i/o timeout
+2026/03/12 12:40:50 derp: 10.101.2.2:49414: client [eritT]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:49414: use of closed network connection
+2026/03/12 12:40:50 derp client 10.101.2.2:49536[LOVWq]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:49536: i/o timeout
+2026/03/12 12:40:50 derp: 10.101.2.2:49536: client [LOVWq]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:49536: use of closed network connection
+2026/03/12 12:40:50 derp client 10.101.2.2:49458[/24pL]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:49458: i/o timeout
+2026/03/12 12:40:50 derp: 10.101.2.2:49458: client [/24pL]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:49458: use of closed network connection
+2026/03/12 12:40:50 derp client 10.101.2.2:51502[m48Tv]: sender failed: write tcp 10.101.2.1:3340->10.101.2.2:51502: i/o timeout
+2026/03/12 12:40:50 derp: 10.101.2.2:51502: client [m48Tv]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:51502: use of closed network connection
+2026/03/12 12:41:02 derp: 10.101.2.2:53172: client [llHk8]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:53172: read: connection reset by peer
+2026/03/12 12:41:14 derp: 10.101.2.2:40704: client [edAN+]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:40704: read: connection reset by peer

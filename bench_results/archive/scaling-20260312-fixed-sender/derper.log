@@ -1,0 +1,5 @@
+2026/03/12 13:36:40 Running in dev mode.
+2026/03/12 13:36:40 STUN server listening on [::]:3478
+2026/03/12 13:36:40 No mesh key specified for dev via TAILSCALE_DERPER_MESH_KEY
+2026/03/12 13:36:40 No mesh key configured for --dev mode
+2026/03/12 13:36:40 derper: serving on :3340

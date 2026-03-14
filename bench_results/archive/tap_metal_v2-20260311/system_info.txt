@@ -1,0 +1,18 @@
+date: 2026-03-11T14:23:50+01:00
+kernel: 6.12.73+deb13-amd64
+cpu: 13th Gen Intel(R) Core(TM) i5-13600KF
+cores: 20
+governor: performance
+relay_cores: 4,5
+client_cores: 12,13,14,15
+workers: 2
+peers: 20
+pairs: 10
+duration: 10s
+size: 1400B
+rates: 100 500 1000 2000 5000 10000 20000 50000
+network: veth on bridge (virbr-targets)
+relay_ip: 10.101.2.1 (ns: ns-relay)
+client_ip: 10.101.2.2 (ns: ns-client)
+tcp_wmem: 4096	262144	16777216
+wmem_max: 16777216

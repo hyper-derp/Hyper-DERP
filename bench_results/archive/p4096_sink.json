@@ -1,0 +1,17 @@
+{
+  "test": "sink_4096B",
+  "mode": "sink",
+  "timestamp": "2026-03-10T12:09:25Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 4096,
+    "num_workers": 0,
+    "core": 2
+  },
+  "elapsed_ns": 13066365567,
+  "elapsed_ms": 13066.366,
+  "packets": 1167607,
+  "bytes": 4782518272,
+  "throughput_pps": 89359.7,
+  "throughput_mbps": 2928.140
+}

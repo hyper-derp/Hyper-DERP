@@ -1,0 +1,17 @@
+{
+  "test": "sink_64B",
+  "mode": "sink",
+  "timestamp": "2026-03-10T12:07:26Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 64,
+    "num_workers": 0,
+    "core": 2
+  },
+  "elapsed_ns": 13070272442,
+  "elapsed_ms": 13070.272,
+  "packets": 1643,
+  "bytes": 95936,
+  "throughput_pps": 125.7,
+  "throughput_mbps": 0.059
+}

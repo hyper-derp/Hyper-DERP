@@ -1,0 +1,707 @@
+/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+[17:05:26] =========================================
+[17:05:26]   BENCHMARK: 8 vCPU (ISOLATED)
+[17:05:26] =========================================
+[17:05:26] 
+[17:05:26] === TS Rate Sweep ===
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[17:05:28]   [relay] starting TS derper...
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[17:05:34] [1/3] TS 500:
+  435 Mbps, 0.0% loss
+[17:05:52] [2/3] TS 500:
+  435 Mbps, 0.0% loss
+[17:06:10] [3/3] TS 500:
+  435 Mbps, 0.0% loss
+[17:06:28] [1/3] TS 1000:
+  870 Mbps, 0.0% loss
+[17:06:47] [2/3] TS 1000:
+  870 Mbps, 0.0% loss
+[17:07:05] [3/3] TS 1000:
+  870 Mbps, 0.0% loss
+[17:07:23] [1/3] TS 2000:
+  1740 Mbps, 0.0% loss
+[17:07:41] [2/3] TS 2000:
+  1741 Mbps, 0.0% loss
+[17:07:59] [3/3] TS 2000:
+  1740 Mbps, 0.0% loss
+[17:08:17] [1/3] TS 3000:
+  2611 Mbps, 0.0% loss
+[17:08:35] [2/3] TS 3000:
+  2609 Mbps, 0.0% loss
+[17:08:53] [3/3] TS 3000:
+  2610 Mbps, 0.0% loss
+[17:09:12] [1/20] TS 5000:
+  4276 Mbps, 1.7% loss
+[17:09:30] [2/20] TS 5000:
+  4268 Mbps, 1.9% loss
+[17:09:48] [3/20] TS 5000:
+  4279 Mbps, 1.6% loss
+[17:10:06] [4/20] TS 5000:
+  4281 Mbps, 1.6% loss
+[17:10:24] [5/20] TS 5000:
+  4272 Mbps, 1.8% loss
+[17:10:42] [6/20] TS 5000:
+  4276 Mbps, 1.7% loss
+[17:11:00] [7/20] TS 5000:
+  4276 Mbps, 1.7% loss
+[17:11:19] [8/20] TS 5000:
+  4276 Mbps, 1.7% loss
+[17:11:37] [9/20] TS 5000:
+  4273 Mbps, 1.8% loss
+[17:11:55] [10/20] TS 5000:
+  4275 Mbps, 1.8% loss
+[17:12:13] [11/20] TS 5000:
+  4270 Mbps, 1.8% loss
+[17:12:31] [12/20] TS 5000:
+  4273 Mbps, 1.8% loss
+[17:12:49] [13/20] TS 5000:
+  4269 Mbps, 1.9% loss
+[17:13:07] [14/20] TS 5000:
+  4275 Mbps, 1.8% loss
+[17:13:25] [15/20] TS 5000:
+  4279 Mbps, 1.6% loss
+[17:13:44] [16/20] TS 5000:
+  4276 Mbps, 1.7% loss
+[17:14:02] [17/20] TS 5000:
+  4267 Mbps, 1.9% loss
+[17:14:20] [18/20] TS 5000:
+  4273 Mbps, 1.8% loss
+[17:14:38] [19/20] TS 5000:
+  4270 Mbps, 1.8% loss
+[17:14:56] [20/20] TS 5000:
+  4273 Mbps, 1.7% loss
+[17:15:14] [1/20] TS 7500:
+  4855 Mbps, 25.6% loss
+[17:15:32] [2/20] TS 7500:
+  4899 Mbps, 24.9% loss
+[17:15:50] [3/20] TS 7500:
+  4843 Mbps, 25.8% loss
+[17:16:09] [4/20] TS 7500:
+  4819 Mbps, 26.2% loss
+[17:16:27] [5/20] TS 7500:
+  4922 Mbps, 24.6% loss
+[17:16:45] [6/20] TS 7500:
+  4833 Mbps, 26.0% loss
+[17:17:03] [7/20] TS 7500:
+  4882 Mbps, 25.2% loss
+[17:17:21] [8/20] TS 7500:
+  4754 Mbps, 27.1% loss
+[17:17:39] [9/20] TS 7500:
+  4775 Mbps, 26.8% loss
+[17:17:57] [10/20] TS 7500:
+  4803 Mbps, 26.4% loss
+[17:18:15] [11/20] TS 7500:
+  4842 Mbps, 25.8% loss
+[17:18:34] [12/20] TS 7500:
+  4825 Mbps, 26.1% loss
+[17:18:52] [13/20] TS 7500:
+  4824 Mbps, 26.1% loss
+[17:19:10] [14/20] TS 7500:
+  4689 Mbps, 28.2% loss
+[17:19:28] [15/20] TS 7500:
+  4741 Mbps, 27.4% loss
+[17:19:46] [16/20] TS 7500:
+  4790 Mbps, 26.6% loss
+[17:20:04] [17/20] TS 7500:
+  4843 Mbps, 25.8% loss
+[17:20:22] [18/20] TS 7500:
+  4885 Mbps, 25.2% loss
+[17:20:40] [19/20] TS 7500:
+  4933 Mbps, 24.4% loss
+[17:20:59] [20/20] TS 7500:
+  4826 Mbps, 26.1% loss
+[17:21:17] [1/20] TS 10000:
+  4231 Mbps, 49.6% loss
+[17:21:35] [2/20] TS 10000:
+  4434 Mbps, 48.0% loss
+[17:21:53] [3/20] TS 10000:
+  4301 Mbps, 48.8% loss
+[17:22:11] [4/20] TS 10000:
+  4291 Mbps, 49.2% loss
+[17:22:30] [5/20] TS 10000:
+  4197 Mbps, 50.0% loss
+[17:22:48] [6/20] TS 10000:
+  4374 Mbps, 48.0% loss
+[17:23:06] [7/20] TS 10000:
+  4342 Mbps, 48.9% loss
+[17:23:24] [8/20] TS 10000:
+  4371 Mbps, 48.8% loss
+[17:23:43] [9/20] TS 10000:
+  4294 Mbps, 49.6% loss
+[17:24:01] [10/20] TS 10000:
+  4307 Mbps, 49.0% loss
+[17:24:19] [11/20] TS 10000:
+  4136 Mbps, 50.6% loss
+[17:24:37] [12/20] TS 10000:
+  4257 Mbps, 49.5% loss
+[17:24:55] [13/20] TS 10000:
+  4262 Mbps, 49.7% loss
+[17:25:14] [14/20] TS 10000:
+  4309 Mbps, 49.6% loss
+[17:25:32] [15/20] TS 10000:
+  4210 Mbps, 50.3% loss
+[17:25:50] [16/20] TS 10000:
+  4393 Mbps, 48.3% loss
+[17:26:08] [17/20] TS 10000:
+  4378 Mbps, 48.3% loss
+[17:26:27] [18/20] TS 10000:
+  4199 Mbps, 50.1% loss
+[17:26:45] [19/20] TS 10000:
+  4336 Mbps, 49.6% loss
+[17:27:03] [20/20] TS 10000:
+  4358 Mbps, 49.1% loss
+[17:27:21] [1/20] TS 15000:
+  4527 Mbps, 47.6% loss
+[17:27:39] [2/20] TS 15000:
+  4490 Mbps, 47.9% loss
+[17:27:58] [3/20] TS 15000:
+  4577 Mbps, 47.0% loss
+[17:28:16] [4/20] TS 15000:
+  4537 Mbps, 47.0% loss
+[17:28:34] [5/20] TS 15000:
+  4503 Mbps, 47.6% loss
+[17:28:52] [6/20] TS 15000:
+  4561 Mbps, 46.4% loss
+[17:29:10] [7/20] TS 15000:
+  4411 Mbps, 47.7% loss
+[17:29:28] [8/20] TS 15000:
+  4535 Mbps, 47.2% loss
+[17:29:47] [9/20] TS 15000:
+  4582 Mbps, 46.5% loss
+[17:30:05] [10/20] TS 15000:
+  4422 Mbps, 48.7% loss
+[17:30:23] [11/20] TS 15000:
+  4434 Mbps, 48.7% loss
+[17:30:41] [12/20] TS 15000:
+  4432 Mbps, 48.1% loss
+[17:30:59] [13/20] TS 15000:
+  4464 Mbps, 48.6% loss
+[17:31:17] [14/20] TS 15000:
+  4550 Mbps, 47.5% loss
+[17:31:36] [15/20] TS 15000:
+  4547 Mbps, 47.7% loss
+[17:31:54] [16/20] TS 15000:
+  4563 Mbps, 47.9% loss
+[17:32:12] [17/20] TS 15000:
+  4604 Mbps, 46.8% loss
+[17:32:30] [18/20] TS 15000:
+  4458 Mbps, 47.6% loss
+[17:32:48] [19/20] TS 15000:
+  4581 Mbps, 46.9% loss
+[17:33:06] [20/20] TS 15000:
+  4360 Mbps, 48.5% loss
+[17:33:24] [1/20] TS 20000:
+  4608 Mbps, 46.3% loss
+[17:33:43] [2/20] TS 20000:
+  4616 Mbps, 46.5% loss
+[17:34:01] [3/20] TS 20000:
+  4602 Mbps, 46.0% loss
+[17:34:19] [4/20] TS 20000:
+  4602 Mbps, 46.2% loss
+[17:34:37] [5/20] TS 20000:
+  4612 Mbps, 46.4% loss
+[17:34:55] [6/20] TS 20000:
+  4551 Mbps, 46.2% loss
+[17:35:13] [7/20] TS 20000:
+  4606 Mbps, 46.4% loss
+[17:35:31] [8/20] TS 20000:
+  4602 Mbps, 46.7% loss
+[17:35:50] [9/20] TS 20000:
+  4541 Mbps, 47.0% loss
+[17:36:08] [10/20] TS 20000:
+  4600 Mbps, 46.5% loss
+[17:36:26] [11/20] TS 20000:
+  4668 Mbps, 45.9% loss
+[17:36:44] [12/20] TS 20000:
+  4604 Mbps, 46.8% loss
+[17:37:02] [13/20] TS 20000:
+  4600 Mbps, 47.1% loss
+[17:37:20] [14/20] TS 20000:
+  4637 Mbps, 46.4% loss
+[17:37:38] [15/20] TS 20000:
+  4626 Mbps, 46.5% loss
+[17:37:57] [16/20] TS 20000:
+  4604 Mbps, 46.2% loss
+[17:38:15] [17/20] TS 20000:
+  4636 Mbps, 46.2% loss
+[17:38:33] [18/20] TS 20000:
+  4621 Mbps, 46.9% loss
+[17:38:51] [19/20] TS 20000:
+  4668 Mbps, 46.0% loss
+[17:39:09] [20/20] TS 20000:
+  4558 Mbps, 47.0% loss
+[17:39:27] 
+[17:39:27] === HD Rate Sweep ===
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[17:39:30]   [relay] starting HD (workers=4)...
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[17:39:36] [1/3] HD 500:
+  435 Mbps, 0.0% loss
+[17:39:54] [2/3] HD 500:
+  435 Mbps, 0.0% loss
+[17:40:12] [3/3] HD 500:
+  435 Mbps, 0.0% loss
+[17:40:30] [1/3] HD 1000:
+  870 Mbps, 0.0% loss
+[17:40:48] [2/3] HD 1000:
+  870 Mbps, 0.0% loss
+[17:41:06] [3/3] HD 1000:
+  870 Mbps, 0.0% loss
+[17:41:24] [1/3] HD 2000:
+  1739 Mbps, 0.0% loss
+[17:41:42] [2/3] HD 2000:
+  1741 Mbps, 0.0% loss
+[17:42:01] [3/3] HD 2000:
+  1741 Mbps, 0.0% loss
+[17:42:19] [1/3] HD 3000:
+  2610 Mbps, 0.0% loss
+[17:42:37] [2/3] HD 3000:
+  2611 Mbps, 0.0% loss
+[17:42:55] [3/3] HD 3000:
+  2610 Mbps, 0.0% loss
+[17:43:13] [1/20] HD 5000:
+  4351 Mbps, 0.0% loss
+[17:43:31] [2/20] HD 5000:
+  4351 Mbps, 0.0% loss
+[17:43:49] [3/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:44:07] [4/20] HD 5000:
+  4352 Mbps, 0.0% loss
+[17:44:25] [5/20] HD 5000:
+  4351 Mbps, 0.0% loss
+[17:44:44] [6/20] HD 5000:
+  4352 Mbps, 0.0% loss
+[17:45:02] [7/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:45:20] [8/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:45:38] [9/20] HD 5000:
+  4349 Mbps, 0.0% loss
+[17:45:56] [10/20] HD 5000:
+  4351 Mbps, 0.0% loss
+[17:46:14] [11/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:46:33] [12/20] HD 5000:
+  4352 Mbps, 0.0% loss
+[17:46:51] [13/20] HD 5000:
+  4352 Mbps, 0.0% loss
+[17:47:09] [14/20] HD 5000:
+  4352 Mbps, 0.0% loss
+[17:47:27] [15/20] HD 5000:
+  4349 Mbps, 0.0% loss
+[17:47:45] [16/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:48:03] [17/20] HD 5000:
+  4351 Mbps, 0.0% loss
+[17:48:21] [18/20] HD 5000:
+  4349 Mbps, 0.0% loss
+[17:48:39] [19/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:48:57] [20/20] HD 5000:
+  4350 Mbps, 0.0% loss
+[17:49:16] [1/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:49:34] [2/20] HD 7500:
+  6524 Mbps, 0.0% loss
+[17:49:52] [3/20] HD 7500:
+  6527 Mbps, 0.0% loss
+[17:50:10] [4/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:50:28] [5/20] HD 7500:
+  6524 Mbps, 0.0% loss
+[17:50:46] [6/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:51:04] [7/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:51:23] [8/20] HD 7500:
+  6524 Mbps, 0.0% loss
+[17:51:41] [9/20] HD 7500:
+  6524 Mbps, 0.0% loss
+[17:51:59] [10/20] HD 7500:
+  5166 Mbps, 20.6% loss
+[17:52:17] [11/20] HD 7500:
+  6527 Mbps, 0.0% loss
+[17:52:35] [12/20] HD 7500:
+  6525 Mbps, 0.0% loss
+[17:52:53] [13/20] HD 7500:
+  6525 Mbps, 0.0% loss
+[17:53:11] [14/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:53:30] [15/20] HD 7500:
+  6529 Mbps, 0.0% loss
+[17:53:48] [16/20] HD 7500:
+  6524 Mbps, 0.0% loss
+[17:54:06] [17/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:54:24] [18/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:54:42] [19/20] HD 7500:
+  6526 Mbps, 0.0% loss
+[17:55:00] [20/20] HD 7500:
+  6527 Mbps, 0.0% loss
+[17:55:18] [1/20] HD 10000:
+  8693 Mbps, 0.1% loss
+[17:55:36] [2/20] HD 10000:
+  8699 Mbps, 0.0% loss
+[17:55:55] [3/20] HD 10000:
+  8696 Mbps, 0.1% loss
+[17:56:13] [4/20] HD 10000:
+  8701 Mbps, 0.0% loss
+[17:56:31] [5/20] HD 10000:
+  8700 Mbps, 0.0% loss
+[17:56:49] [6/20] HD 10000:
+  8701 Mbps, 0.0% loss
+[17:57:07] [7/20] HD 10000:
+  8697 Mbps, 0.1% loss
+[17:57:25] [8/20] HD 10000:
+  8698 Mbps, 0.1% loss
+[17:57:43] [9/20] HD 10000:
+  8703 Mbps, 0.0% loss
+[17:58:02] [10/20] HD 10000:
+  8701 Mbps, 0.0% loss
+[17:58:20] [11/20] HD 10000:
+  8624 Mbps, 0.1% loss
+[17:58:38] [12/20] HD 10000:
+  8699 Mbps, 0.0% loss
+[17:58:56] [13/20] HD 10000:
+  8594 Mbps, 1.3% loss
+[17:59:14] [14/20] HD 10000:
+  8668 Mbps, 0.0% loss
+[17:59:32] [15/20] HD 10000:
+  8704 Mbps, 0.0% loss
+[17:59:51] [16/20] HD 10000:
+  8703 Mbps, 0.0% loss
+[18:00:09] [17/20] HD 10000:
+  8534 Mbps, 0.3% loss
+[18:00:27] [18/20] HD 10000:
+  8697 Mbps, 0.0% loss
+[18:00:45] [19/20] HD 10000:
+  8701 Mbps, 0.0% loss
+[18:01:03] [20/20] HD 10000:
+  8701 Mbps, 0.0% loss
+[18:01:21] [1/20] HD 15000:
+  12801 Mbps, 0.6% loss
+[18:01:39] [2/20] HD 15000:
+  8689 Mbps, 23.9% loss
+[18:01:58] [3/20] HD 15000:
+  12490 Mbps, 0.1% loss
+[18:02:16] [4/20] HD 15000:
+  10497 Mbps, 18.7% loss
+[18:02:34] [5/20] HD 15000:
+  12450 Mbps, 0.1% loss
+[18:02:52] [6/20] HD 15000:
+  12985 Mbps, 0.5% loss
+[18:03:10] [7/20] HD 15000:
+  12735 Mbps, 0.3% loss
+[18:03:29] [8/20] HD 15000:
+  12884 Mbps, 1.3% loss
+[18:03:47] [9/20] HD 15000:
+  11822 Mbps, 7.9% loss
+[18:04:05] [10/20] HD 15000:
+  12946 Mbps, 0.1% loss
+[18:04:23] [11/20] HD 15000:
+  12165 Mbps, 0.3% loss
+[18:04:41] [12/20] HD 15000:
+  10978 Mbps, 15.5% loss
+[18:05:00] [13/20] HD 15000:
+  12846 Mbps, 1.6% loss
+[18:05:18] [14/20] HD 15000:
+  8664 Mbps, 19.2% loss
+[18:05:36] [15/20] HD 15000:
+  11248 Mbps, 13.4% loss
+[18:05:54] [16/20] HD 15000:
+  12981 Mbps, 0.1% loss
+[18:06:12] [17/20] HD 15000:
+  13025 Mbps, 0.1% loss
+[18:06:31] [18/20] HD 15000:
+  9192 Mbps, 19.5% loss
+[18:06:49] [19/20] HD 15000:
+  11918 Mbps, 0.9% loss
+[18:07:07] [20/20] HD 15000:
+  12881 Mbps, 0.3% loss
+[18:07:25] [1/20] HD 20000:
+  11324 Mbps, 28.5% loss
+[18:07:43] [2/20] HD 20000:
+  14842 Mbps, 1.1% loss
+[18:08:02] [3/20] HD 20000:
+  11079 Mbps, 29.5% loss
+[18:08:20] [4/20] HD 20000:
+  15742 Mbps, 2.8% loss
+[18:08:38] [5/20] HD 20000:
+  12601 Mbps, 22.7% loss
+[18:08:56] [6/20] HD 20000:
+  16356 Mbps, 1.5% loss
+[18:09:14] [7/20] HD 20000:
+  16485 Mbps, 1.7% loss
+[18:09:33] [8/20] HD 20000:
+  16365 Mbps, 2.2% loss
+[18:09:51] [9/20] HD 20000:
+  10657 Mbps, 22.1% loss
+[18:10:09] [10/20] HD 20000:
+  15491 Mbps, 0.1% loss
+[18:10:27] [11/20] HD 20000:
+  12336 Mbps, 26.3% loss
+[18:10:46] [12/20] HD 20000:
+  13975 Mbps, 0.1% loss
+[18:11:04] [13/20] HD 20000:
+  13505 Mbps, 19.2% loss
+[18:11:22] [14/20] HD 20000:
+  13773 Mbps, 19.6% loss
+[18:11:40] [15/20] HD 20000:
+  14398 Mbps, 1.2% loss
+[18:11:59] [16/20] HD 20000:
+  16548 Mbps, 3.9% loss
+[18:12:17] [17/20] HD 20000:
+  13246 Mbps, 17.6% loss
+[18:12:35] [18/20] HD 20000:
+  15327 Mbps, 2.7% loss
+[18:12:53] [19/20] HD 20000:
+  9370 Mbps, 14.4% loss
+[18:13:12] [20/20] HD 20000:
+  13591 Mbps, 8.6% loss
+[18:13:30] 
+[18:13:30] === TS Latency Under Load ===
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[18:13:32]   [relay] starting TS derper...
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[18:13:38] [1/10] TS idle:
+  p50=152us p99=188us p999=255us max=495us
+[18:13:44] [2/10] TS idle:
+  p50=166us p99=191us p999=263us max=426us
+[18:13:50] [3/10] TS idle:
+  p50=168us p99=190us p999=236us max=442us
+[18:13:56] [4/10] TS idle:
+  p50=159us p99=186us p999=218us max=390us
+[18:14:02] [5/10] TS idle:
+  p50=162us p99=190us p999=279us max=287us
+[18:14:08] [6/10] TS idle:
+  p50=158us p99=195us p999=278us max=323us
+[18:14:14] [7/10] TS idle:
+  p50=155us p99=186us p999=286us max=316us
+[18:14:19] [8/10] TS idle:
+  p50=150us p99=189us p999=239us max=368us
+[18:14:25] [9/10] TS idle:
+  p50=159us p99=194us p999=233us max=338us
+[18:14:31] [10/10] TS idle:
+  p50=165us p99=191us p999=237us max=435us
+[18:14:37] [1/10] TS bg=1000:
+  p50=187us p99=384us p999=610us max=897us
+[18:14:48] [2/10] TS bg=1000:
+  p50=180us p99=376us p999=563us max=671us
+[18:14:59] [3/10] TS bg=1000:
+  p50=190us p99=395us p999=535us max=870us
+[18:15:10] [4/10] TS bg=1000:
+  p50=188us p99=415us p999=587us max=734us
+[18:15:22] [5/10] TS bg=1000:
+  p50=187us p99=391us p999=514us max=659us
+[18:15:33] [6/10] TS bg=1000:
+  p50=190us p99=395us p999=690us max=1885us
+[18:15:44] [7/10] TS bg=1000:
+  p50=192us p99=400us p999=610us max=807us
+[18:15:55] [8/10] TS bg=1000:
+  p50=194us p99=429us p999=622us max=829us
+[18:16:06] [9/10] TS bg=1000:
+  p50=191us p99=408us p999=593us max=775us
+[18:16:17] [10/10] TS bg=1000:
+  p50=187us p99=393us p999=520us max=825us
+[18:16:29] [1/10] TS bg=3000:
+  p50=235us p99=900us p999=1264us max=1731us
+[18:16:40] [2/10] TS bg=3000:
+  p50=252us p99=923us p999=1271us max=2108us
+[18:16:52] [3/10] TS bg=3000:
+  p50=232us p99=871us p999=1099us max=1180us
+[18:17:03] [4/10] TS bg=3000:
+  p50=254us p99=955us p999=1239us max=1414us
+[18:17:15] [5/10] TS bg=3000:
+  p50=232us p99=894us p999=1217us max=1407us
+[18:17:27] [6/10] TS bg=3000:
+  p50=238us p99=908us p999=1190us max=1583us
+[18:17:38] [7/10] TS bg=3000:
+  p50=258us p99=895us p999=1192us max=1296us
+[18:17:50] [8/10] TS bg=3000:
+  p50=250us p99=943us p999=1246us max=2244us
+[18:18:02] [9/10] TS bg=3000:
+  p50=221us p99=914us p999=1335us max=2118us
+[18:18:13] [10/10] TS bg=3000:
+  p50=237us p99=832us p999=1090us max=1350us
+[18:18:25] [1/10] TS bg=5000:
+  p50=297us p99=1339us p999=1788us max=3020us
+[18:18:37] [2/10] TS bg=5000:
+  p50=315us p99=1403us p999=1908us max=2914us
+[18:18:50] [3/10] TS bg=5000:
+  p50=291us p99=1402us p999=2006us max=2408us
+[18:19:02] [4/10] TS bg=5000:
+  p50=318us p99=1446us p999=1856us max=2032us
+[18:19:14] [5/10] TS bg=5000:
+  p50=304us p99=1364us p999=1911us max=2492us
+[18:19:26] [6/10] TS bg=5000:
+  p50=301us p99=1436us p999=2019us max=2518us
+[18:19:38] [7/10] TS bg=5000:
+  p50=294us p99=1461us p999=1813us max=5225us
+[18:19:51] [8/10] TS bg=5000:
+  p50=272us p99=1352us p999=1733us max=2370us
+[18:20:03] [9/10] TS bg=5000:
+  p50=314us p99=1417us p999=1683us max=2043us
+[18:20:15] [10/10] TS bg=5000:
+  p50=309us p99=1346us p999=1645us max=3576us
+[18:20:27] [1/10] TS bg=8000:
+  p50=685us p99=3423us p999=4675us max=6671us
+[18:20:42] [2/10] TS bg=8000:
+  p50=678us p99=3817us p999=5619us max=8349us
+[18:20:58] [3/10] TS bg=8000:
+  p50=717us p99=3675us p999=5983us max=9674us
+[18:21:13] [4/10] TS bg=8000:
+  p50=703us p99=3598us p999=5025us max=7579us
+[18:21:29] [5/10] TS bg=8000:
+  p50=690us p99=3549us p999=6190us max=7586us
+[18:21:44] [6/10] TS bg=8000:
+  p50=648us p99=3681us p999=5485us max=8719us
+[18:21:59] [7/10] TS bg=8000:
+  p50=672us p99=3711us p999=6229us max=7310us
+[18:22:14] [8/10] TS bg=8000:
+  p50=702us p99=3621us p999=5140us max=7133us
+[18:22:30] [9/10] TS bg=8000:
+  p50=707us p99=3923us p999=5765us max=7245us
+[18:22:45] [10/10] TS bg=8000:
+  p50=700us p99=3657us p999=4917us max=7779us
+[18:23:01] 
+[18:23:01] === HD Latency Under Load ===
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[18:23:03]   [relay] starting HD (workers=4)...
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[18:23:09] [1/10] HD idle:
+  p50=159us p99=194us p999=206us max=391us
+[18:23:15] [2/10] HD idle:
+  p50=163us p99=196us p999=217us max=236us
+[18:23:21] [3/10] HD idle:
+  p50=159us p99=189us p999=201us max=225us
+[18:23:27] [4/10] HD idle:
+  p50=166us p99=190us p999=198us max=211us
+[18:23:33] [5/10] HD idle:
+  p50=155us p99=179us p999=189us max=221us
+[18:23:39] [6/10] HD idle:
+  p50=168us p99=198us p999=204us max=210us
+[18:23:45] [7/10] HD idle:
+  p50=156us p99=185us p999=192us max=207us
+[18:23:50] [8/10] HD idle:
+  p50=164us p99=191us p999=196us max=229us
+[18:23:56] [9/10] HD idle:
+  p50=146us p99=169us p999=182us max=193us
+[18:24:02] [10/10] HD idle:
+  p50=162us p99=185us p999=202us max=257us
+[18:24:08] [1/10] HD bg=1000:
+  p50=174us p99=318us p999=406us max=541us
+[18:24:19] [2/10] HD bg=1000:
+  p50=189us p99=336us p999=485us max=574us
+[18:24:30] [3/10] HD bg=1000:
+  p50=191us p99=347us p999=449us max=611us
+[18:24:41] [4/10] HD bg=1000:
+  p50=171us p99=317us p999=397us max=496us
+[18:24:52] [5/10] HD bg=1000:
+  p50=177us p99=297us p999=380us max=461us
+[18:25:04] [6/10] HD bg=1000:
+  p50=192us p99=347us p999=454us max=487us
+[18:25:15] [7/10] HD bg=1000:
+  p50=182us p99=336us p999=455us max=539us
+[18:25:26] [8/10] HD bg=1000:
+  p50=166us p99=331us p999=414us max=458us
+[18:25:37] [9/10] HD bg=1000:
+  p50=174us p99=326us p999=420us max=555us
+[18:25:48] [10/10] HD bg=1000:
+  p50=193us p99=382us p999=521us max=1585us
+[18:25:59] [1/10] HD bg=3000:
+  p50=233us p99=934us p999=1321us max=1485us
+[18:26:11] [2/10] HD bg=3000:
+  p50=225us p99=725us p999=996us max=1368us
+[18:26:22] [3/10] HD bg=3000:
+  p50=208us p99=726us p999=982us max=1319us
+[18:26:34] [4/10] HD bg=3000:
+  p50=246us p99=697us p999=913us max=1186us
+[18:26:45] [5/10] HD bg=3000:
+  p50=228us p99=727us p999=1006us max=1137us
+[18:26:57] [6/10] HD bg=3000:
+  p50=263us p99=763us p999=988us max=1194us
+[18:27:08] [7/10] HD bg=3000:
+  p50=222us p99=729us p999=1036us max=1361us
+[18:27:20] [8/10] HD bg=3000:
+  p50=243us p99=786us p999=1013us max=1277us
+[18:27:32] [9/10] HD bg=3000:
+  p50=222us p99=633us p999=835us max=944us
+[18:27:43] [10/10] HD bg=3000:
+  p50=229us p99=617us p999=832us max=1114us
+[18:27:55] [1/10] HD bg=5000:
+  p50=288us p99=851us p999=1276us max=1547us
+[18:28:06] [2/10] HD bg=5000:
+  p50=189us p99=473us p999=797us max=964us
+[18:28:18] [3/10] HD bg=5000:
+  p50=239us p99=627us p999=979us max=1279us
+[18:28:29] [4/10] HD bg=5000:
+  p50=309us p99=1099us p999=1833us max=2176us
+[18:28:41] [5/10] HD bg=5000:
+  p50=253us p99=686us p999=1105us max=1368us
+[18:28:53] [6/10] HD bg=5000:
+  p50=220us p99=1118us p999=1565us max=2015us
+[18:29:04] [7/10] HD bg=5000:
+  p50=249us p99=1005us p999=1543us max=2279us
+[18:29:16] [8/10] HD bg=5000:
+  p50=236us p99=1144us p999=1424us max=2248us
+[18:29:28] [9/10] HD bg=5000:
+  p50=274us p99=1067us p999=1617us max=1898us
+[18:29:40] [10/10] HD bg=5000:
+  p50=262us p99=1040us p999=1483us max=1781us
+[18:29:52] [1/10] HD bg=8000:
+  p50=247us p99=844us p999=1103us max=1896us
+[18:30:03] [2/10] HD bg=8000:
+  p50=296us p99=1351us p999=1796us max=3058us
+[18:30:16] [3/10] HD bg=8000:
+  p50=285us p99=1313us p999=1689us max=2285us
+[18:30:28] [4/10] HD bg=8000:
+  p50=409us p99=1445us p999=2081us max=2829us
+[18:30:40] [5/10] HD bg=8000:
+  p50=341us p99=1110us p999=1508us max=1935us
+[18:30:53] [6/10] HD bg=8000:
+  p50=244us p99=1214us p999=1807us max=2183us
+[18:31:04] [7/10] HD bg=8000:
+  p50=234us p99=1097us p999=1568us max=2243us
+[18:31:16] [8/10] HD bg=8000:
+  p50=282us p99=996us p999=1427us max=2108us
+[18:31:28] [9/10] HD bg=8000:
+  p50=243us p99=757us p999=1068us max=1871us
+[18:31:40] [10/10] HD bg=8000:
+  p50=313us p99=941us p999=1198us max=1376us
+[18:31:52] 
+Could not chdir to home directory /home/khruskowski_gmail_com: Permission denied
+bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+bash: /home/khruskowski_gmail_com/.bashrc: Permission denied
+[18:31:54] === 8 vCPU complete ===
+[18:31:54] Rate: 224/224 valid
+[18:31:54] Latency: 100/100 valid

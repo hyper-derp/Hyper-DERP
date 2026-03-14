@@ -1,0 +1,19 @@
+# started on Wed Mar 11 13:42:39 2026
+
+
+ Performance counter stats for process id '56408':
+
+         44,223.10 msec task-clock                       #    4.421 CPUs utilized             
+   166,585,534,028      cpu_atom/cycles/                 #    3.767 GHz                         (44.99%)
+   213,246,514,471      cpu_core/cycles/                 #    4.822 GHz                         (55.01%)
+   144,335,906,317      cpu_atom/instructions/           #    0.87  insn per cycle              (44.99%)
+   228,893,712,165      cpu_core/instructions/           #    1.07  insn per cycle              (55.01%)
+        40,609,780      cpu_atom/cache-misses/           #    3.35% of all cache refs           (44.99%)
+       117,840,088      cpu_core/cache-misses/           #    3.32% of all cache refs           (55.01%)
+     1,212,624,474      cpu_atom/cache-references/       #   27.421 M/sec                       (44.99%)
+     3,551,805,469      cpu_core/cache-references/       #   80.316 M/sec                       (55.01%)
+         1,367,785      context-switches                 #   30.929 K/sec                     
+            67,441      cpu-migrations                   #    1.525 K/sec                     
+
+      10.002760101 seconds time elapsed
+

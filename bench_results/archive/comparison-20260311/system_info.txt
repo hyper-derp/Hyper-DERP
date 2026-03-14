@@ -1,0 +1,9 @@
+date: 2026-03-11T10:55:26+01:00
+kernel: 6.12.73+deb13-amd64
+cpu: 13th Gen Intel(R) Core(TM) i5-13600KF
+cores: 20
+workers: 2
+send_count: 20000
+ping_count: 2000
+tp_sizes: 64 256 1024 4096
+lat_sizes: 64 1024

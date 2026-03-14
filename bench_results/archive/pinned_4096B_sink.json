@@ -1,0 +1,17 @@
+{
+  "test": "pinned_4096B_sink",
+  "mode": "sink",
+  "timestamp": "2026-03-10T12:06:00Z",
+  "config": {
+    "packet_count": 1,
+    "packet_size": 4096,
+    "num_workers": 0,
+    "core": 2
+  },
+  "elapsed_ns": 12043957024,
+  "elapsed_ms": 12043.957,
+  "packets": 1028530,
+  "bytes": 4212854784,
+  "throughput_pps": 85398.0,
+  "throughput_mbps": 2798.319
+}
