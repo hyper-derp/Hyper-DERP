@@ -71,7 +71,7 @@ TEST(TypesTest, ConstantsPowerOfTwo) {
   auto is_pow2 = [](int v) { return v > 0 && (v & (v - 1)) == 0; };
   EXPECT_TRUE(is_pow2(kHtCapacity));
   EXPECT_TRUE(is_pow2(kCmdRingSize));
-  EXPECT_TRUE(is_pow2(kXferRingSize));
+  EXPECT_TRUE(is_pow2(kXferSpscSize));
   EXPECT_TRUE(is_pow2(kUringQueueDepth));
   EXPECT_TRUE(is_pow2(kRecvDeferSize));
   EXPECT_TRUE(is_pow2(kPbufCount));

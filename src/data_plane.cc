@@ -333,58 +333,40 @@ static int RingPop(CmdRing* r, Cmd* cmd) {
   return 0;
 }
 
-// -- Cross-shard transfer ring (MPSC) ----------------------------------------
+// -- Cross-shard transfer ring (SPSC per source) -----------------------------
 
-static void XferRingInit(XferRing* r) {
+static void XferSpscInit(XferSpscRing* r) {
   r->head = 0;
   r->tail = 0;
-  r->lock = 0;
-  r->push_count = 0;
 }
 
-static void XferLock(XferRing* r) {
-  while (__atomic_test_and_set(&r->lock, __ATOMIC_ACQUIRE)) {
-    __builtin_ia32_pause();
-  }
-}
-
-static void XferUnlock(XferRing* r) {
-  __atomic_clear(&r->lock, __ATOMIC_RELEASE);
-}
-
-/// Interval (in pushes) between periodic eventfd signals.
-/// Keeps the consumer responsive during sustained bursts
-/// where the ring never fully empties.
-static constexpr uint32_t kXferSignalInterval = 64;
-
-static int XferPush(XferRing* r, const Xfer* x) {
-  XferLock(r);
+/// Push to a per-source SPSC ring. No lock — single
+/// producer (source worker i) writes head, single consumer
+/// (destination worker) reads tail.
+/// Returns 1 if the ring was empty (signal needed),
+/// 0 if consumer is already running, -1 if full.
+static int XferSpscPush(XferSpscRing* r, const Xfer* x) {
   uint32_t cur_head = r->head;
   uint32_t cur_tail =
       __atomic_load_n(&r->tail, __ATOMIC_ACQUIRE);
-  uint32_t next = (cur_head + 1) % kXferRingSize;
+  uint32_t next = (cur_head + 1) & (kXferSpscSize - 1);
   if (next == cur_tail) {
-    XferUnlock(r);
     return -1;
   }
-  int was_empty = (cur_head == cur_tail);
   r->items[cur_head] = *x;
   __atomic_store_n(&r->head, next, __ATOMIC_RELEASE);
-  r->push_count++;
-  int signal = was_empty ||
-               (r->push_count % kXferSignalInterval == 0);
-  XferUnlock(r);
-  return signal ? 1 : 0;
+  return (cur_head == cur_tail) ? 1 : 0;
 }
 
-static int XferPop(XferRing* r, Xfer* x) {
-  if (r->tail ==
+static int XferSpscPop(XferSpscRing* r, Xfer* x) {
+  uint32_t cur_tail = r->tail;
+  if (cur_tail ==
       __atomic_load_n(&r->head, __ATOMIC_ACQUIRE)) {
     return -1;
   }
-  *x = r->items[r->tail];
+  *x = r->items[cur_tail];
   __atomic_store_n(
-      &r->tail, (r->tail + 1) % kXferRingSize,
+      &r->tail, (cur_tail + 1) & (kXferSpscSize - 1),
       __ATOMIC_RELEASE);
   return 0;
 }
@@ -456,16 +438,16 @@ struct FrameNode {
 };
 
 static int FramePoolInit(Worker* w) {
+  static constexpr size_t kPoolBytes =
+      static_cast<size_t>(kFramePoolCount) * kFramePoolBufSize;
   w->frame_pool = static_cast<uint8_t*>(
       calloc(kFramePoolCount, kFramePoolBufSize));
   if (!w->frame_pool) {
     return -1;
   }
+  w->frame_pool_end = w->frame_pool + kPoolBytes;
   // Hint THP for the frame pool (8 MiB).
-  madvise(w->frame_pool,
-          static_cast<size_t>(kFramePoolCount) *
-              kFramePoolBufSize,
-          MADV_HUGEPAGE);
+  madvise(w->frame_pool, kPoolBytes, MADV_HUGEPAGE);
   auto* head = reinterpret_cast<FrameNode*>(w->frame_pool);
   w->frame_pool_free = head;
   for (int i = 0; i < kFramePoolCount - 1; i++) {
@@ -479,54 +461,66 @@ static int FramePoolInit(Worker* w) {
       w->frame_pool +
       (kFramePoolCount - 1) * kFramePoolBufSize);
   last->next = nullptr;
-  w->frame_return_head = nullptr;
+  for (int i = 0; i < kMaxWorkers; i++) {
+    w->frame_return_inbox[i] = nullptr;
+  }
   return 0;
 }
 
 static void FramePoolDestroy(Worker* w) {
   free(w->frame_pool);
   w->frame_pool = nullptr;
+  w->frame_pool_end = nullptr;
   w->frame_pool_free = nullptr;
-  w->frame_return_head = nullptr;
+  for (int i = 0; i < kMaxWorkers; i++) {
+    w->frame_return_inbox[i] = nullptr;
+  }
 }
 
-/// Push a buffer to a (possibly foreign) worker's return
-/// stack. Lock-free Treiber stack via CAS.
-static void FrameReturnPush(Worker* ow, uint8_t* buf) {
+/// Push a buffer to the owning worker's per-source return
+/// inbox. Only worker src_id writes to slot [src_id]; the
+/// owner worker drains it with atomic exchange. CAS loop
+/// handles the race where the consumer nulls the slot
+/// between our load and store (retries at most once).
+static void FrameReturnPush(Worker* ow, int src_id,
+                             uint8_t* buf) {
   auto* node = reinterpret_cast<FrameNode*>(buf);
-  FrameNode* old_head;
-  do {
-    old_head = static_cast<FrameNode*>(
-        __atomic_load_n(&ow->frame_return_head,
-                        __ATOMIC_ACQUIRE));
-    node->next = old_head;
-  } while (!__atomic_compare_exchange_n(
-      reinterpret_cast<FrameNode**>(
-          &ow->frame_return_head),
-      &old_head, node,
-      false, __ATOMIC_RELEASE, __ATOMIC_RELAXED));
+  void* old = __atomic_load_n(
+      &ow->frame_return_inbox[src_id], __ATOMIC_ACQUIRE);
+  for (;;) {
+    node->next = static_cast<FrameNode*>(old);
+    if (__atomic_compare_exchange_n(
+            &ow->frame_return_inbox[src_id],
+            &old, node, false,
+            __ATOMIC_RELEASE, __ATOMIC_ACQUIRE)) {
+      return;
+    }
+  }
 }
 
-/// Drain returned buffers back into the local freelist.
+/// Drain all per-source return inboxes into the local
+/// freelist. Only the owning worker calls this.
 static void FrameReturnDrain(Worker* w) {
-  auto* list = static_cast<FrameNode*>(
-      __atomic_exchange_n(&w->frame_return_head,
-                          nullptr, __ATOMIC_ACQUIRE));
-  while (list) {
-    FrameNode* next = list->next;
-    list->next = static_cast<FrameNode*>(
-        w->frame_pool_free);
-    w->frame_pool_free = list;
-    list = next;
+  int n = w->ctx->num_workers;
+  for (int src = 0; src < n; src++) {
+    auto* list = static_cast<FrameNode*>(
+        __atomic_exchange_n(
+            &w->frame_return_inbox[src],
+            nullptr, __ATOMIC_ACQUIRE));
+    while (list) {
+      FrameNode* next = list->next;
+      list->next = static_cast<FrameNode*>(
+          w->frame_pool_free);
+      w->frame_pool_free = list;
+      list = next;
+    }
   }
 }
 
 /// Check if buf belongs to the given worker's pool.
 static inline bool FramePoolOwns(const Worker* w,
                                  const uint8_t* buf) {
-  return buf >= w->frame_pool &&
-         buf < w->frame_pool +
-                   kFramePoolCount * kFramePoolBufSize;
+  return buf >= w->frame_pool && buf < w->frame_pool_end;
 }
 
 static uint8_t* FrameAlloc(Worker* w, int size) {
@@ -552,19 +546,20 @@ static uint8_t* FrameAlloc(Worker* w, int size) {
   return static_cast<uint8_t*>(malloc(size));
 }
 
-/// Find which worker owns a pool buffer. Returns the
-/// owning worker, or nullptr if buf is not from any pool.
-static inline Worker* FramePoolOwner(
+/// Find which worker owns a pool buffer. Returns the owner
+/// id, or -1 if buf is not from any pool. Uses stored
+/// frame_pool / frame_pool_end for O(1) per-worker check.
+static inline int FramePoolOwnerId(
     Worker* w, uint8_t* buf) {
   // Fast path: check local pool first (common case).
-  if (FramePoolOwns(w, buf)) return w;
+  if (FramePoolOwns(w, buf)) return w->id;
   // Check other workers' pools.
   Ctx* ctx = w->ctx;
   for (int i = 0; i < ctx->num_workers; i++) {
-    Worker* ow = ctx->workers[i];
-    if (ow != w && FramePoolOwns(ow, buf)) return ow;
+    if (i != w->id && FramePoolOwns(ctx->workers[i], buf))
+      return i;
   }
-  return nullptr;
+  return -1;
 }
 
 static void FrameFree(Worker* w, uint8_t* buf) {
@@ -577,10 +572,10 @@ static void FrameFree(Worker* w, uint8_t* buf) {
     w->frame_pool_free = node;
     return;
   }
-  // Cross-shard return via Treiber stack.
-  Worker* ow = FramePoolOwner(w, buf);
-  if (ow) {
-    FrameReturnPush(ow, buf);
+  // Cross-worker return via per-source SPSC inbox.
+  int owner = FramePoolOwnerId(w, buf);
+  if (owner >= 0) {
+    FrameReturnPush(w->ctx->workers[owner], w->id, buf);
     return;
   }
   // Oversize or pre-pool buffer — malloc'd.
@@ -1053,12 +1048,15 @@ static void ForwardMsg(Worker* w, FrameType type,
   x.dst_fd = route->fd;
   x.frame = frame;
   x.frame_len = frame_len;
-  Worker* dst_w = w->ctx->workers[route->worker_id];
+  int dst_id = route->worker_id;
+  Worker* dst_w = w->ctx->workers[dst_id];
   x.dst_gen = __atomic_load_n(
       &dst_w->fd_gen[route->fd], __ATOMIC_ACQUIRE);
-  int rc = XferPush(&dst_w->xfer_ring, &x);
+  int rc = XferSpscPush(dst_w->xfer_inbox[w->id], &x);
   if (rc == 1) {
-    SignalEventfd(dst_w->xfer_efd);
+    // Ring was empty — mark for batched signal.
+    w->xfer_signal_pending |=
+        (1u << static_cast<unsigned>(dst_id));
   } else if (rc == -1) {
     FrameFree(w, frame);
     w->stats.xfer_drops++;
@@ -1629,19 +1627,40 @@ static void ProcessCommands(Worker* w) {
 
 static void ProcessXfer(Worker* w) {
   DrainEventfd(w->xfer_efd);
+  int n = w->ctx->num_workers;
   Xfer x{};
-  while (XferPop(&w->xfer_ring, &x) == 0) {
-    if (x.dst_fd < 0 || x.dst_fd >= kMaxFd ||
-        !w->fd_map[x.dst_fd]) {
-      FrameFree(w, x.frame);
-      continue;
+  for (int src = 0; src < n; src++) {
+    XferSpscRing* ring = w->xfer_inbox[src];
+    while (XferSpscPop(ring, &x) == 0) {
+      if (x.dst_fd < 0 || x.dst_fd >= kMaxFd ||
+          !w->fd_map[x.dst_fd]) {
+        FrameFree(w, x.frame);
+        continue;
+      }
+      Peer* peer = w->fd_map[x.dst_fd];
+      if (x.dst_gen != w->fd_gen[x.dst_fd]) {
+        FrameFree(w, x.frame);
+        continue;
+      }
+      EnqueueSend(w, peer, x.frame, x.frame_len);
     }
-    Peer* peer = w->fd_map[x.dst_fd];
-    if (x.dst_gen != w->fd_gen[x.dst_fd]) {
-      FrameFree(w, x.frame);
-      continue;
-    }
-    EnqueueSend(w, peer, x.frame, x.frame_len);
+  }
+}
+
+/// Flush batched cross-shard eventfd signals. Called once
+/// per CQE batch after all ForwardMsg calls are done.
+/// One write(eventfd) per destination worker per batch,
+/// instead of one per frame.
+static void FlushXferSignals(Worker* w) {
+  uint32_t pending = w->xfer_signal_pending;
+  if (!pending) {
+    return;
+  }
+  w->xfer_signal_pending = 0;
+  while (pending) {
+    int dst = __builtin_ctz(pending);
+    SignalEventfd(w->ctx->workers[dst]->xfer_efd);
+    pending &= pending - 1;
   }
 }
 
@@ -1759,6 +1778,10 @@ static void* WorkerRun(void* arg) {
       io_uring_cq_advance(&w->ring, nr);
     }
 
+    // Flush batched cross-shard signals (one eventfd
+    // write per destination, not one per frame).
+    FlushXferSignals(w);
+
     // Flush deferred first-sends with coalesced MSG_MORE.
     FlushPendingSends(w);
 
@@ -1849,7 +1872,16 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
   }
 
   RingInit(&w->cmd_ring);
-  XferRingInit(&w->xfer_ring);
+
+  // Allocate per-source SPSC xfer inbox rings.
+  for (int i = 0; i < kMaxWorkers; i++) {
+    w->xfer_inbox[i] = static_cast<XferSpscRing*>(
+        calloc(1, sizeof(XferSpscRing)));
+    if (!w->xfer_inbox[i]) {
+      goto fail;
+    }
+    XferSpscInit(w->xfer_inbox[i]);
+  }
 
   if (SlabInit(w) < 0) {
     goto fail;
@@ -1863,6 +1895,10 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
   return 0;
 
 fail:
+  for (int i = 0; i < kMaxWorkers; i++) {
+    free(w->xfer_inbox[i]);
+    w->xfer_inbox[i] = nullptr;
+  }
   if (w->xfer_efd >= 0) close(w->xfer_efd);
   if (w->event_fd >= 0) close(w->event_fd);
   if (w->pipe_wr >= 0) close(w->pipe_wr);
@@ -2062,6 +2098,18 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
   while (RingPop(&w->cmd_ring, &cmd) == 0) {
     if (cmd.type == kCmdWrite) {
       free(cmd.data);
+    }
+  }
+
+  // Drain and free per-source xfer inbox rings.
+  for (int i = 0; i < kMaxWorkers; i++) {
+    if (w->xfer_inbox[i]) {
+      Xfer x{};
+      while (XferSpscPop(w->xfer_inbox[i], &x) == 0) {
+        FrameFree(w, x.frame);
+      }
+      free(w->xfer_inbox[i]);
+      w->xfer_inbox[i] = nullptr;
     }
   }
 

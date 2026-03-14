@@ -36,3 +36,7 @@ objects/
 refs/
 hooks/
 config
+
+# Secrets
+certs/
+*.pem

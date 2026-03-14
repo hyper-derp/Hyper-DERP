@@ -20,11 +20,11 @@ inline constexpr int kHtCapacity = 4096;
 /// Command ring buffer size (must be power of 2).
 inline constexpr int kCmdRingSize = 1024;
 
-/// Cross-shard transfer ring size (must be power of 2).
-/// Sized to absorb small-packet bursts: a single provided
-/// buffer recv can contain hundreds of 64B frames, all
-/// pushed before the consumer drains.
-inline constexpr int kXferRingSize = 65536;
+/// Per-source SPSC transfer ring size (must be power of 2).
+/// Each worker has one ring per source worker. Smaller than
+/// the old MPSC ring since each only carries traffic from
+/// one source. N workers → N×N rings total.
+inline constexpr int kXferSpscSize = 4096;
 
 /// Maximum worker threads.
 inline constexpr int kMaxWorkers = 32;
@@ -226,15 +226,14 @@ struct CmdRing {
   uint32_t tail;
 };
 
-/// MPSC ring buffer for cross-shard transfers.
-/// head/tail are on separate cache lines to avoid
-/// false sharing between producer and consumer.
-struct XferRing {
-  Xfer items[kXferRingSize];
+/// SPSC ring buffer for cross-shard transfers.
+/// One ring per (source worker, destination worker) pair.
+/// No lock needed — single producer, single consumer.
+/// head/tail on separate cache lines to avoid false sharing.
+struct XferSpscRing {
+  Xfer items[kXferSpscSize];
   alignas(64) uint32_t head;
   alignas(64) uint32_t tail;
-  char lock;
-  uint32_t push_count;
 };
 
 // Forward declaration.
@@ -274,8 +273,9 @@ struct Worker {
   // Command ring (control plane → worker).
   CmdRing cmd_ring;
 
-  // Cross-shard transfer inbox.
-  XferRing xfer_ring;
+  // Cross-shard transfer inbox: one SPSC ring per source
+  // worker. xfer_inbox[i] is written by worker i only.
+  XferSpscRing* xfer_inbox[kMaxWorkers];
 
   // eventfd for waking the worker (commands).
   int event_fd;
@@ -302,6 +302,11 @@ struct Worker {
   int pending_fds[kMaxCqeBatch];
   int pending_count;
 
+  // Batched cross-shard eventfd signaling.
+  // Bit i set means worker i needs a signal after this
+  // CQE batch finishes.
+  uint32_t xfer_signal_pending;
+
   // Multishot recv support (kernel 6.0+).
   int use_multishot_recv;
 
@@ -314,11 +319,13 @@ struct Worker {
 
   // Frame pool allocator (fixed-size buffer pool).
   uint8_t* frame_pool;
+  uint8_t* frame_pool_end;
   void* frame_pool_free;
 
-  // MPSC return stack for cross-worker buffer returns.
-  // Separated from frame_pool_free to avoid false sharing.
-  alignas(64) void* frame_return_head;
+  // Per-source SPSC return inboxes for cross-worker buffer
+  // returns. Worker i pushes to owner->frame_return_inbox[i].
+  // Each slot is a FrameNode* linked list head.
+  alignas(64) void* frame_return_inbox[kMaxWorkers];
 
   // Per-worker stats.
   WorkerStats stats;
