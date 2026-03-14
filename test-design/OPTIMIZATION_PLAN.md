@@ -241,6 +241,74 @@ P3 results reinforce this: 8w kTLS now does 12,470 Mbps at
 20G (+13.5% over pre-bitmask). More workers + bitmask + kTLS
 is the optimal production configuration.
 
+## Priority 6: TCP Segment Packing (Bare Metal Investigation)
+
+### Problem
+
+Tunnel tests show HD produces 13.9x fewer TCP retransmits than
+TS (671 vs 9,310 at 1 Gbps single-stream through WireGuard).
+HD's MSG_MORE coalescing and io_uring batched sends are clearly
+helping, but we don't know how close to optimal the current
+packing is. There may be room for further improvement.
+
+### Why It Matters
+
+For real-world traffic (especially video streaming), retransmits
+directly translate to jitter and frame drops. The 13.9x advantage
+is already the most compelling end-to-end metric in the project.
+Making it even better strengthens the user-experience story.
+
+### Diagnostics First (before any code changes)
+
+Run during a tunnel test on bare metal (where tcpdump and perf
+are available without cloud noise):
+
+```bash
+# TCP connection stats — cwnd, rtt, retrans, pacing_rate
+ss -tin dst <client_ip>
+
+# Capture segments for analysis
+tcpdump -i eth0 -w relay_tcp.pcap -c 10000 port <derp_port>
+# Wireshark: Statistics → TCP Stream Graphs → Throughput
+# Check: segment sizes, burst patterns, cwnd oscillation
+```
+
+Things to look for:
+- **Segment sizes**: full MSS (1460B) or small fragments?
+  Small segments = more packets = more congestion signals.
+- **Pacing rate**: `ss` shows kernel pacing. Bursty sends
+  trigger congestion; paced sends don't.
+- **MSG_MORE effectiveness**: are sends actually coalesced or
+  does the cork expire before the next frame arrives?
+- **cwnd oscillation**: rapid cwnd growth/collapse is the
+  retransmit source.
+
+### Possible Improvements (test after profiling)
+
+1. **TCP_CORK around CQE batches** — explicitly cork at start
+   of batch processing, uncork at end. Guarantees coalescing
+   within a batch rather than relying on MSG_MORE timing.
+
+2. **io_uring send bundling** — submit multiple send SQEs
+   before a single io_uring_submit(), letting the kernel see
+   them as a batch and coalesce at the socket layer.
+
+3. **SO_SNDBUF tuning** — larger send buffer gives the kernel
+   more room to coalesce before pushing to the wire.
+
+4. **TCP pacing** — `SO_MAX_PACING_RATE` to explicitly cap
+   send rate per connection, preventing bursts that trigger
+   congestion.
+
+### Priority
+
+Low — defer to bare metal. The 13.9x advantage is already
+massive and the improvements here are incremental. Only worth
+pursuing if:
+- Bare metal profiling shows segment size or pacing issues
+- The retransmit count increases at higher throughput levels
+  (Phase 2-3 tunnel tests with more client pairs)
+
 ## Time Estimate
 
 | Item | Code | Test | Total |
@@ -250,6 +318,7 @@ is the optimal production configuration.
 | P3: Bitmask | 1 hr | 1 hr | 2 hr |
 | P4: Hash | — | — | deferred |
 | P5: Ring sizing | — | — | deferred |
+| P6: TCP packing | — | — | bare metal |
 | **Total** | | | **~4 hr** |
 
 After P1-P3, proceed to Phase B (kTLS full sweep) with the
