@@ -4,7 +4,46 @@
 
 Definitive GCP benchmark dataset across 2, 4, 8, 16 vCPU.
 25 runs at high rates for tight confidence intervals.
-All configs use SPSC code + release Go build.
+Two phases: Phase A (plain TCP, done) and Phase B (kTLS, next).
+
+## Status
+
+### Phase A — Plain TCP (COMPLETE)
+
+Results in `bench_results/gcp-c4-full-sweep/`. Key findings:
+- HD 2-6x throughput advantage depending on vCPU count
+- HD 3-8x better p99 latency under load
+- 16 vCPU 8-worker regression identified (xfer_drop cascade)
+- GOGC=off makes TS worse (GC helps, not hurts)
+- HD uses ~70MB per worker RSS (negligible on relay VMs)
+
+### Worker Scaling Test (COMPLETE)
+
+Results in `bench_results/gcp-c4-20260314-worker-scaling/`.
+- 4w optimal for plain TCP; cliff between 6w and 8w
+- kTLS eliminates 8w collapse entirely
+- 8w kTLS slightly outperforms 4w kTLS (more parallel crypto)
+- P3 bitmask optimization: +13.5% kTLS throughput, -68% xfer_drops
+- Ring size 16384 did NOT fix plain TCP collapse; reverted to 4096
+
+### Tunnel Tests (COMPLETE)
+
+Results in `test-design/TUNNEL_TEST_RESULTS.md`. Real Tailscale
+clients through Headscale + DERP:
+- 1.70-1.77x throughput through WireGuard tunnels
+- 16-48x fewer retransmits (increases under contention)
+- Full data plane isolation from control plane churn
+
+### Phase B — kTLS (READY TO RUN)
+
+Detailed plan in `test-design/PHASE_B_PLAN.md`. Tooling ready:
+- `tools/phase_b_gcp.sh`: VM orchestration (resize, deploy, collect)
+- `tools/run_phase_b.sh`: sweep execution (probe, rate, latency)
+- P2 resolved: `--metrics-port 9090 --debug-endpoints` for
+  worker stats under kTLS
+- Ring size: 4096 (default, kTLS prevents overflow)
+- HD binary: P3 bitmask build
+- Resumability: `--start-at`, `--skip-ts`, `--skip-latency`
 
 ## What Changed Since Earlier Runs
 
@@ -12,9 +51,9 @@ All configs use SPSC code + release Go build.
 |-------|--------|-----|
 | Go derper build | Debug (1.96.1-ERR-BuildInfo) | Release, stripped, -trimpath |
 | Cross-shard model | MPSC + Treiber stack (CAS contention) | SPSC rings + batched eventfd |
-| 8 vCPU result | TS won (0.93x) | HD wins (2-3x, prelim) |
-
-All prior 4/8/16 vCPU data is obsolete. Everything must be rerun.
+| ProcessXfer | O(N-1) linear scan | P3 bitmask, O(active sources) |
+| 8 vCPU result | TS won (0.93x) | HD wins (2-3x) |
+| 16 vCPU 8w | Collapsed under plain TCP | Stable under kTLS |
 
 ## Configurations
 
@@ -33,38 +72,29 @@ fix it before burning hours on the full matrix.
 
 ## TLS Strategy
 
-### Hypothesis: kTLS will eliminate the high-worker-count regression
+### Confirmed: kTLS eliminates the 8-worker regression
 
-Earlier testing with the NetBird Go relay showed that TLS
-backpressure eliminated loss on loopback. The mechanism is sound:
-TLS encryption on the send path adds per-record overhead that
-rate-limits output, preventing SPSC ring overflow. **However, this
-has NOT been confirmed for HD's kTLS path yet.** The worker scaling
-test must include kTLS runs on HD to verify.
+Worker scaling test verified on HD (not just NetBird):
+- 8w kTLS @20G: 10,813-12,470 Mbps, stable (post-P3 bitmask)
+- 8w TCP @20G: 403-15,491 Mbps, bimodal collapse
+- Ring size increase (4096→16384) did NOT fix plain TCP collapse
+- kTLS backpressure is the fix; ring size reverted to 4096
 
-Key evidence so far:
-- Increasing SPSC ring capacity from 4096 to 16384 did NOT fix
-  the plain TCP 8-worker collapse — 94.5% loss still observed at
-  20G. This rules out ring overflow (H1) as the sole cause.
-- The issue is N² cross-shard polling/signaling overhead that
-  manifests when the send path is unconstrained (plain TCP).
-- kTLS *should* throttle sends via per-record crypto overhead,
-  preventing the cascade — but this needs confirmation on HD.
+### Implications
 
-### Implications (pending kTLS confirmation)
-
-- **If kTLS fixes HD's 8-worker collapse:** plain TCP benchmarks
-  are a stress test, not representative of production. The 16 vCPU
-  regression wouldn't exist in production. Phase B becomes the
-  primary dataset for publication.
-- **If kTLS does NOT fix it:** the N² overhead is real regardless
-  of transport. Deployment guidance becomes "cap at 4-6 workers"
-  and the architecture may need work for high worker counts.
-- **TS will likely degrade more under TLS than HD.** Go's
-  `crypto/tls` runs in userspace (goroutine per connection),
-  burning CPU on AES-GCM. HD offloads to the kernel via kTLS —
-  near-zero userspace cost. NetBird relay testing showed Go relays
-  collapse much sooner with TLS enabled.
+- **Plain TCP benchmarks are a stress test**, not representative
+  of production. Useful for relay internals, but headline numbers
+  come from TLS runs.
+- **The 16 vCPU regression does not exist in production.** Auto
+  worker count (vCPU/2) is correct under kTLS at all configs.
+- **TS TLS overhead is ~10% at 16 vCPU** (8,760→7,845 Mbps).
+  Go's crypto/tls with AES-NI is more efficient than expected.
+  Expect larger TLS overhead at lower vCPU counts.
+- **HD kTLS overhead is ~7% at stable rates** (≤10G). Above that
+  the plain TCP comparison is meaningless (bimodal).
+- **8w kTLS outperforms 4w kTLS** by ~12% at 15G+ (more workers
+  = more parallel crypto). Phase B uses auto worker count.
+- **Phase B is the primary dataset** for publication.
 
 ### Approach: Two-phase sweep
 
@@ -401,44 +431,35 @@ Before analyzing:
 
 ## Results Informing Phase B
 
-### Answered by worker scaling test
+### All questions resolved
 
-1. **Ring size fix (4096 → 16384):** Did NOT fix the plain TCP
-   8-worker collapse. 94.5% loss still observed at 20G with 4x
-   larger rings. Rules out ring overflow as sole cause. Keep
-   larger rings anyway — no downside.
+1. **Ring size:** Reverted to 4096. The 16384 experiment didn't
+   fix plain TCP collapse, and kTLS prevents overflow at 4096.
 
-2. **Worker count cliff:** Degradation starts between 6 and 8
-   workers on plain TCP. 2w and 4w are stable; 6w mostly stable;
-   8w collapses.
+2. **Worker count:** Auto (vCPU/2) is correct under kTLS.
+   8w outperforms 4w by ~12% under kTLS. Plain TCP cliff
+   between 6w and 8w is a non-production artifact.
 
-### Open — must answer before full Phase B sweep
+3. **kTLS fixes 8-worker collapse:** Confirmed on HD. 8w kTLS
+   stable at 20G+ where plain TCP collapses.
 
-1. **Does kTLS fix HD's 8-worker collapse?** NetBird Go relay
-   showed TLS backpressure helped on loopback, but HD has not
-   been tested yet. Run a quick sanity check: 16 vCPU / 8w,
-   kTLS, 5 runs at 15G and 20G. This determines whether 16 vCPU
-   keeps 8 workers or drops to 4 for Phase B.
-   **Pre-requisite:** `modprobe tls` on the relay VM before
-   starting HD. Verify with `lsmod | grep tls`. Without this,
-   OpenSSL falls back to userspace TLS and kTLS offload is
-   silently disabled.
+4. **P2 (debug endpoint under kTLS):** Resolved. HD accepts
+   `--metrics-port 9090 --debug-endpoints` for a separate
+   plain HTTP debug port alongside kTLS data port.
 
-### Still required before Phase B
+5. **kTLS prerequisite:** `modprobe tls` on relay VM before
+   starting HD. Verify `lsmod | grep tls`. Without this,
+   OpenSSL falls back to userspace TLS silently.
 
-1. **Rerun TS ceiling probes with TLS.** TS performance will drop
-   significantly — expect ceilings to shift down by 30-60%.
-   Latency load levels must be recalculated from new TS ceilings.
+### Phase B ready to launch
 
-2. **kTLS prerequisites.** Verify kTLS is active on the relay VM:
-   check HD startup log for `BIO_get_ktls_send` confirmation.
-   Verify kernel supports TLS offload: `modprobe tls` and check
-   `/proc/net/tls_stat`. Generate or deploy test certificates.
+All blockers resolved. Tooling tested. See
+`test-design/PHASE_B_PLAN.md` for full details.
 
-3. **Decide rate ranges for Phase B.** If TS ceiling drops from
-   ~5G to ~2G at 8 vCPU, testing up to 20G is wasteful. Adjust
-   per config after probes complete.
+Scripts:
+- `tools/phase_b_gcp.sh` — VM orchestration from workstation
+- `tools/run_phase_b.sh` — sweep execution on bench-client
+  (with `--start-at`, `--skip-ts`, `--skip-latency`, `--dry-run`)
 
-4. **Verify bench client supports TLS connections.** The bench
-   harness may need a flag or config change to connect over TLS
-   instead of plain TCP.
+TS ceiling probes run automatically as the first step per config.
+Rate ranges and latency loads computed from probe results.
