@@ -1,39 +1,111 @@
 # Hyper-DERP
 
-High-performance DERP relay server implementing the
-[Tailscale DERP protocol](https://pkg.go.dev/tailscale.com/derp)
-in C++23 with `io_uring` for zero-copy data plane operations.
+High-performance DERP relay server written in C++23 with
+`io_uring`. Drop-in replacement for Tailscale's Go-based
+[derper](https://pkg.go.dev/tailscale.com/derp) with 2-12x
+higher throughput, up to 48x fewer TCP retransmits, and
+significantly lower tail latency under load.
+
+Compatible with Tailscale and Headscale clients.
+
+## Benchmark Highlights
+
+Measured on GCP c4-highcpu VMs (Intel Xeon Platinum 8581C),
+DERP over kTLS, 25 runs per data point.
+Go derper v1.96.1 release build.
+
+### Throughput (HD kTLS vs TS TLS)
+
+| vCPU | HD Peak | TS Ceiling | Ratio | HD Loss | TS Loss |
+|-----:|--------:|-----------:|------:|--------:|--------:|
+| 2 | 2,977 Mbps | 1,448 Mbps | **11.8x** at 5G | 2.8% | 93.0% |
+| 4 | 5,106 Mbps | 2,395 Mbps | **3.7x** at 7.5G | 0.8% | 74.2% |
+| 8 | 7,621 Mbps | 4,033 Mbps | **2.0x** at 15G | 16.6% | 45.0% |
+| 16 | 12,068 Mbps | 7,743 Mbps | **1.6x** at 20G | 1.7% | 18.9% |
+
+The advantage grows as resources shrink. At 2 vCPU, TS drops
+93% of offered traffic at 5 Gbps. HD delivers 3 Gbps.
+
+### Tail Latency Under Load (p99, at TS TLS ceiling)
+
+| vCPU | HD p99 | TS p99 | Ratio |
+|-----:|-------:|-------:|------:|
+| 2 | 554 us | 2,718 us | **4.9x** |
+| 4 | 1,601 us | 2,512 us | **1.6x** |
+| 8 | 1,097 us | 1,408 us | **1.3x** |
+| 16 | 636 us | 1,268 us | **2.0x** |
+
+### Real Tailscale Tunnel Test
+
+End-to-end through WireGuard tunnels with real Tailscale clients
+and self-hosted Headscale control plane. 10 runs, 15s each.
+
+| Metric | Go derper | Hyper-DERP | Ratio |
+|--------|----------:|-----------:|------:|
+| Throughput (1 pair) | 988 Mbps | 1,682 Mbps | **1.70x** |
+| Retransmits (1 pair) | 9,184 | 560 | **16x fewer** |
+| Retransmits (3 pairs) | 9,566 | 399 | **24x fewer** |
+| Retransmits (5 min) | 192,689 | 3,956 | **48x fewer** |
+| Throughput under churn | 1,007 Mbps | 1,730 Mbps | **1.72x** |
+
+HD retransmits *decrease* under load — io_uring batched sends
+coalesce into smoother TCP flow. TS retransmits stay constant
+regardless of load.
+
+### Cross-Cloud (AWS c7i, eu-central-1)
+
+| vCPU | GCP HD/TS | AWS HD/TS |
+|-----:|----------:|----------:|
+| 8 | 2.0x | 2.0-2.2x |
+| 16 | 1.6x | 1.3x |
+
+The advantage is architectural, not platform-specific.
 
 ## Architecture
 
+Three-layer design:
+
 ```
-┌──────────────────────────────────────────────┐
-│  Accept Thread (TCP listener)                │
-│    → HTTP Upgrade (/derp)                    │
-│    → NaCl Box Handshake (Curve25519)         │
-│    → Assign peer to data plane shard         │
-├──────────────────────────────────────────────┤
-│  Data Plane (io_uring workers)               │
-│    → Sharded by peer key                     │
-│    → SEND_ZC / provided buffer rings         │
-│    → SPSC/MPSC command & transfer rings      │
-└──────────────────────────────────────────────┘
+Accept Thread
+  TCP accept → kTLS handshake → HTTP upgrade → NaCl box
+  → assign peer to data plane shard (FNV-1a hash)
+
+Data Plane (io_uring workers, one per shard)
+  Multishot recv with provided buffer rings
+  SPSC cross-shard transfer rings (lock-free)
+  Batched eventfd signaling (one per dest per CQE batch)
+  P3 bitmask: O(active sources) ProcessXfer, not O(N-1)
+  SEND_ZC for frames >4KB, regular send for WireGuard MTU
+  MSG_MORE coalescing on first-send
+  Backpressure: pause recv when send queues exceed threshold
+
+Control Plane (single-threaded, epoll)
+  Ping/pong, watcher notifications, peer presence
+  Fully isolated from data plane — no shared locks
 ```
 
-Data-oriented design throughout: plain structs, free functions,
-no virtual dispatch, cache-friendly field ordering.
+Data-oriented design: plain structs, free functions, no virtual
+dispatch, cache-friendly field ordering, zero allocation on the
+hot path (~70 MB pre-allocated per worker).
 
-### Modules
+### Why It's Faster
 
-| Header | Purpose |
-|---|---|
-| `protocol.h` | Wire format: frame types, encode/decode |
-| `http.h` | HTTP/1.1 upgrade request/response parsing |
-| `handshake.h` | NaCl box key exchange (libsodium) |
-| `data_plane.h` | io_uring event loop, peer routing |
-| `server.h` | Lifecycle: init, run, stop, destroy |
-| `client.h` | Client-side DERP for testing/benchmarks |
-| `bench.h` | Latency recording, JSON result output |
+1. **io_uring vs goroutines.** Batched I/O submission amortizes
+   syscall overhead. One `io_uring_enter` handles dozens of
+   pending sends. Go derper makes one `write` syscall per packet
+   per goroutine.
+
+2. **kTLS vs userspace TLS.** AES-GCM encryption runs in the
+   kernel. Worker threads never touch crypto. Go's `crypto/tls`
+   encrypts in userspace per goroutine, competing for CPU.
+
+3. **Sharded workers vs shared state.** Each worker owns a
+   disjoint peer set. Cross-shard forwarding uses lock-free
+   SPSC rings. Go derper's goroutines contend on shared maps.
+
+4. **Send coalescing.** Batched io_uring submissions produce
+   smoother TCP flow — fewer congestion events, fewer
+   retransmits. This is why retransmits *decrease* under load.
 
 ## Dependencies
 
@@ -46,7 +118,8 @@ sudo apt install \
   libgtest-dev libgmock-dev libcli11-dev
 ```
 
-Requires Linux with `io_uring` support (kernel 5.19+).
+Requires Linux with `io_uring` support (kernel 6.1+ recommended
+for DEFER_TASKRUN and SINGLE_ISSUER).
 
 ## Build
 
@@ -66,21 +139,55 @@ cmake --build build-debug -j
 # Show all options
 ./build/hyper-derp --help
 
-# Start relay (default port 3340, auto-detect worker count)
-./build/hyper-derp --port 3340 --workers 4
+# Start relay (auto-detect worker count, kTLS)
+./build/hyper-derp --port 443 \
+  --cert /path/to/cert.pem --key /path/to/key.pem
 
-# Pin workers to specific cores
-./build/hyper-derp --workers 2 --pin-workers 0,1
+# Explicit worker count and CPU pinning
+./build/hyper-derp --port 443 --workers 4 --pin-workers 0-3 \
+  --cert cert.pem --key key.pem
 
-# With metrics, rate limiting, and log level
-./build/hyper-derp --workers 4 \
-  --metrics-port 9090 \
-  --max-accept-rate 1000 \
-  --log-level info
+# With metrics endpoint (separate plain HTTP port)
+./build/hyper-derp --port 443 --workers 4 \
+  --cert cert.pem --key key.pem \
+  --metrics-port 9090 --debug-endpoints
 ```
 
-See [OPERATIONS.md](OPERATIONS.md) for production tuning
-(sysctl, CPU pinning, memory footprint, Prometheus alerting).
+### kTLS Prerequisites
+
+```sh
+# Load kernel TLS module (required before starting)
+sudo modprobe tls
+
+# Verify
+lsmod | grep tls
+```
+
+HD auto-detects kTLS support via OpenSSL. Check startup log for
+`BIO_get_ktls_send` confirmation. Without the TLS module loaded,
+OpenSSL falls back to userspace TLS silently.
+
+### Worker Count Guidance
+
+- **With kTLS (production):** use default (vCPU / 2). More
+  workers = more parallel crypto throughput. 8 workers on 16
+  vCPU outperforms 4 workers under kTLS.
+- **Without TLS (testing only):** cap at 4 workers. Higher
+  counts cause cross-shard backpressure oscillation under
+  extreme load.
+
+## Testing
+
+```sh
+# All tests
+ctest --preset debug
+
+# Unit tests (protocol, HTTP, handshake)
+ctest --preset debug -R unit_tests
+
+# Integration tests (fork-based, process-isolated)
+ctest --preset debug -R integration_tests
+```
 
 ## Packaging
 
@@ -94,199 +201,23 @@ Installs systemd unit (`hyper-derp.service`), example config
 (`/etc/hyper-derp/hyper-derp.conf.example`), and binaries to
 `/usr/bin/`.
 
-## Testing
+See [OPERATIONS.md](OPERATIONS.md) for production tuning
+(sysctl, CPU pinning, memory footprint, Prometheus alerting).
 
-```sh
-# Run all tests
-ctest --preset debug
+## Benchmark Methodology
 
-# Unit tests only (protocol, HTTP, handshake, bench)
-ctest --preset debug -R unit_tests
+All benchmark data collected with:
+- 25 runs per high-rate data point, 5 at low rates
+- 95% confidence intervals (t-distribution)
+- TS ceiling probes to scale latency loads per config
+- Strict isolation (one server at a time, cache drops)
+- Go derper: v1.96.1 release build (-trimpath, stripped)
+- Tunnel tests: Headscale control plane, zero Tailscale contact
+- Both GCP and AWS to confirm cross-cloud consistency
 
-# Integration tests (fork-based, process-isolated)
-ctest --preset debug -R integration_tests
-```
-
-Unit tests cover protocol encoding/decoding, HTTP parsing,
-NaCl box handshake, and benchmark instrumentation.
-
-Integration tests fork separate relay and client processes with
-core pinning for clean performance isolation. Tests include
-single-packet relay, burst relay (100 packets with pacing), and
-bidirectional message exchange.
-
-## Performance
-
-Sustained throughput measured with `flood`/`sink` modes over
-loopback. 2 workers pinned to cores 0,1. Sender pinned to core 3.
-10-second flood, 18-second sink window.
-
-### Relay forwarding throughput
-
-| Payload | Flood PPS | Sink PPS | Delivery | Throughput |
-|--------:|----------:|---------:|---------:|-----------:|
-| 64 B | 135,061 | 83,764 | 100.0% | 42.9 Mbps |
-| 128 B | 151,193 | 93,739 | 100.0% | 96.0 Mbps |
-| 256 B | 175,079 | 107,999 | 99.9% | 221.2 Mbps |
-| 512 B | 260,212 | 159,665 | 99.0% | 654.0 Mbps |
-| 1024 B | 375,641 | 224,439 | 96.6% | 1,838.6 Mbps |
-| **1400 B** | **147,635** | **88,795** | **97.1%** | **994.5 Mbps** |
-| 4096 B | 134,380 | 82,621 | 99.1% | 2,707.3 Mbps |
-| 8192 B | 214,750 | 97,852 | 72.9% | 6,412.0 Mbps |
-
-**1400 B is the WireGuard MTU** — the primary payload size for
-real-world VPN traffic.
-
-**Flood PPS** = packets/sec into the relay (TCP ingress).
-**Sink PPS** = packets/sec delivered to the receiving peer
-(the actual relay forwarding rate).
-
-**Internal delivery is 100%** (zero send_drops, xfer_drops,
-slab_exhausts). Apparent sub-100% delivery in the table is
-data in TCP buffers when the sender disconnects — the relay
-forwarded every byte it received (`recv_bytes == send_bytes`).
-The flood client performs a graceful `shutdown(SHUT_WR)` with
-a 500ms drain period, but kernel TCP buffers can still hold
-residual data at high ingress rates.
-
-### Baseline: Tailscale derper (Go)
-
-Apples-to-apples comparison using the same test client, packet
-sizes, and methodology. Tailscale derper v1.96 (`derper -dev`),
-same loopback TCP path.
-
-| Payload | TS Sink PPS | HD Sink PPS | TS Delivery | HD Internal | HD/TS |
-|--------:|------------:|------------:|------------:|------------:|------:|
-| 64 B | 362,894 | 83,764 | 66.1% | 100% | 0.23x |
-| 128 B | 501,257 | 93,739 | 58.4% | 100% | 0.19x |
-| 256 B | 386,948 | 107,999 | 50.7% | 100% | 0.28x |
-| 512 B | 314,987 | 159,665 | 44.1% | 100% | 0.51x |
-| 1024 B | 208,012 | 224,439 | 37.2% | 100% | **1.08x** |
-| **1400 B** | **160,418** | **88,795** | **33.3%** | **100%** | **0.55x** |
-| 4096 B | 62,336 | 82,621 | 28.8% | 100% | **1.33x** |
-| 8192 B | 54,694 | 97,852 | 47.1% | 100% | **1.79x** |
-
-**Key findings:**
-
-- **Zero internal drops** at all packet sizes. The relay
-  forwards every byte it receives (`recv_bytes == send_bytes`).
-  SEND_ZC ENOMEM errors are handled as backoff (like EAGAIN),
-  preserving TCP backpressure without packet loss.
-- **Small packets (64-256B):** Tailscale derper delivers 3-4x
-  higher sink PPS but drops 34-50% of injected packets.
-- **1 KB crossover:** Hyper-DERP matches or exceeds Tailscale
-  at 1024B (224K vs 208K sink PPS).
-- **WireGuard MTU (1400B):** Tailscale delivers 1.8x higher
-  sink PPS but drops 67% of traffic. Hyper-DERP has zero
-  internal drops.
-- **Large packets (4-8KB):** Hyper-DERP wins by 1.3-1.8x —
-  io_uring zero-copy send advantage.
-- **Delivery guarantee:** Hyper-DERP has zero internal drops
-  at all sizes. Tailscale drops proportionally more as flood
-  rate increases.
-
-### Comparison with NetBird relay
-
-Numbers from the NetBird relay prototype, tested on bare metal
-i5-13600KF, Linux 6.12, loopback. NetBird C data plane benchmarks
-use **socketpairs** (in-process, no TCP stack); Hyper-DERP
-measures end-to-end over real TCP connections.
-
-| Implementation | 1 KB | 1400 B (WG MTU) | 8 KB | Notes |
-|----------------|-----:|----------------:|-----:|-------|
-| NB Go WebSocket (10p) | 1,287 | — | 2,829 | Baseline, MB/s |
-| NB Raw TCP (10p) | 1,324 | — | 4,036 | +43% over WS |
-| NB TCP+kTLS (50p) | 1,234 | — | 5,589 | Kernel AES-GCM |
-| NB C DP epoll 8w (10p) | 6,505 | — | 18,639 | socketpair, no TCP |
-| NB C DP io_uring 8w (50p) | 7,936 | — | 21,488 | socketpair, no TCP |
-| TS derper (1p, TCP) | 208 | 224 | 448 | Real TCP, Go, loopback |
-| **Hyper-DERP 2w (1p, TCP)** | **224** | **124** | **801** | Real TCP, 0 drops, loopback |
-
-The NetBird C data plane numbers are not directly comparable:
-they benchmark internal forwarding via socketpairs with multiple
-concurrent writer goroutines (10-50 pairs), which eliminates TCP
-stack overhead and benefits from sender-side parallelism.
-
-**What the numbers show:**
-
-- **8 KB / 1 pair = 6.4 Gbps** through real TCP — above the
-  NB Go WebSocket peak of 2.8 GB/s (10 pairs) and comparable
-  to NB Go+kTLS (5.6 GB/s at 50 pairs).
-- **1 KB crossover:** Hyper-DERP matches Tailscale derper at
-  1024B (224 vs 208 MB/s) with zero drops vs 63% loss.
-- At large packets, Hyper-DERP outperforms Tailscale derper
-  (Go) by 1.3-1.8x despite using only 2 workers.
-- At small packets, Tailscale's Go runtime delivers higher
-  PPS at the cost of significant packet loss.
-- The gap to the NB C data plane io_uring numbers (21.5 GB/s)
-  reflects the socketpair-vs-TCP measurement difference and the
-  multi-pair parallelism advantage. Scaling Hyper-DERP to 8
-  workers with multiple pairs is the next step.
-
-### Key tuning parameters
-
-Defined in `include/hyper_derp/types.h`:
-
-| Constant | Value | Purpose |
-|----------|------:|---------|
-| `kMaxSendsInflight` | 512 | Per-peer io_uring send parallelism |
-| `kXferRingSize` | 65,536 | Cross-shard MPSC ring capacity |
-| `kSlabSize` | 65,536 | Per-worker SendItem pool |
-| `kUringQueueDepth` | 4,096 | io_uring SQ/CQ depth |
-| `kZcThreshold` | 1,024 | Frames below this use regular send |
-
-Frames <= `kZcThreshold` bytes skip `SEND_ZC` to avoid the
-extra notification CQE, halving per-packet kernel overhead for
-small packets.
-
-### Reproducing
-
-```sh
-# Start relay with pinned workers
-./build/hyper-derp --port 3340 --workers 2 --pin-workers 0,1 &
-
-# Start sink (receiver)
-./build/tools/derp-test-client --host 127.0.0.1 --port 3340 \
-  --mode sink --duration 18 --size 1024 > /tmp/sk.txt &
-sleep 2
-
-# Start flood (sender), pipe sink's key via stdin
-cat /tmp/sk.txt | taskset -c 3 \
-  ./build/tools/derp-test-client --host 127.0.0.1 --port 3340 \
-  --mode flood --duration 10 --size 1024
-```
-
-### Latency measurement
-
-```sh
-# Start echo peer
-./build/tools/derp-test-client --host 127.0.0.1 --port 3340 \
-  --mode echo --count 10000 > /tmp/echo.txt &
-sleep 1
-
-# Ping with RTT recording
-cat /tmp/echo.txt | ./build/tools/derp-test-client \
-  --host 127.0.0.1 --port 3340 \
-  --mode ping --count 10000 --size 64 \
-  --json --raw-latency --output result.json
-```
-
-### Analysis
-
-```sh
-# Summary table
-python3 tools/plot_results.py result.json
-
-# Latency CDF + histogram
-python3 tools/plot_results.py --cdf --hist result.json
-
-# All plots, saved to directory
-python3 tools/plot_results.py --all-plots --save-dir ./plots result.json
-
-# Export to CSV
-python3 tools/plot_results.py --csv results.csv result.json
-```
+Full reports: `bench_results/gcp-c4-phase-b/REPORT.md`,
+`bench_results/aws-c7i-phase-b/REPORT.md`
 
 ## License
 
-Private — all rights reserved.
+MIT
