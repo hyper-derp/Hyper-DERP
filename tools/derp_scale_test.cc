@@ -133,21 +133,32 @@ static void* SenderThread(void* arg) {
       int total = 0;
       bool ok = true;
       while (total < frame_len) {
-        int w = write(s->client.fd, frame + total,
-                      frame_len - total);
-        if (w < 0) {
-          if (errno == EINTR) continue;
-          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        int w;
+        if (s->client.ssl) {
+          w = SSL_write(s->client.ssl, frame + total,
+                        frame_len - total);
+          if (w <= 0) {
             ta->result.send_errors++;
             ok = false;
             break;
           }
-          ok = false;
-          break;
-        }
-        if (w == 0) {
-          ok = false;
-          break;
+        } else {
+          w = write(s->client.fd, frame + total,
+                    frame_len - total);
+          if (w < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+              ta->result.send_errors++;
+              ok = false;
+              break;
+            }
+            ok = false;
+            break;
+          }
+          if (w == 0) {
+            ok = false;
+            break;
+          }
         }
         total += w;
       }
@@ -208,20 +219,32 @@ static void* ReceiverThread(void* arg) {
 }
 
 static bool ConnectPeer(PeerState* p) {
-  if (!ClientConnect(&p->client, g_host, g_port)) {
+  auto conn = ClientConnect(&p->client, g_host, g_port);
+  if (!conn) {
+    fprintf(stderr, "    connect: %s\n",
+            conn.error().message.c_str());
     return false;
   }
   if (g_use_tls) {
-    if (!ClientTlsConnect(&p->client)) {
+    auto tls = ClientTlsConnect(&p->client);
+    if (!tls) {
+      fprintf(stderr, "    tls: %s\n",
+              tls.error().message.c_str());
       ClientClose(&p->client);
       return false;
     }
   }
-  if (!ClientUpgrade(&p->client)) {
+  auto upgrade = ClientUpgrade(&p->client);
+  if (!upgrade) {
+    fprintf(stderr, "    upgrade: %s\n",
+            upgrade.error().message.c_str());
     ClientClose(&p->client);
     return false;
   }
-  if (!ClientHandshake(&p->client)) {
+  auto hs = ClientHandshake(&p->client);
+  if (!hs) {
+    fprintf(stderr, "    handshake: %s\n",
+            hs.error().message.c_str());
     ClientClose(&p->client);
     return false;
   }

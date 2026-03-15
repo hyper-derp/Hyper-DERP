@@ -174,8 +174,14 @@ auto ClientTlsConnect(DerpClient* c)
   }
 
   SSL_set_fd(ssl, c->fd);
-  // Set SNI for servers that require it (e.g. Go's TLS).
-  SSL_set_tlsext_host_name(ssl, c->host.c_str());
+  // Go's TLS requires SNI matching the cert's CN. When the
+  // host is an IP, use the default DERP hostname instead.
+  const char* sni = c->host.c_str();
+  if (!c->host.empty() &&
+      c->host[0] >= '0' && c->host[0] <= '9') {
+    sni = "derp.tailscale.com";
+  }
+  SSL_set_tlsext_host_name(ssl, sni);
   int ret = SSL_connect(ssl);
   if (ret != 1) {
     char buf[256];
