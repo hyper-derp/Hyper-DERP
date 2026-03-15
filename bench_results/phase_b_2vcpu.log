@@ -1,0 +1,228 @@
+/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+[21:33:44] Phase B — kTLS Full Sweep
+[21:33:44] Output: /tmp/bench_phase_b
+[21:33:44] Configs: 16/8/4/2 vCPU (starting at 2)
+[21:33:44] 
+[21:33:44] Skipping 16 vCPU (--start-at 2)
+[21:33:44] Skipping 8 vCPU (--start-at 2)
+[21:33:44] Skipping 4 vCPU (--start-at 2)
+[21:33:44] 
+[21:33:44] ============================================
+[21:33:44]   Config: 2 vCPU / 1 workers
+[21:33:44] ============================================
+[21:33:45]   certs generated in /tmp/bench_certs
+[21:33:46]   [relay] starting TS derper (TLS, -certmode manual)...
+[21:33:52]   TS derper started on :3340
+[21:33:52]   TS TLS ceiling probe...
+[21:34:43]     probe 500 Mbps: avg loss 0.0%
+[21:35:35]     probe 1000 Mbps: avg loss 0.0%
+[21:36:27]     probe 1500 Mbps: avg loss 1.3%
+[21:37:18]     probe 2000 Mbps: avg loss 17.4%
+[21:37:18]   TS TLS ceiling: 1500 Mbps
+[21:37:19]   ts rate sweep...
+[21:37:19]     500 Mbps (5 runs)...
+    434 Mbps (CV 0.1%), loss 0.0%
+[21:38:47]     1000 Mbps (5 runs)...
+    868 Mbps (CV 0.1%), loss 0.0%
+[21:40:14]     1500 Mbps (5 runs)...
+    1287 Mbps (CV 0.1%), loss 1.2%
+[21:41:42]     2000 Mbps (25 runs)...
+    1448 Mbps (CV 0.4%), loss 16.6%
+[21:48:53]     3000 Mbps (25 runs)...
+    432 Mbps (CV 2.0%), loss 83.4%
+[21:56:05]     5000 Mbps (25 runs)...
+    252 Mbps (CV 3.1%), loss 93.0%
+[22:03:17]     7500 Mbps (25 runs)...
+    258 Mbps (CV 3.5%), loss 92.9%
+[22:10:31]   ts latency suite...
+[22:10:31]     idle (bg=0 Mbps, 10 runs)
+[22:10:31]     ts_idle run 01/10
+[22:10:35]     ts_idle run 02/10
+[22:10:39]     ts_idle run 03/10
+[22:10:43]     ts_idle run 04/10
+[22:10:47]     ts_idle run 05/10
+[22:10:51]     ts_idle run 06/10
+[22:10:55]     ts_idle run 07/10
+[22:10:59]     ts_idle run 08/10
+[22:11:03]     ts_idle run 09/10
+[22:11:07]     ts_idle run 10/10
+[22:11:11]     ceil25 (bg=300 Mbps, 10 runs)
+[22:11:11]     ts_ceil25 run 01/10
+[22:11:18]     ts_ceil25 run 02/10
+[22:11:24]     ts_ceil25 run 03/10
+[22:11:30]     ts_ceil25 run 04/10
+[22:11:36]     ts_ceil25 run 05/10
+[22:11:42]     ts_ceil25 run 06/10
+[22:11:48]     ts_ceil25 run 07/10
+[22:11:54]     ts_ceil25 run 08/10
+[22:12:00]     ts_ceil25 run 09/10
+[22:12:06]     ts_ceil25 run 10/10
+[22:12:12]     ceil50 (bg=700 Mbps, 10 runs)
+[22:12:12]     ts_ceil50 run 01/10
+[22:12:19]     ts_ceil50 run 02/10
+[22:12:25]     ts_ceil50 run 03/10
+[22:12:31]     ts_ceil50 run 04/10
+[22:12:37]     ts_ceil50 run 05/10
+[22:12:44]     ts_ceil50 run 06/10
+[22:12:50]     ts_ceil50 run 07/10
+[22:12:56]     ts_ceil50 run 08/10
+[22:13:03]     ts_ceil50 run 09/10
+[22:13:09]     ts_ceil50 run 10/10
+[22:13:15]     ceil75 (bg=1100 Mbps, 10 runs)
+[22:13:15]     ts_ceil75 run 01/10
+[22:13:22]     ts_ceil75 run 02/10
+[22:13:29]     ts_ceil75 run 03/10
+[22:13:36]     ts_ceil75 run 04/10
+[22:13:43]     ts_ceil75 run 05/10
+[22:13:49]     ts_ceil75 run 06/10
+[22:13:56]     ts_ceil75 run 07/10
+[22:14:03]     ts_ceil75 run 08/10
+[22:14:10]     ts_ceil75 run 09/10
+[22:14:17]     ts_ceil75 run 10/10
+[22:14:23]     ceil100 (bg=1500 Mbps, 15 runs)
+[22:14:23]     ts_ceil100 run 01/15
+[22:14:31]     ts_ceil100 run 02/15
+[22:14:39]     ts_ceil100 run 03/15
+[22:14:46]     ts_ceil100 run 04/15
+[22:14:54]     ts_ceil100 run 05/15
+[22:15:02]     ts_ceil100 run 06/15
+[22:15:09]     ts_ceil100 run 07/15
+[22:15:17]     ts_ceil100 run 08/15
+[22:15:25]     ts_ceil100 run 09/15
+[22:15:32]     ts_ceil100 run 10/15
+[22:15:40]     ts_ceil100 run 11/15
+[22:15:48]     ts_ceil100 run 12/15
+[22:15:55]     ts_ceil100 run 13/15
+[22:16:03]     ts_ceil100 run 14/15
+[22:16:10]     ts_ceil100 run 15/15
+[22:16:18]     ceil150 (bg=2200 Mbps, 15 runs)
+[22:16:18]     ts_ceil150 run 01/15
+[22:16:32]     ts_ceil150 run 02/15
+[22:16:47]     ts_ceil150 run 03/15
+[22:17:02]     ts_ceil150 run 04/15
+[22:17:16]     ts_ceil150 run 05/15
+[22:17:31]     ts_ceil150 run 06/15
+[22:17:46]     ts_ceil150 run 07/15
+[22:18:00]     ts_ceil150 run 08/15
+[22:18:15]     ts_ceil150 run 09/15
+[22:18:29]     ts_ceil150 run 10/15
+[22:18:44]     ts_ceil150 run 11/15
+[22:18:59]     ts_ceil150 run 12/15
+[22:19:13]     ts_ceil150 run 13/15
+[22:19:28]     ts_ceil150 run 14/15
+[22:19:43]     ts_ceil150 run 15/15
+[22:19:59]   TS GC trace at 1500 Mbps...
+[22:20:28]   GC trace done
+[22:20:28]   TS GOGC=off at 1500 Mbps...
+[22:20:56]   GOGC=off done
+[22:21:11]   [relay] starting HD kTLS (workers=1)...
+/tmp/run_phase_b.sh: line 164: [: 0
+0: integer expression expected
+[22:21:17]   kTLS confirmed active
+[22:21:17]   HD kTLS started on :3341
+[22:21:17]   hd rate sweep...
+[22:21:17]     500 Mbps (5 runs)...
+    434 Mbps (CV 0.1%), loss 0.0%
+[22:22:45]     1000 Mbps (5 runs)...
+    868 Mbps (CV 0.1%), loss 0.0%
+[22:24:13]     1500 Mbps (5 runs)...
+    1303 Mbps (CV 0.1%), loss 0.0%
+[22:25:41]     2000 Mbps (25 runs)...
+    1736 Mbps (CV 0.1%), loss 0.0%
+[22:32:52]     3000 Mbps (25 runs)...
+    2491 Mbps (CV 6.3%), loss 0.3%
+[22:40:06]     5000 Mbps (25 runs)...
+    2977 Mbps (CV 5.3%), loss 2.8%
+[22:47:17]     7500 Mbps (25 runs)...
+    2962 Mbps (CV 8.5%), loss 4.9%
+[22:54:33]   hd latency suite...
+[22:54:33]     idle (bg=0 Mbps, 10 runs)
+[22:54:33]     hd_idle run 01/10
+[22:54:36]     hd_idle run 02/10
+[22:54:40]     hd_idle run 03/10
+[22:54:44]     hd_idle run 04/10
+[22:54:48]     hd_idle run 05/10
+[22:54:52]     hd_idle run 06/10
+[22:54:56]     hd_idle run 07/10
+[22:55:00]     hd_idle run 08/10
+[22:55:04]     hd_idle run 09/10
+[22:55:08]     hd_idle run 10/10
+[22:55:11]     ceil25 (bg=300 Mbps, 10 runs)
+[22:55:11]     hd_ceil25 run 01/10
+[22:55:17]     hd_ceil25 run 02/10
+[22:55:23]     hd_ceil25 run 03/10
+[22:55:29]     hd_ceil25 run 04/10
+[22:55:35]     hd_ceil25 run 05/10
+[22:55:41]     hd_ceil25 run 06/10
+[22:55:47]     hd_ceil25 run 07/10
+[22:55:53]     hd_ceil25 run 08/10
+[22:55:59]     hd_ceil25 run 09/10
+[22:56:05]     hd_ceil25 run 10/10
+[22:56:11]     ceil50 (bg=700 Mbps, 10 runs)
+[22:56:11]     hd_ceil50 run 01/10
+[22:56:17]     hd_ceil50 run 02/10
+[22:56:23]     hd_ceil50 run 03/10
+[22:56:30]     hd_ceil50 run 04/10
+[22:56:36]     hd_ceil50 run 05/10
+[22:56:42]     hd_ceil50 run 06/10
+[22:56:48]     hd_ceil50 run 07/10
+[22:56:54]     hd_ceil50 run 08/10
+[22:57:00]     hd_ceil50 run 09/10
+[22:57:06]     hd_ceil50 run 10/10
+[22:57:12]     ceil75 (bg=1100 Mbps, 10 runs)
+[22:57:12]     hd_ceil75 run 01/10
+[22:57:19]     hd_ceil75 run 02/10
+[22:57:25]     hd_ceil75 run 03/10
+[22:57:31]     hd_ceil75 run 04/10
+[22:57:37]     hd_ceil75 run 05/10
+[22:57:43]     hd_ceil75 run 06/10
+[22:57:50]     hd_ceil75 run 07/10
+[22:57:56]     hd_ceil75 run 08/10
+[22:58:02]     hd_ceil75 run 09/10
+[22:58:08]     hd_ceil75 run 10/10
+[22:58:15]     ceil100 (bg=1500 Mbps, 15 runs)
+[22:58:15]     hd_ceil100 run 01/15
+[22:58:22]     hd_ceil100 run 02/15
+[22:58:28]     hd_ceil100 run 03/15
+[22:58:35]     hd_ceil100 run 04/15
+[22:58:42]     hd_ceil100 run 05/15
+[22:58:49]     hd_ceil100 run 06/15
+[22:58:56]     hd_ceil100 run 07/15
+[22:59:03]     hd_ceil100 run 08/15
+[22:59:10]     hd_ceil100 run 09/15
+[22:59:17]     hd_ceil100 run 10/15
+[22:59:24]     hd_ceil100 run 11/15
+[22:59:31]     hd_ceil100 run 12/15
+[22:59:37]     hd_ceil100 run 13/15
+[22:59:44]     hd_ceil100 run 14/15
+[22:59:51]     hd_ceil100 run 15/15
+[22:59:58]     ceil150 (bg=2200 Mbps, 15 runs)
+[22:59:58]     hd_ceil150 run 01/15
+[23:00:06]     hd_ceil150 run 02/15
+[23:00:14]     hd_ceil150 run 03/15
+[23:00:22]     hd_ceil150 run 04/15
+[23:00:29]     hd_ceil150 run 05/15
+[23:00:37]     hd_ceil150 run 06/15
+[23:00:45]     hd_ceil150 run 07/15
+[23:00:53]     hd_ceil150 run 08/15
+[23:01:01]     hd_ceil150 run 09/15
+[23:01:09]     hd_ceil150 run 10/15
+[23:01:16]     hd_ceil150 run 11/15
+[23:01:24]     hd_ceil150 run 12/15
+[23:01:32]     hd_ceil150 run 13/15
+[23:01:40]     hd_ceil150 run 14/15
+[23:01:48]     hd_ceil150 run 15/15
+[23:02:00]   2 vCPU config complete
+[23:02:00] 
+[23:02:00] === Validation: 2 vCPU ===
+  Rate files: 230 valid / 230 total
+  Latency files: 140 valid / 140 total
+  Worker stat files: 3 valid / 3 total
+  tls_stat: TlsCurrTxSw                     	0
+  Validation: PASS
+[23:02:00] 
+[23:02:00] 
+[23:02:00] ==============================
+[23:02:00]   Phase B sweep complete
+[23:02:00] ==============================
+[23:02:00] Results: /tmp/bench_phase_b
