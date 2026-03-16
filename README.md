@@ -20,11 +20,18 @@ Go derper v1.96.1 release build.
 |-----:|--------:|-----------:|------:|--------:|--------:|
 | 2 | 2,977 Mbps | 1,448 Mbps | **11.8x** at 5G | 2.8% | 93.0% |
 | 4 | 5,106 Mbps | 2,395 Mbps | **3.7x** at 7.5G | 0.8% | 74.2% |
-| 8 | 7,621 Mbps | 4,033 Mbps | **2.0x** at 15G | 16.6% | 45.0% |
+| 8 | 7,366 Mbps | 3,802 Mbps | **1.9x** at 10G | 0.4% | 46.1% |
 | 16 | 12,068 Mbps | 7,743 Mbps | **1.6x** at 20G | 1.7% | 18.9% |
 
 The advantage grows as resources shrink. At 2 vCPU, TS drops
 93% of offered traffic at 5 Gbps. HD delivers 3 Gbps.
+
+Loss percentages are measured at the offered rate shown. HD has
+zero internal packet drops at all configurations (no xfer_drops,
+send_drops, or slab_exhausts). Reported loss reflects messages
+in TCP send buffers when the 15-second test window closes — the
+gap between offered rate and relay throughput, not relay packet
+loss.
 
 ### Tail Latency Under Load (p99, at TS TLS ceiling)
 
