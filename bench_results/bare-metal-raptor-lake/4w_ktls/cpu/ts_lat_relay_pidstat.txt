@@ -1,0 +1,343 @@
+Linux 6.12.73+deb13-amd64 (ksys) 	03/17/2026 	_x86_64_	(20 CPU)
+
+02:44:14 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:15 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:14 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:15 PM     0     96337      0.00      0.00 3274384   26784   0.04  derper
+
+02:44:15 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:16 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:15 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:16 PM     0     96337      0.00      0.00 3274384   26784   0.04  derper
+
+02:44:16 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:17 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:16 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:17 PM     0     96337      0.00      0.00 3274384   26784   0.04  derper
+
+02:44:17 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:18 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:17 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:18 PM     0     96337      0.00      0.00 3274384   26784   0.04  derper
+
+02:44:18 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:19 PM     0     96337   17.00   11.00    0.00    0.00   28.00    16  derper
+
+02:44:18 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:19 PM     0     96337    259.00      0.00 3274384   26768   0.04  derper
+
+02:44:19 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:20 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:19 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:20 PM     0     96337      0.00      0.00 3274384   26768   0.04  derper
+
+02:44:20 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:21 PM     0     96337    0.00    1.00    0.00    0.00    1.00    16  derper
+
+02:44:20 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:21 PM     0     96337      0.00      0.00 3274384   26768   0.04  derper
+
+02:44:21 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:22 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:21 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:22 PM     0     96337      0.00      0.00 3274384   26768   0.04  derper
+
+02:44:22 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:23 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:22 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:23 PM     0     96337      0.00      0.00 3274384   26768   0.04  derper
+
+02:44:23 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:24 PM     0     96337    1.00    0.00    0.00    0.00    1.00    16  derper
+
+02:44:23 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:24 PM     0     96337      0.00      0.00 3274384   26768   0.04  derper
+
+02:44:24 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:25 PM     0     96337   11.00   10.00    0.00    0.00   21.00    16  derper
+
+02:44:24 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:25 PM     0     96337    150.00      0.00 3274384   27080   0.04  derper
+
+02:44:25 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:26 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:25 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:26 PM     0     96337      0.00      0.00 3274384   27080   0.04  derper
+
+02:44:26 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:27 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:26 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:27 PM     0     96337      0.00      0.00 3274384   27080   0.04  derper
+
+02:44:27 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:28 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:27 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:28 PM     0     96337      0.00      0.00 3274384   27080   0.04  derper
+
+02:44:28 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:29 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:28 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:29 PM     0     96337      0.00      0.00 3274384   27080   0.04  derper
+
+02:44:29 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:30 PM     0     96337    7.00    6.00    0.00    0.00   13.00    16  derper
+
+02:44:29 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:30 PM     0     96337    108.00      0.00 3274384   26740   0.04  derper
+
+02:44:30 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:31 PM     0     96337    6.00    6.00    0.00    0.00   12.00    16  derper
+
+02:44:30 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:31 PM     0     96337     22.00      0.00 3274384   26740   0.04  derper
+
+02:44:31 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:32 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:31 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:32 PM     0     96337      0.00      0.00 3274384   26740   0.04  derper
+
+02:44:32 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:33 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:32 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:33 PM     0     96337      0.00      0.00 3274384   26740   0.04  derper
+
+02:44:33 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:34 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:33 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:34 PM     0     96337      0.00      0.00 3274384   26740   0.04  derper
+
+02:44:34 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:35 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:34 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:35 PM     0     96337      0.00      0.00 3274384   26740   0.04  derper
+
+02:44:35 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:36 PM     0     96337   16.00   11.00    0.00    0.00   27.00    16  derper
+
+02:44:35 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:36 PM     0     96337     64.00      0.00 3274384   26708   0.04  derper
+
+02:44:36 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:37 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:36 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:37 PM     0     96337      0.00      0.00 3274384   26708   0.04  derper
+
+02:44:37 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:38 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:37 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:38 PM     0     96337      0.00      0.00 3274384   26708   0.04  derper
+
+02:44:38 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:39 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:38 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:39 PM     0     96337      0.00      0.00 3274384   26708   0.04  derper
+
+02:44:39 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:40 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:39 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:40 PM     0     96337      0.00      0.00 3274384   26708   0.04  derper
+
+02:44:40 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:41 PM     0     96337    0.00    1.00    0.00    0.00    1.00    16  derper
+
+02:44:40 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:41 PM     0     96337      0.00      0.00 3274384   26540   0.04  derper
+
+02:44:41 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:42 PM     0     96337    9.00    9.00    0.00    0.00   18.00    16  derper
+
+02:44:41 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:42 PM     0     96337     84.00      0.00 3274384   26700   0.04  derper
+
+02:44:42 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:43 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:42 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:43 PM     0     96337      0.00      0.00 3274384   26700   0.04  derper
+
+02:44:43 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:44 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:43 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:44 PM     0     96337      0.00      0.00 3274384   26700   0.04  derper
+
+02:44:44 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:45 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:44 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:45 PM     0     96337      0.00      0.00 3274384   26700   0.04  derper
+
+02:44:45 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:46 PM     0     96337    0.00    1.00    0.00    0.00    1.00    16  derper
+
+02:44:45 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:46 PM     0     96337      0.00      0.00 3274384   26700   0.04  derper
+
+02:44:46 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:47 PM     0     96337   10.00    7.00    0.00    0.00   17.00    16  derper
+
+02:44:46 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:47 PM     0     96337    118.00      0.00 3274384   26512   0.04  derper
+
+02:44:47 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:48 PM     0     96337    4.00    6.00    0.00    0.00   10.00    16  derper
+
+02:44:47 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:48 PM     0     96337     28.00      0.00 3274384   26512   0.04  derper
+
+02:44:48 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:49 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:48 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:49 PM     0     96337      0.00      0.00 3274384   26512   0.04  derper
+
+02:44:49 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:50 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:49 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:50 PM     0     96337      0.00      0.00 3274384   26512   0.04  derper
+
+02:44:50 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:51 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:50 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:51 PM     0     96337      0.00      0.00 3274384   26512   0.04  derper
+
+02:44:51 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:52 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:51 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:52 PM     0     96337      0.00      0.00 3274384   26512   0.04  derper
+
+02:44:52 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:53 PM     0     96337   15.00   13.00    0.00    0.00   28.00    16  derper
+
+02:44:52 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:53 PM     0     96337     82.00      0.00 3274384   26344   0.04  derper
+
+02:44:53 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:54 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:53 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:54 PM     0     96337      0.00      0.00 3274384   26344   0.04  derper
+
+02:44:54 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:55 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:54 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:55 PM     0     96337      0.00      0.00 3274384   26344   0.04  derper
+
+02:44:55 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:56 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:55 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:56 PM     0     96337      0.00      0.00 3274384   26344   0.04  derper
+
+02:44:56 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:57 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:56 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:57 PM     0     96337      0.00      0.00 3274384   26344   0.04  derper
+
+02:44:57 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:58 PM     0     96337    0.00    1.00    0.00    0.00    1.00    16  derper
+
+02:44:57 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:58 PM     0     96337      0.00      0.00 3274384   26344   0.04  derper
+
+02:44:58 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:44:59 PM     0     96337   16.00    5.00    0.00    0.00   21.00    16  derper
+
+02:44:58 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:44:59 PM     0     96337     68.00      0.00 3274384   26824   0.04  derper
+
+02:44:59 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:00 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:44:59 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:00 PM     0     96337      0.00      0.00 3274384   26824   0.04  derper
+
+02:45:00 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:01 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:00 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:01 PM     0     96337      0.00      0.00 3274384   26824   0.04  derper
+
+02:45:01 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:02 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:01 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:02 PM     0     96337      0.00      0.00 3274384   26824   0.04  derper
+
+02:45:02 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:03 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:02 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:03 PM     0     96337      0.00      0.00 3274384   26824   0.04  derper
+
+02:45:03 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:04 PM     0     96337    9.00    5.00    0.00    0.00   14.00    16  derper
+
+02:45:03 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:04 PM     0     96337     62.00      0.00 3274384   26444   0.04  derper
+
+02:45:04 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:05 PM     0     96337    6.00    5.00    0.00    0.00   11.00    16  derper
+
+02:45:04 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:05 PM     0     96337     32.00      0.00 3274384   26444   0.04  derper
+
+02:45:05 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:06 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:05 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:06 PM     0     96337      0.00      0.00 3274384   26444   0.04  derper
+
+02:45:06 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:07 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:06 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:07 PM     0     96337      0.00      0.00 3274384   26444   0.04  derper
+
+02:45:07 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:08 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:07 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:08 PM     0     96337      0.00      0.00 3274384   26444   0.04  derper
+
+02:45:08 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:09 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:08 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:09 PM     0     96337      0.00      0.00 3274384   26444   0.04  derper
+
+02:45:09 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:10 PM     0     96337   15.00    9.00    0.00    0.00   24.00    16  derper
+
+02:45:09 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:10 PM     0     96337     87.00      0.00 3274384   26432   0.04  derper
+
+02:45:10 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+02:45:11 PM     0     96337    0.00    0.00    0.00    0.00    0.00    16  derper
+
+02:45:10 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+02:45:11 PM     0     96337      0.00      0.00 3274384   26432   0.04  derper

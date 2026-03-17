@@ -1,0 +1,21 @@
+test: bare_metal_swapped_ktls
+date: 2026-03-17T14:45:52Z
+config: 8w
+workers: 8
+relay: 10.50.0.2 (local, Raptor Lake)
+client: hd-test01 (Haswell)
+peers: 20
+pairs: 10
+duration: 15s
+size: 1400B
+runs_low: 5
+runs_high: 25
+ping_count: 5000
+ping_warmup: 500
+relay_kernel: 6.12.73+deb13-amd64
+relay_cpu: 13th Gen Intel(R) Core(TM) i5-13600KF
+hyper-derp 0.1.0
+client_kernel: 6.12.74+deb13+1-amd64
+client_cpu: Intel(R) Xeon(R) CPU E5-1650 v3 @ 3.50GHz
+tls                   151552  0
+relay_nic_speed: unknown

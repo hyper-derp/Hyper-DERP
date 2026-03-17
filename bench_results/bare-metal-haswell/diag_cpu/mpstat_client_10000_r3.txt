@@ -1,0 +1,1 @@
+./tools/run_diag_cpu.sh: line 85: mpstat: command not found

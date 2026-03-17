@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-03-17T12:11:44Z",
+  "relay": "hyper-derp",
+  "total_peers": 20,
+  "connected_peers": 20,
+  "connect_failed": 0,
+  "connect_time_ms": 112.1,
+  "active_pairs": 10,
+  "duration_sec": 15,
+  "message_size": 1400,
+  "rate_mbps": 25000.0,
+  "messages_sent": 11329591,
+  "messages_recv": 10464097,
+  "message_loss_pct": 7.6392,
+  "send_errors": 91,
+  "throughput_mbps": 7193.7
+}
