@@ -1,0 +1,1856 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 671K of event 'cycles:P'
+# Event count (approx.): 475401078907
+#
+# Overhead  Command  Shared Object      Symbol                                                                                              
+# ........  .......  .................  ....................................................................................................
+#
+     3.98%  derper   derper             [.] crypto/internal/fips140/aes/gcm.gcmAesDec.abi0
+            |          
+             --3.93%--crypto/internal/fips140/aes/gcm.gcmAesDec.abi0
+                       crypto/internal/fips140/aes/gcm.open
+                       |          
+                        --3.93%--crypto/internal/fips140/aes/gcm.(*GCM).Open
+                                  |          
+                                   --3.93%--crypto/internal/fips140/aes/gcm.(*GCMWithXORCounterNonce).Open
+                                             |          
+                                              --3.93%--crypto/tls.(*xorNonceAEAD).Open
+                                                        |          
+                                                         --3.93%--crypto/tls.(*halfConn).decrypt
+                                                                   |          
+                                                                    --3.93%--crypto/tls.(*Conn).readRecordOrCCS
+                                                                              |          
+                                                                               --3.62%--crypto/tls.(*Conn).Read
+                                                                                         |          
+                                                                                          --3.62%--net/http.(*connReader).Read
+                                                                                                    |          
+                                                                                                     --3.62%--bufio.(*Reader).fill
+                                                                                                               |          
+                                                                                                                --3.61%--bufio.(*Reader).ReadByte
+                                                                                                                          |          
+                                                                                                                           --3.61%--tailscale.com/derp.ReadFrameHeader
+                                                                                                                                     |          
+                                                                                                                                      --2.45%--tailscale.com/derp/derpserver.(*sclient).run
+
+     3.50%  derper   derper             [.] crypto/internal/fips140/aes/gcm.gcmAesEnc.abi0
+            |          
+             --3.48%--crypto/internal/fips140/aes/gcm.gcmAesEnc.abi0
+                       crypto/internal/fips140/aes/gcm.seal
+                       |          
+                        --3.48%--crypto/internal/fips140/aes/gcm.(*GCM).sealAfterIndicator
+                                  |          
+                                   --3.48%--crypto/internal/fips140/aes/gcm.(*GCMWithXORCounterNonce).Seal
+                                             |          
+                                              --3.48%--crypto/tls.(*xorNonceAEAD).Seal
+                                                        |          
+                                                         --3.48%--crypto/tls.(*halfConn).encrypt
+                                                                   |          
+                                                                    --3.47%--crypto/tls.(*Conn).writeRecordLocked
+                                                                              |          
+                                                                               --3.47%--crypto/tls.(*Conn).Write
+                                                                                         |          
+                                                                                          --3.47%--bufio.(*Writer).Flush
+                                                                                                    |          
+                                                                                                     --3.31%--bufio.(*Writer).Write
+                                                                                                               |          
+                                                                                                                --3.31%--tailscale.com/derp/derpserver.(*lazyBufioWriter).Write
+                                                                                                                          |          
+                                                                                                                           --3.31%--tailscale.com/derp/derpserver.(*sclient).sendPacket
+                                                                                                                                     |          
+                                                                                                                                      --3.30%--tailscale.com/derp/derpserver.(*sclient).sendLoop
+                                                                                                                                                |          
+                                                                                                                                                 --1.59%--runtime.park_m
+
+     1.67%  derper   [kernel.kallsyms]  [k] entry_SYSRETQ_unsafe_stack
+            |          
+             --1.53%--entry_SYSRETQ_unsafe_stack
+                       |          
+                        --1.21%--internal/runtime/syscall/linux.Syscall6
+                                  |          
+                                   --1.15%--syscall.RawSyscall6
+                                             syscall.Syscall
+                                             |          
+                                              --0.68%--syscall.write
+                                                        |          
+                                                         --0.68%--internal/poll.(*FD).Write
+                                                                   |          
+                                                                    --0.68%--net.(*netFD).Write
+                                                                              net.(*conn).Write
+                                                                              crypto/tls.(*Conn).write
+                                                                              |          
+                                                                               --0.68%--crypto/tls.(*Conn).writeRecordLocked
+                                                                                         |          
+                                                                                          --0.68%--crypto/tls.(*Conn).Write
+                                                                                                    |          
+                                                                                                     --0.68%--bufio.(*Writer).Flush
+                                                                                                               |          
+                                                                                                                --0.63%--bufio.(*Writer).Write
+                                                                                                                          |          
+                                                                                                                           --0.63%--tailscale.com/derp/derpserver.(*lazyBufioWriter).Write
+                                                                                                                                     tailscale.com/derp/derpserver.(*sclient).sendPacket
+                                                                                                                                     |          
+                                                                                                                                      --0.63%--tailscale.com/derp/derpserver.(*sclient).sendLoop
+
+     1.65%  derper   derper             [.] runtime.memmove
+            |          
+             --1.54%--runtime.memmove
+                       |          
+                        --0.52%--bufio.(*Writer).Write
+                                  |          
+                                   --0.51%--tailscale.com/derp/derpserver.(*lazyBufioWriter).Write
+                                             tailscale.com/derp/derpserver.(*sclient).sendPacket
+                                             |          
+                                              --0.51%--tailscale.com/derp/derpserver.(*sclient).sendLoop
+
+     1.55%  derper   derper             [.] runtime.selectgo
+            |          
+             --1.44%--runtime.selectgo
+                       tailscale.com/derp/derpserver.(*sclient).sendLoop
+                       |          
+                        --0.69%--runtime.park_m
+
+     1.37%  derper   derper             [.] runtime.tryDeferToSpanScan
+            |          
+             --1.32%--runtime.tryDeferToSpanScan
+
+     1.29%  derper   derper             [.] runtime.mallocgcSmallScanNoHeader
+            |          
+             --1.20%--runtime.mallocgcSmallScanNoHeader
+                       runtime.mallocgc
+                       |          
+                        --0.90%--runtime.newobject
+
+     1.24%  derper   [kernel.kallsyms]  [k] rep_movs_alternative
+            |          
+             --1.23%--rep_movs_alternative
+                       |          
+                        --0.85%--_copy_to_iter
+                                  __skb_datagram_iter
+                                  |          
+                                   --0.84%--skb_copy_datagram_iter
+                                             tcp_recvmsg_locked
+                                             tcp_recvmsg
+                                             inet6_recvmsg
+                                             sock_recvmsg
+                                             sock_read_iter
+                                             vfs_read
+                                             ksys_read
+                                             do_syscall_64
+                                             entry_SYSCALL_64_after_hwframe
+                                             internal/runtime/syscall/linux.Syscall6
+                                             syscall.RawSyscall6
+                                             syscall.Syscall
+                                             |          
+                                              --0.83%--syscall.read
+                                                        |          
+                                                         --0.83%--internal/poll.(*FD).Read
+                                                                   |          
+                                                                    --0.68%--net.(*netFD).Read
+                                                                              net.(*conn).Read
+                                                                              |          
+                                                                               --0.68%--crypto/tls.(*atLeastReader).Read
+                                                                                         bytes.(*Buffer).ReadFrom
+                                                                                         |          
+                                                                                          --0.68%--crypto/tls.(*Conn).readFromUntil
+                                                                                                    |          
+                                                                                                     --0.68%--crypto/tls.(*Conn).readRecordOrCCS
+                                                                                                               |          
+                                                                                                                --0.68%--crypto/tls.(*Conn).Read
+                                                                                                                          |          
+                                                                                                                           --0.68%--net/http.(*connReader).Read
+                                                                                                                                     |          
+                                                                                                                                      --0.67%--bufio.(*Reader).fill
+                                                                                                                                                |          
+                                                                                                                                                 --0.67%--bufio.(*Reader).ReadByte
+                                                                                                                                                           |          
+                                                                                                                                                            --0.67%--tailscale.com/derp.ReadFrameHeader
+
+     1.08%  derper   [kernel.kallsyms]  [k] native_queued_spin_lock_slowpath
+            |          
+             --1.08%--native_queued_spin_lock_slowpath
+                       |          
+                        --0.60%--_raw_spin_lock_bh
+                                  |          
+                                   --0.59%--lock_sock_nested
+
+     0.97%  derper   derper             [.] bufio.(*Reader).ReadByte
+            |          
+             --0.95%--bufio.(*Reader).ReadByte
+                       |          
+                        --0.74%--tailscale.com/types/key.(*NodePublic).ReadRawWithoutAllocating
+                                  |          
+                                   --0.74%--tailscale.com/derp/derpserver.(*Server).recvPacket
+                                             tailscale.com/derp/derpserver.(*sclient).handleFrameSendPacket
+                                             tailscale.com/derp/derpserver.(*sclient).run
+
+     0.84%  derper   derper             [.] runtime.unlock2
+            |          
+             --0.80%--runtime.unlock2
+
+     0.84%  derper   [kernel.kallsyms]  [k] __irqentry_text_end
+            |          
+             --0.83%--__irqentry_text_end
+
+     0.74%  derper   derper             [.] runtime.mallocgc
+            |          
+             --0.65%--runtime.mallocgc
+
+     0.72%  derper   derper             [.] bufio.(*Writer).WriteByte
+            |          
+             --0.64%--bufio.(*Writer).WriteByte
+
+     0.68%  derper   derper             [.] runtime.scanObjectsSmall
+            |          
+             --0.66%--runtime.scanObjectsSmall
+                       runtime.scanSpan
+
+     0.67%  derper   derper             [.] runtime.lock2
+            |          
+             --0.59%--runtime.lock2
+
+     0.66%  derper   derper             [.] runtime.scanblock
+            |          
+             --0.63%--runtime.scanblock
+
+     0.66%  derper   [vdso]             [.] __vdso_clock_gettime
+            |          
+             --0.63%--__vdso_clock_gettime
+
+     0.63%  derper   [kernel.kallsyms]  [k] entry_SYSCALL_64
+            |          
+             --0.53%--entry_SYSCALL_64
+
+     0.60%  derper   [kernel.kallsyms]  [k] native_flush_tlb_one_user
+            |          
+             --0.60%--native_flush_tlb_one_user
+                       flush_tlb_func
+                       |          
+                        --0.54%--__flush_smp_call_function_queue
+                                  __sysvec_call_function
+                                  sysvec_call_function
+                                  asm_sysvec_call_function
+
+     0.60%  derper   [kernel.kallsyms]  [k] __tcp_transmit_skb
+            |          
+             --0.57%--__tcp_transmit_skb
+
+     0.60%  derper   [kernel.kallsyms]  [k] syscall_return_via_sysret
+            |          
+             --0.59%--syscall_return_via_sysret
+
+     0.59%  derper   derper             [.] runtime.gcmarknewobject
+            |          
+             --0.59%--runtime.gcmarknewobject
+
+     0.58%  derper   [kernel.kallsyms]  [k] _raw_spin_lock
+            |          
+             --0.57%--_raw_spin_lock
+
+     0.56%  derper   [kernel.kallsyms]  [k] tcp_ack
+            |          
+             --0.54%--tcp_ack
+                       tcp_rcv_established
+                       tcp_v4_do_rcv
+
+     0.56%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).sendPacket
+            |          
+             --0.51%--tailscale.com/derp/derpserver.(*sclient).sendPacket
+                       tailscale.com/derp/derpserver.(*sclient).sendLoop
+
+     0.55%  derper   [kernel.kallsyms]  [k] mlx5_eq_comp_int
+            |          
+             --0.55%--mlx5_eq_comp_int
+                       notifier_call_chain
+                       atomic_notifier_call_chain
+                       irq_int_handler
+                       __handle_irq_event_percpu
+                       handle_irq_event
+                       handle_edge_irq
+                       __common_interrupt
+                       common_interrupt
+                       asm_common_interrupt
+
+     0.55%  derper   derper             [.] runtime.findObject
+            |          
+             --0.55%--runtime.findObject
+
+     0.54%  derper   [kernel.kallsyms]  [k] tcp_sendmsg_locked
+            |          
+             --0.52%--tcp_sendmsg_locked
+                       tcp_sendmsg
+                       sock_write_iter
+                       vfs_write
+                       ksys_write
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       internal/runtime/syscall/linux.Syscall6
+                       syscall.RawSyscall6
+                       syscall.Syscall
+                       |          
+                        --0.50%--syscall.write
+                                  internal/poll.(*FD).Write
+                                  |          
+                                   --0.50%--net.(*netFD).Write
+                                             net.(*conn).Write
+                                             crypto/tls.(*Conn).write
+
+     0.51%  derper   derper             [.] runtime.pcvalue
+     0.50%  derper   derper             [.] runtime.mallocgcSmallNoscan
+     0.49%  derper   derper             [.] crypto/tls.(*Conn).readRecordOrCCS
+     0.47%  derper   [kernel.kallsyms]  [k] tasklet_action_common
+     0.46%  derper   derper             [.] runtime.mallocgcTiny
+     0.46%  derper   [kernel.kallsyms]  [k] pfn_to_dma_pte
+     0.43%  derper   [kernel.kallsyms]  [k] _raw_spin_lock_irqsave
+     0.42%  derper   derper             [.] runtime.(*mspan).writeHeapBitsSmall
+     0.42%  derper   derper             [.] runtime.memclrNoHeapPointers
+     0.41%  derper   [kernel.kallsyms]  [k] intel_iommu_map_pages
+     0.40%  derper   [kernel.kallsyms]  [k] mlx5e_skb_from_cqe_linear
+     0.40%  derper   derper             [.] runtime.step
+     0.39%  derper   [kernel.kallsyms]  [k] kmem_cache_free
+     0.39%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).recordQueueTime
+     0.39%  derper   [kernel.kallsyms]  [k] dev_gro_receive
+     0.38%  derper   [kernel.kallsyms]  [k] tcp_write_xmit
+     0.38%  derper   [kernel.kallsyms]  [k] mlx5e_poll_tx_cq
+     0.37%  derper   [kernel.kallsyms]  [k] kmem_cache_alloc_node_noprof
+     0.36%  derper   [kernel.kallsyms]  [k] memset_orig
+     0.36%  derper   derper             [.] tailscale.com/derp/derpserver.(*Server).recvPacket
+     0.36%  derper   [kernel.kallsyms]  [k] __check_object_size
+     0.34%  derper   derper             [.] crypto/internal/fips140/aes/gcm.open
+     0.34%  derper   derper             [.] runtime.scanObject
+     0.34%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).handleFrameSendPacket
+     0.34%  derper   [kernel.kallsyms]  [k] mlx5e_xmit
+     0.33%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).sendPacket.func1
+     0.33%  derper   [kernel.kallsyms]  [k] clear_page_erms
+     0.33%  derper   derper             [.] runtime.wbBufFlush1
+     0.32%  derper   [kernel.kallsyms]  [k] native_irq_return_iret
+     0.32%  derper   [kernel.kallsyms]  [k] __mod_memcg_state
+     0.31%  derper   [kernel.kallsyms]  [k] dma_pte_clear_level
+     0.31%  derper   derper             [.] tailscale.com/types/key.(*NodePublic).ReadRawWithoutAllocating
+     0.31%  derper   derper             [.] crypto/tls.(*Conn).writeRecordLocked
+     0.30%  derper   [kernel.kallsyms]  [k] mlx5e_poll_rx_cq
+     0.29%  derper   derper             [.] encoding/base64.(*Encoding).Encode
+     0.29%  derper   derper             [.] runtime.reentersyscall
+     0.28%  derper   derper             [.] runtime.nanotime1.abi0
+     0.28%  derper   [kernel.kallsyms]  [k] fdget_pos
+     0.28%  derper   [kernel.kallsyms]  [k] __virt_addr_valid
+     0.28%  derper   derper             [.] crypto/tls.(*xorNonceAEAD).Open
+     0.28%  derper   [kernel.kallsyms]  [k] mlx5e_build_rx_skb
+     0.28%  derper   [kernel.kallsyms]  [k] vfs_write
+     0.28%  derper   [kernel.kallsyms]  [k] __rcu_read_lock
+     0.27%  derper   derper             [.] runtime.exitsyscall
+     0.27%  derper   derper             [.] crypto/tls.(*halfConn).decrypt
+     0.27%  derper   [kernel.kallsyms]  [k] __dev_queue_xmit
+     0.27%  derper   [kernel.kallsyms]  [k] tcp_v4_rcv
+     0.27%  derper   [kernel.kallsyms]  [k] mlx5e_napi_poll
+     0.27%  derper   derper             [.] runtime.mapaccess2
+     0.27%  derper   [kernel.kallsyms]  [k] __list_del_entry_valid_or_report
+     0.26%  derper   [kernel.kallsyms]  [k] __ip_queue_xmit
+     0.26%  derper   [kernel.kallsyms]  [k] aa_sk_perm
+     0.26%  derper   [kernel.kallsyms]  [k] __skb_datagram_iter
+     0.26%  derper   [kernel.kallsyms]  [k] __rcu_read_unlock
+     0.26%  derper   derper             [.] memeqbody
+     0.25%  derper   [kernel.kallsyms]  [k] net_rx_action
+     0.25%  derper   [kernel.kallsyms]  [k] ip_finish_output2
+     0.25%  derper   derper             [.] runtime.(*spanSet).pop
+     0.25%  derper   [kernel.kallsyms]  [k] bbr_main
+     0.24%  derper   derper             [.] runtime.bulkBarrierPreWrite
+     0.24%  derper   derper             [.] crypto/tls.(*Conn).Write
+     0.24%  derper   [kernel.kallsyms]  [k] __netif_receive_skb_core.constprop.0
+     0.24%  derper   derper             [.] crypto/tls.(*Conn).Read
+     0.24%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).sendLoop
+     0.23%  derper   [kernel.kallsyms]  [k] read_tsc
+     0.23%  derper   derper             [.] crypto/internal/fips140/aes.encryptBlockAsm.abi0
+     0.23%  derper   derper             [.] runtime.(*timer).modify
+     0.23%  derper   derper             [.] runtime.typePointers.next
+     0.23%  derper   [kernel.kallsyms]  [k] inet_gro_receive
+     0.23%  derper   [kernel.kallsyms]  [k] tcp_rcv_established
+     0.23%  derper   [kernel.kallsyms]  [k] tcp_recvmsg_locked
+     0.23%  derper   derper             [.] crypto/internal/fips140/aes/gcm.gcmAesData.abi0
+     0.23%  derper   [kernel.kallsyms]  [k] __mod_timer
+     0.23%  derper   derper             [.] runtime.sellock
+     0.22%  derper   [kernel.kallsyms]  [k] napi_build_skb
+     0.22%  derper   derper             [.] runtime.(*sweepLocked).sweep
+     0.22%  derper   derper             [.] time.now
+     0.22%  derper   derper             [.] crypto/tls.(*halfConn).encrypt
+     0.21%  derper   [kernel.kallsyms]  [k] apparmor_file_permission
+     0.21%  derper   [kernel.kallsyms]  [k] do_syscall_64
+     0.21%  derper   [kernel.kallsyms]  [k] error_entry
+     0.21%  derper   derper             [.] runtime.procyieldAsm.abi0
+     0.21%  derper   derper             [.] crypto/tls.(*halfConn).explicitNonceLen
+     0.21%  derper   derper             [.] bufio.(*Writer).Write
+     0.21%  derper   [kernel.kallsyms]  [k] napi_pp_put_page
+     0.20%  derper   derper             [.] internal/poll.runtime_pollSetDeadline
+     0.20%  derper   derper             [.] gcWriteBarrier
+     0.20%  derper   [kernel.kallsyms]  [k] tcp_gro_receive
+     0.20%  derper   derper             [.] internal/poll.(*FD).Write
+     0.19%  derper   derper             [.] runtime.selunlock
+     0.19%  derper   derper             [.] runtime.growslice
+     0.19%  derper   [kernel.kallsyms]  [k] skb_release_data
+     0.19%  derper   [kernel.kallsyms]  [k] mlx5e_sq_xmit_prepare.isra.0
+     0.19%  derper   [kernel.kallsyms]  [k] handle_softirqs
+     0.18%  derper   [kernel.kallsyms]  [k] __inet_lookup_established
+     0.18%  derper   [kernel.kallsyms]  [k] ktime_get
+     0.18%  derper   derper             [.] bufio.(*Reader).fill
+     0.18%  derper   derper             [.] runtime.findRunnable
+     0.18%  derper   [kernel.kallsyms]  [k] __list_add_valid_or_report
+     0.18%  derper   derper             [.] crypto/tls.(*xorNonceAEAD).Seal
+     0.18%  derper   [kernel.kallsyms]  [k] tcp_current_mss
+     0.18%  derper   [kernel.kallsyms]  [k] sock_write_iter
+     0.18%  derper   [kernel.kallsyms]  [k] _raw_spin_lock_bh
+     0.18%  derper   [kernel.kallsyms]  [k] vfs_read
+     0.18%  derper   derper             [.] runtime.chansend
+     0.18%  derper   [kernel.kallsyms]  [k] mlx5e_poll_xdpsq_cq
+     0.18%  derper   [kernel.kallsyms]  [k] __softirqentry_text_end
+     0.18%  derper   [kernel.kallsyms]  [k] mlx5e_select_queue
+     0.17%  derper   [kernel.kallsyms]  [k] alloc_iova_fast
+     0.17%  derper   [kernel.kallsyms]  [k] skb_try_coalesce
+     0.17%  derper   derper             [.] net/http.(*connReader).Read
+     0.17%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).sendPkt
+     0.17%  derper   [kernel.kallsyms]  [k] __sk_mem_raise_allocated
+     0.17%  derper   [kernel.kallsyms]  [k] smp_call_function_many_cond
+     0.17%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).run
+     0.17%  derper   derper             [.] runtime.(*spanSet).push
+     0.16%  derper   derper             [.] runtime.newobject
+     0.16%  derper   derper             [.] runtime.casgstatus
+     0.16%  derper   [kernel.kallsyms]  [k] try_charge_memcg
+     0.16%  derper   [kernel.kallsyms]  [k] mlx5e_handle_rx_cqe
+     0.16%  derper   [kernel.kallsyms]  [k] ip_output
+     0.16%  derper   [kernel.kallsyms]  [k] _copy_to_iter
+     0.16%  derper   derper             [.] aeshashbody
+     0.15%  derper   [kernel.kallsyms]  [k] __iommu_dma_unmap
+     0.15%  derper   derper             [.] runtime.(*stkframe).getStackMap
+     0.15%  derper   [kernel.kallsyms]  [k] __build_skb_around
+     0.15%  derper   [kernel.kallsyms]  [k] mlx5e_handle_rx_dim
+     0.15%  derper   derper             [.] runtime.findfunc
+     0.15%  derper   derper             [.] time.Now
+     0.15%  derper   [kernel.kallsyms]  [k] tcp_established_options
+     0.15%  derper   derper             [.] github.com/dgryski/go-metro.Hash64.abi0
+     0.15%  derper   [kernel.kallsyms]  [k] mlx5e_poll_ico_cq
+     0.14%  derper   [kernel.kallsyms]  [k] __schedule
+     0.14%  derper   [kernel.kallsyms]  [k] ip_rcv_core
+     0.14%  derper   [kernel.kallsyms]  [k] __alloc_skb
+     0.14%  derper   derper             [.] crypto/internal/fips140/aes/gcm.seal
+     0.14%  derper   derper             [.] crypto/internal/fips140/aes/gcm.(*GCM).Open
+     0.14%  derper   derper             [.] internal/runtime/syscall/linux.Syscall6
+     0.14%  derper   [kernel.kallsyms]  [k] entry_SYSCALL_64_after_hwframe
+     0.13%  derper   [kernel.kallsyms]  [k] ip_sublist_rcv
+     0.13%  derper   derper             [.] runtime.greyobject
+     0.13%  derper   [kernel.kallsyms]  [k] skb_gro_receive
+     0.13%  derper   derper             [.] tailscale.com/types/key.debug32
+     0.13%  derper   [kernel.kallsyms]  [k] __napi_build_skb
+     0.13%  derper   [kernel.kallsyms]  [k] tcp_data_queue
+     0.13%  derper   [kernel.kallsyms]  [k] __iommu_dma_map
+     0.13%  derper   [kernel.kallsyms]  [k] tcp_wfree
+     0.13%  derper   [kernel.kallsyms]  [k] mlx5e_features_check
+     0.13%  derper   derper             [.] crypto/internal/fips140/aes/gcm.(*GCM).sealAfterIndicator
+     0.13%  derper   [kernel.kallsyms]  [k] netif_skb_features
+     0.13%  derper   derper             [.] bufio.(*Writer).Flush
+     0.13%  derper   derper             [.] internal/poll.(*fdMutex).rwlock
+     0.13%  derper   derper             [.] runtime.chanrecv
+     0.13%  derper   [kernel.kallsyms]  [k] fpregs_assert_state_consistent
+     0.13%  derper   derper             [.] internal/poll.setDeadlineImpl
+     0.13%  derper   [kernel.kallsyms]  [k] ip_rcv_finish_core.isra.0
+     0.13%  derper   derper             [.] crypto/tls.(*Conn).write
+     0.12%  derper   [kernel.kallsyms]  [k] arch_exit_to_user_mode_prepare.isra.0
+     0.12%  derper   derper             [.] internal/poll.(*FD).Read
+     0.12%  derper   derper             [.] runtime.newMarkBits
+     0.12%  derper   [kernel.kallsyms]  [k] validate_xmit_skb
+     0.12%  derper   [kernel.kallsyms]  [k] dma_map_page_attrs
+     0.12%  derper   [kernel.kallsyms]  [k] update_curr
+     0.12%  derper   derper             [.] runtime.(*_panic).nextDefer
+     0.12%  derper   [kernel.kallsyms]  [k] mlx5e_txwqe_complete
+     0.12%  derper   [kernel.kallsyms]  [k] tcp4_gro_receive
+     0.12%  derper   [kernel.kallsyms]  [k] mlx5e_post_rx_wqes
+     0.12%  derper   derper             [.] crypto/internal/fips140/aes.encryptBlock
+     0.12%  derper   [kernel.kallsyms]  [k] tcp_v4_early_demux
+     0.12%  derper   derper             [.] runtime.stealWork
+     0.12%  derper   derper             [.] internal/poll.runtime_pollReset
+     0.12%  derper   [kernel.kallsyms]  [k] __local_bh_enable_ip
+     0.12%  derper   [kernel.kallsyms]  [k] napi_gro_receive
+     0.12%  derper   [kernel.kallsyms]  [k] mlx5e_txwqe_build_dsegs
+     0.12%  derper   derper             [.] runtime.(*unwinder).resolveInternal
+     0.12%  derper   [kernel.kallsyms]  [k] __tcp_select_window
+     0.12%  derper   [kernel.kallsyms]  [k] netif_receive_skb_list_internal
+     0.12%  derper   [kernel.kallsyms]  [k] sched_balance_update_blocked_averages
+     0.11%  derper   [kernel.kallsyms]  [k] update_load_avg
+     0.11%  derper   derper             [.] runtime.(*pallocBits).summarize
+     0.11%  derper   [kernel.kallsyms]  [k] iommu_pgsize.isra.0
+     0.11%  derper   derper             [.] internal/runtime/maps.(*Map).getWithKeySmall
+     0.11%  derper   derper             [.] net/http.(*connReader).lock
+     0.11%  derper   [kernel.kallsyms]  [k] is_last_ethertype_ip.constprop.0
+     0.11%  derper   derper             [.] internal/poll.(*fdMutex).rwunlock
+     0.11%  derper   derper             [.] bufio.(*Reader).Read
+     0.11%  derper   [kernel.kallsyms]  [k] notifier_call_chain
+     0.11%  derper   [kernel.kallsyms]  [k] mlx5e_completion_event
+     0.11%  derper   derper             [.] crypto/internal/fips140/aes/gcm.gcmAesFinish.abi0
+     0.11%  derper   [kernel.kallsyms]  [k] __update_load_avg_se
+     0.11%  derper   [kernel.kallsyms]  [k] psi_group_change
+     0.11%  derper   derper             [.] runtime.slicebytetostring
+     0.11%  derper   derper             [.] runtime.deferreturn
+     0.11%  derper   [kernel.kallsyms]  [k] ep_poll_callback
+     0.11%  derper   [kernel.kallsyms]  [k] __netif_receive_skb_list_core
+     0.11%  derper   [kernel.kallsyms]  [k] __update_load_avg_cfs_rq
+     0.11%  derper   [kernel.kallsyms]  [k] sock_read_iter
+     0.10%  derper   derper             [.] io.ReadAtLeast
+     0.10%  derper   [kernel.kallsyms]  [k] fq_codel_dequeue
+     0.10%  derper   [kernel.kallsyms]  [k] tcp_schedule_loss_probe.part.0
+     0.10%  derper   [kernel.kallsyms]  [k] sk_filter_trim_cap
+     0.10%  derper   [kernel.kallsyms]  [k] syscall_exit_to_user_mode
+     0.10%  derper   [kernel.kallsyms]  [k] eth_type_trans
+     0.10%  derper   [kernel.kallsyms]  [k] release_sock
+     0.10%  derper   derper             [.] runtime.(*moduledata).textAddr
+     0.10%  derper   [kernel.kallsyms]  [k] _raw_spin_unlock_irqrestore
+     0.10%  derper   derper             [.] time.Time.Add
+     0.10%  derper   derper             [.] github.com/axiomhq/hyperloglog.(*Sketch).Insert
+     0.10%  derper   derper             [.] crypto/tls.(*Conn).handshakeContext
+     0.10%  derper   [kernel.kallsyms]  [k] x64_sys_call
+     0.10%  derper   [kernel.kallsyms]  [k] handle_edge_irq
+     0.09%  derper   [kernel.kallsyms]  [k] tcp_skb_entail
+     0.09%  derper   derper             [.] runtime.sweepone
+     0.09%  derper   [kernel.kallsyms]  [k] _raw_spin_unlock
+     0.09%  derper   [kernel.kallsyms]  [k] ipv4_dst_check
+     0.09%  derper   derper             [.] syscall.Syscall
+     0.09%  derper   [kernel.kallsyms]  [k] __common_interrupt
+     0.09%  derper   derper             [.] crypto/internal/fips140/aes/gcm.(*GCMWithXORCounterNonce).Open
+     0.09%  derper   [kernel.kallsyms]  [k] __ip_local_out
+     0.09%  derper   [kernel.kallsyms]  [k] ip_skb_dst_mtu
+     0.09%  derper   [kernel.kallsyms]  [k] dev_hard_start_xmit
+     0.09%  derper   derper             [.] crypto/internal/fips140.RecordApproved
+     0.09%  derper   derper             [.] runtime.deductAssistCredit
+     0.09%  derper   derper             [.] crypto/tls.(*atLeastReader).Read
+     0.09%  derper   [kernel.kallsyms]  [k] irq_chip_ack_parent
+     0.09%  derper   derper             [.] runtime.(*_panic).start
+     0.09%  derper   derper             [.] runtime.netpoll
+     0.09%  derper   [kernel.kallsyms]  [k] __iommu_map
+     0.08%  derper   [kernel.kallsyms]  [k] tcp_rearm_rto
+     0.08%  derper   [kernel.kallsyms]  [k] dequeue_entity
+     0.08%  derper   [kernel.kallsyms]  [k] tcp_try_coalesce
+     0.08%  derper   [kernel.kallsyms]  [k] ip_list_rcv
+     0.08%  derper   derper             [.] runtime.convTstring
+     0.08%  derper   [kernel.kallsyms]  [k] __radix_tree_lookup
+     0.08%  derper   [kernel.kallsyms]  [k] iommu_dma_map_page
+     0.08%  derper   derper             [.] crypto/tls.(*Conn).readFromUntil
+     0.08%  derper   derper             [.] runtime.extractHeapBitsSmall
+     0.08%  derper   derper             [.] runtime.schedule
+     0.08%  derper   [kernel.kallsyms]  [k] cgroup_rstat_updated
+     0.08%  derper   [kernel.kallsyms]  [k] iommu_get_dma_domain
+     0.08%  derper   derper             [.] net.(*conn).Write
+     0.08%  derper   [kernel.kallsyms]  [k] tcp_tso_segs
+     0.08%  derper   [kernel.kallsyms]  [k] __napi_schedule
+     0.08%  derper   derper             [.] bytes.(*Buffer).grow
+     0.08%  derper   [kernel.kallsyms]  [k] nf_hook_slow
+     0.08%  derper   derper             [.] tailscale.com/derp.readUint32
+     0.08%  derper   [kernel.kallsyms]  [k] tcp_rbtree_insert
+     0.08%  derper   [kernel.kallsyms]  [k] bbr_min_tso_segs
+     0.08%  derper   derper             [.] runtime.mapaccess2_fast32
+     0.08%  derper   [kernel.kallsyms]  [k] ipv4_mtu
+     0.08%  derper   derper             [.] runtime.save
+     0.08%  derper   [kernel.kallsyms]  [k] __get_xps_queue_idx
+     0.08%  derper   [kernel.kallsyms]  [k] slab_update_freelist.isra.0
+     0.08%  derper   derper             [.] runtime.(*spanInlineMarkBits).tryAcquire
+     0.08%  derper   derper             [.] runtime.scanframeworker
+     0.08%  derper   [kernel.kallsyms]  [k] _copy_from_iter
+     0.08%  derper   [kernel.kallsyms]  [k] sch_direct_xmit
+     0.08%  derper   [kernel.kallsyms]  [k] mlx5_cq_tasklet_cb
+     0.08%  derper   derper             [.] bytes.(*Buffer).ReadFrom
+     0.08%  derper   derper             [.] runtime.typedmemmove
+     0.08%  derper   derper             [.] runtime.(*mcache).refill
+     0.08%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).setWriteDeadline
+     0.08%  derper   derper             [.] sync.(*Pool).Get
+     0.08%  derper   [kernel.kallsyms]  [k] ksys_write
+     0.07%  derper   derper             [.] sync.(*Pool).pin
+     0.07%  derper   derper             [.] crypto/internal/fips140/aes/gcm.(*GCMWithXORCounterNonce).Seal
+     0.07%  derper   [kernel.kallsyms]  [k] __iommu_unmap
+     0.07%  derper   derper             [.] crypto/tls.(*Conn).SetWriteDeadline
+     0.07%  derper   [kernel.kallsyms]  [k] sched_balance_newidle
+     0.07%  derper   derper             [.] net.(*netFD).Write
+     0.07%  derper   derper             [.] runtime.ifaceeq
+     0.07%  derper   [kernel.kallsyms]  [k] __copy_skb_header
+     0.07%  derper   [kernel.kallsyms]  [k] __slab_free
+     0.07%  derper   [kernel.kallsyms]  [k] __handle_irq_event_percpu
+     0.07%  derper   [kernel.kallsyms]  [k] tomoyo_socket_sendmsg_permission
+     0.07%  derper   [kernel.kallsyms]  [k] ip_finish_output
+     0.07%  derper   [kernel.kallsyms]  [k] tcp_push
+     0.07%  derper   [kernel.kallsyms]  [k] __sk_dst_check
+     0.07%  derper   derper             [.] net.(*conn).Read
+     0.07%  derper   [kernel.kallsyms]  [k] skb_page_frag_refill
+     0.07%  derper   derper             [.] runtime.scanSpan
+     0.07%  derper   [kernel.kallsyms]  [k] mlx5e_consume_skb
+     0.07%  derper   [kernel.kallsyms]  [k] __qdisc_run
+     0.07%  derper   [kernel.kallsyms]  [k] tcp_recvmsg
+     0.07%  derper   [kernel.kallsyms]  [k] tcp_v4_do_rcv
+     0.07%  derper   [kernel.kallsyms]  [k] tcp_event_new_data_sent
+     0.07%  derper   [kernel.kallsyms]  [k] rb_erase
+     0.07%  derper   derper             [.] runtime.(*mcentral).cacheSpan
+     0.07%  derper   derper             [.] runtime.(*pollDesc).publishInfo
+     0.07%  derper   [kernel.kallsyms]  [k] net_dim
+     0.07%  derper   [kernel.kallsyms]  [k] __skb_clone
+     0.07%  derper   derper             [.] time.runtimeNano
+     0.07%  derper   [kernel.kallsyms]  [k] inet_ehashfn
+     0.07%  derper   [kernel.kallsyms]  [k] tcp_v4_fill_cb
+     0.07%  derper   derper             [.] crypto/tls.(*xorNonceAEAD).Overhead
+     0.07%  derper   [kernel.kallsyms]  [k] ip_protocol_deliver_rcu
+     0.07%  derper   [kernel.kallsyms]  [k] idle_cpu
+     0.07%  derper   [kernel.kallsyms]  [k] aa_file_perm
+     0.07%  derper   [kernel.kallsyms]  [k] psi_task_switch
+     0.07%  derper   [kernel.kallsyms]  [k] tcp_ack_update_rtt
+     0.07%  derper   derper             [.] crypto/tls.(*Conn).writeRecordLocked.func1
+     0.07%  derper   derper             [.] runtime.gcDrain
+     0.07%  derper   derper             [.] crypto/tls.(*Conn).Read.deferwrap1
+     0.07%  derper   derper             [.] tailscale.com/derp.writeUint32
+     0.07%  derper   derper             [.] runtime.scanstack
+     0.07%  derper   [kernel.kallsyms]  [k] dequeue_entities
+     0.07%  derper   [kernel.kallsyms]  [k] fast_mix
+     0.07%  derper   [kernel.kallsyms]  [k] napi_complete_done
+     0.07%  derper   derper             [.] runtime.publicationBarrier
+     0.07%  derper   [kernel.kallsyms]  [k] sync_regs
+     0.07%  derper   [kernel.kallsyms]  [k] __ip_finish_output
+     0.07%  derper   derper             [.] tailscale.com/derp.ReadFrameHeader
+     0.07%  derper   [kernel.kallsyms]  [k] iommu_dma_alloc_iova
+     0.06%  derper   [kernel.kallsyms]  [k] intel_iommu_unmap_pages
+     0.06%  derper   derper             [.] net.(*netFD).Read
+     0.06%  derper   derper             [.] time.Since
+     0.06%  derper   [kernel.kallsyms]  [k] ksys_read
+     0.06%  derper   [kernel.kallsyms]  [k] tcp_options_write.isra.0
+     0.06%  derper   derper             [.] syscall.RawSyscall6
+     0.06%  derper   derper             [.] runtime.scanObjectSmall
+     0.06%  derper   derper             [.] runtime.spanSetScans
+     0.06%  derper   [kernel.kallsyms]  [k] mlx5e_handle_tx_dim
+     0.06%  derper   derper             [.] runtime.systemstack.abi0
+     0.06%  derper   derper             [.] sync.(*Pool).Put
+     0.06%  derper   [kernel.kallsyms]  [k] netdev_core_pick_tx
+     0.06%  derper   [kernel.kallsyms]  [k] entry_SYSCALL_64_safe_stack
+     0.06%  derper   [kernel.kallsyms]  [k] rb_insert_color
+     0.06%  derper   derper             [.] runtime.(*mheap).nextSpanForSweep
+     0.06%  derper   [kernel.kallsyms]  [k] skb_release_head_state
+     0.06%  derper   [kernel.kallsyms]  [k] tcp_update_skb_after_send
+     0.06%  derper   [kernel.kallsyms]  [k] iommu_dma_unmap_page
+     0.06%  derper   [kernel.kallsyms]  [k] native_write_msr
+     0.06%  derper   [kernel.kallsyms]  [k] sock_def_readable
+     0.06%  derper   derper             [.] sync.(*Cond).Broadcast
+     0.06%  derper   derper             [.] runtime.memequal
+     0.06%  derper   derper             [.] runtime.(*mheap).initSpan
+     0.06%  derper   derper             [.] runtime.(*mheap).allocSpan
+     0.06%  derper   [kernel.kallsyms]  [k] tcp_validate_incoming
+     0.06%  derper   [kernel.kallsyms]  [k] lock_timer_base
+     0.06%  derper   [kernel.kallsyms]  [k] intel_iommu_iova_to_phys
+     0.06%  derper   [kernel.kallsyms]  [k] apparmor_ip_postroute
+     0.06%  derper   derper             [.] runtime.(*lfstack).pop
+     0.06%  derper   [kernel.kallsyms]  [k] mod_memcg_state
+     0.06%  derper   derper             [.] tailscale.com/derp/derpserver.(*sclient).noteSendFromSrc
+     0.06%  derper   derper             [.] time.runtimeNow
+     0.06%  derper   [kernel.kallsyms]  [k] tcp_gro_pull_header
+     0.06%  derper   [kernel.kallsyms]  [k] napi_schedule_prep
+     0.06%  derper   [kernel.kallsyms]  [k] is_vmalloc_addr
+     0.06%  derper   [kernel.kallsyms]  [k] workqueue_softirq_action
+     0.06%  derper   [kernel.kallsyms]  [k] skb_network_protocol
+     0.06%  derper   [kernel.kallsyms]  [k] tcp_rate_check_app_limited
+     0.06%  derper   [kernel.kallsyms]  [k] fq_ring_free_locked
+     0.06%  derper   [kernel.kallsyms]  [k] napi_gro_complete.constprop.0
+     0.06%  derper   [kernel.kallsyms]  [k] enqueue_timer
+     0.06%  derper   [kernel.kallsyms]  [k] kmem_cache_alloc_bulk_noprof
+     0.06%  derper   derper             [.] internal/sync.(*Mutex).lockSlow
+     0.06%  derper   derper             [.] runtime.selectnbrecv
+     0.06%  derper   [kernel.kallsyms]  [k] raw_local_deliver
+     0.06%  derper   derper             [.] github.com/axiomhq/hyperloglog.(*Sketch).InsertHash
+     0.06%  derper   [kernel.kallsyms]  [k] mlx5e_free_rx_wqes
+     0.06%  derper   [kernel.kallsyms]  [k] __xfrm_policy_check2.constprop.0
+     0.06%  derper   [kernel.kallsyms]  [k] __sk_mem_schedule
+     0.06%  derper   [kernel.kallsyms]  [k] tcp_inbound_hash
+     0.06%  derper   derper             [.] runtime.(*activeSweep).end
+     0.06%  derper   derper             [.] runtime.(*timers).check
+     0.06%  derper   derper             [.] runtime.setBlockOnExitSyscall
+     0.06%  derper   [kernel.kallsyms]  [k] pick_task_fair
+     0.05%  derper   [kernel.kallsyms]  [k] rw_verify_area
+     0.05%  derper   [kernel.kallsyms]  [k] simple_copy_to_iter
+     0.05%  derper   derper             [.] runtime.makeslice
+     0.05%  derper   derper             [.] tailscale.com/derp/derpserver.(*lazyBufioWriter).bw
+     0.05%  derper   [kernel.kallsyms]  [k] common_interrupt
+     0.05%  derper   derper             [.] runtime.(*mspan).init
+     0.05%  derper   [kernel.kallsyms]  [k] security_socket_sendmsg
+     0.05%  derper   [kernel.kallsyms]  [k] tcp_event_data_recv
+     0.05%  derper   [kernel.kallsyms]  [k] syscall_exit_to_user_mode_prepare
+     0.05%  derper   derper             [.] runtime.(*mspan).refillAllocCache
+     0.05%  derper   [kernel.kallsyms]  [k] rb_first
+     0.05%  derper   [kernel.kallsyms]  [k] __wake_up_common
+     0.05%  derper   derper             [.] runtime.(*atomicHeadTailIndex).incTail
+     0.05%  derper   [kernel.kallsyms]  [k] validate_xmit_skb_list
+     0.05%  derper   [kernel.kallsyms]  [k] security_sock_rcv_skb
+     0.05%  derper   derper             [.] runtime.runqgrab
+     0.05%  derper   [kernel.kallsyms]  [k] sock_poll
+     0.05%  derper   [kernel.kallsyms]  [k] page_pool_put_unrefed_netmem
+     0.05%  derper   [kernel.kallsyms]  [k] ip_send_check
+     0.05%  derper   derper             [.] github.com/axiomhq/hyperloglog.hashFunc
+     0.05%  derper   derper             [.] internal/poll.(*FD).decref
+     0.05%  derper   [kernel.kallsyms]  [k] irq_int_handler
+     0.05%  derper   [kernel.kallsyms]  [k] tcp_rcv_space_adjust
+     0.05%  derper   derper             [.] runtime.(*unwinder).next
+     0.05%  derper   [kernel.kallsyms]  [k] irqentry_enter
+     0.05%  derper   [kernel.kallsyms]  [k] perf_ctx_disable
+     0.05%  derper   [kernel.kallsyms]  [k] mlx5_eq_cq_get
+     0.05%  derper   [kernel.kallsyms]  [k] __usecs_to_jiffies
+     0.05%  derper   [kernel.kallsyms]  [k] detach_if_pending
+     0.05%  derper   derper             [.] internal/poll.(*FD).writeUnlock
+     0.05%  derper   [kernel.kallsyms]  [k] tcp_poll
+     0.05%  derper   [kernel.kallsyms]  [k] wake_up_var
+     0.05%  derper   derper             [.] runtime.gcDrainN
+     0.05%  derper   [kernel.kallsyms]  [k] hrtimer_start_range_ns
+     0.05%  derper   [kernel.kallsyms]  [k] iommu_map
+     0.05%  derper   [kernel.kallsyms]  [k] check_stack_object
+     0.05%  derper   [kernel.kallsyms]  [k] do_epoll_wait
+     0.05%  derper   [kernel.kallsyms]  [k] ip_local_deliver
+     0.05%  derper   [kernel.kallsyms]  [k] __irq_exit_rcu
+     0.05%  derper   [kernel.kallsyms]  [k] bpf_skops_write_hdr_opt.isra.0
+     0.05%  derper   [kernel.kallsyms]  [k] kmalloc_reserve
+     0.05%  derper   derper             [.] time.Until
+     0.05%  derper   derper             [.] runtime.(*lfstack).push
+     0.05%  derper   [kernel.kallsyms]  [k] validate_xmit_xfrm
+     0.05%  derper   [kernel.kallsyms]  [k] inet6_recvmsg
+     0.05%  derper   derper             [.] runtime.typehash
+     0.05%  derper   derper             [.] tailscale.com/derp/derpserver.(*lazyBufioWriter).Write
+     0.05%  derper   [kernel.kallsyms]  [k] tcp_queue_rcv
+     0.05%  derper   derper             [.] internal/poll.(*pollDesc).prepare
+     0.05%  derper   [kernel.kallsyms]  [k] kfree_skbmem
+     0.05%  derper   [kernel.kallsyms]  [k] ep_item_poll.isra.0
+     0.05%  derper   [kernel.kallsyms]  [k] handle_irq_event
+     0.05%  derper   [kernel.kallsyms]  [k] avg_vruntime
+     0.05%  derper   [kernel.kallsyms]  [k] __tasklet_schedule_common
+     0.05%  derper   [kernel.kallsyms]  [k] fput
+     0.05%  derper   [kernel.kallsyms]  [k] tcp_v4_send_check
+     0.05%  derper   [kernel.kallsyms]  [k] skb_csum_hwoffload_help
+     0.05%  derper   [kernel.kallsyms]  [k] select_task_rq_fair
+     0.05%  derper   [kernel.kallsyms]  [k] __handle_mm_fault
+     0.05%  derper   derper             [.] runtime.binarySearchTree
+     0.05%  derper   derper             [.] runtime.(*stackScanState).addObject
+     0.05%  derper   [kernel.kallsyms]  [k] memcpy_orig
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_try_rmem_schedule
+     0.04%  derper   [kernel.kallsyms]  [k] try_to_wake_up
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_check_space
+     0.04%  derper   derper             [.] syscall.write
+     0.04%  derper   [kernel.kallsyms]  [k] dma_unmap_page_attrs
+     0.04%  derper   [kernel.kallsyms]  [k] native_sched_clock
+     0.04%  derper   [kernel.kallsyms]  [k] sock_recvmsg
+     0.04%  derper   [kernel.kallsyms]  [k] mem_cgroup_charge_skmem
+     0.04%  derper   [kernel.kallsyms]  [k] skb_attempt_defer_free
+     0.04%  derper   [kernel.kallsyms]  [k] update_sd_lb_stats.constprop.0
+     0.04%  derper   [kernel.kallsyms]  [k] _raw_spin_lock_irq
+     0.04%  derper   [kernel.kallsyms]  [k] __memcg_slab_free_hook
+     0.04%  derper   [kernel.kallsyms]  [k] security_file_permission
+     0.04%  derper   [kernel.kallsyms]  [k] inet6_sendmsg
+     0.04%  derper   [kernel.kallsyms]  [k] __alloc_pages_noprof
+     0.04%  derper   [kernel.kallsyms]  [k] note_interrupt
+     0.04%  derper   [kernel.kallsyms]  [k] bbr_quantization_budget
+     0.04%  derper   derper             [.] context.(*cancelCtx).Done
+     0.04%  derper   [kernel.kallsyms]  [k] __napi_poll
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_mstamp_refresh
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_add_backlog
+     0.04%  derper   [kernel.kallsyms]  [k] __cond_resched
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_in_ack_event
+     0.04%  derper   derper             [.] github.com/axiomhq/hyperloglog.encodeHash
+     0.04%  derper   derper             [.] sync.runtime_procPin
+     0.04%  derper   [kernel.kallsyms]  [k] add_interrupt_randomness
+     0.04%  derper   derper             [.] runtime.(*consistentHeapStats).acquire
+     0.04%  derper   [kernel.kallsyms]  [k] __calc_delta.constprop.0
+     0.04%  derper   [kernel.kallsyms]  [k] netdev_pick_tx
+     0.04%  derper   [kernel.kallsyms]  [k] sock_put
+     0.04%  derper   [kernel.kallsyms]  [k] get_page_from_freelist
+     0.04%  derper   derper             [.] runtime.(*sweepLocker).tryAcquire
+     0.04%  derper   derper             [.] runtime.(*gcControllerState).update
+     0.04%  derper   derper             [.] crypto/internal/fips140.getIndicator
+     0.04%  derper   derper             [.] net.(*conn).SetWriteDeadline
+     0.04%  derper   [kernel.kallsyms]  [k] ip_local_deliver_finish
+     0.04%  derper   derper             [.] runtime.(*mcache).nextFree
+     0.04%  derper   [kernel.kallsyms]  [k] futex_wake
+     0.04%  derper   derper             [.] runtime.netpollready
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_delack_max
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_wmem_schedule
+     0.04%  derper   derper             [.] internal/sync.(*HashTrieMap[go.shape.interface {},go.shape.interface {}]).Load
+     0.04%  derper   [kernel.kallsyms]  [k] __release_sock
+     0.04%  derper   derper             [.] runtime.(*timer).maybeRunChan
+     0.04%  derper   [kernel.kallsyms]  [k] mlx5e_page_release_fragmented.isra.0
+     0.04%  derper   derper             [.] syscall.read
+     0.04%  derper   derper             [.] runtime.memhash_varlen
+     0.04%  derper   [kernel.kallsyms]  [k] napi_skb_cache_get
+     0.04%  derper   [kernel.kallsyms]  [k] bbr_packets_in_net_at_edt
+     0.04%  derper   [kernel.kallsyms]  [k] sk_reset_timer
+     0.04%  derper   [kernel.kallsyms]  [k] atomic_notifier_call_chain
+     0.04%  derper   [kernel.kallsyms]  [k] finish_task_switch.isra.0
+     0.04%  derper   [kernel.kallsyms]  [k] __sock_wfree
+     0.04%  derper   derper             [.] runtime.(*mspan).nextFreeIndex
+     0.04%  derper   [kernel.kallsyms]  [k] dql_completed
+     0.04%  derper   [kernel.kallsyms]  [k] __tcp_cleanup_rbuf
+     0.04%  derper   derper             [.] runtime.unlock2Wake
+     0.04%  derper   [kernel.kallsyms]  [k] __tcp_ack_snd_check
+     0.04%  derper   derper             [.] runtime.entersyscall
+     0.04%  derper   derper             [.] runtime.execute
+     0.04%  derper   [kernel.kallsyms]  [k] ip_local_out
+     0.04%  derper   derper             [.] runtime.convT32
+     0.04%  derper   derper             [.] crypto/tls.(*Conn).maxPayloadSizeForWrite
+     0.04%  derper   derper             [.] runtime.acquireSudog
+     0.04%  derper   derper             [.] tailscale.com/metrics.(*MultiLabelMap[go.shape.struct { Reason string; Kind string }]).Get
+     0.04%  derper   derper             [.] runtime.(*scavengeIndex).alloc
+     0.04%  derper   derper             [.] tailscale.com/tstime.(*StdClock).Since
+     0.04%  derper   derper             [.] time.runtimeIsBubbled
+     0.04%  derper   [kernel.kallsyms]  [k] apic_ack_irq
+     0.04%  derper   derper             [.] crypto/tls.(*Conn).Write.deferwrap2
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_send_mss
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_sendmsg
+     0.04%  derper   [kernel.kallsyms]  [k] sock_rfree
+     0.04%  derper   [kernel.kallsyms]  [k] domain_unmap
+     0.04%  derper   [kernel.kallsyms]  [k] skb_clone
+     0.04%  derper   [kernel.kallsyms]  [k] native_apic_mem_eoi
+     0.04%  derper   derper             [.] runtime.(*_panic).nextFrame
+     0.04%  derper   derper             [.] runtime.gopark
+     0.04%  derper   derper             [.] runtime.getcallerfp
+     0.04%  derper   [kernel.kallsyms]  [k] inet_gro_complete
+     0.04%  derper   derper             [.] tailscale.com/derp.WriteFrameHeader
+     0.04%  derper   [kernel.kallsyms]  [k] mlx5e_txwqe_build_eseg.isra.0
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_small_queue_check.isra.0
+     0.04%  derper   [kernel.kallsyms]  [k] iommu_iova_to_phys
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_urg
+     0.04%  derper   [kernel.kallsyms]  [k] do_anonymous_page
+     0.04%  derper   [kernel.kallsyms]  [k] napi_consume_skb
+     0.04%  derper   [kernel.kallsyms]  [k] copy_fpstate_to_sigframe
+     0.04%  derper   derper             [.] runtime.wakep
+     0.04%  derper   [kernel.kallsyms]  [k] tcp_stream_alloc_skb
+     0.04%  derper   [kernel.kallsyms]  [k] mas_walk
+     0.04%  derper   [kernel.kallsyms]  [k] available_idle_cpu
+     0.04%  derper   [kernel.kallsyms]  [k] skb_free_head
+     0.03%  derper   derper             [.] time.(*Time).addSec
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_measure_rcv_mss
+     0.03%  derper   [kernel.kallsyms]  [k] __sk_mem_reduce_allocated
+     0.03%  derper   [kernel.kallsyms]  [k] __refill_stock
+     0.03%  derper   derper             [.] tailscale.com/metrics.(*Histogram).Observe
+     0.03%  derper   [kernel.kallsyms]  [k] tcp4_gro_complete
+     0.03%  derper   derper             [.] runtime.(*mspan).typePointersOfType
+     0.03%  derper   [kernel.kallsyms]  [k] __rmqueue_pcplist
+     0.03%  derper   [kernel.kallsyms]  [k] timerqueue_add
+     0.03%  derper   derper             [.] runtime.(*spanSet).reset
+     0.03%  derper   [kernel.kallsyms]  [k] __get_user_8
+     0.03%  derper   [kernel.kallsyms]  [k] irq_enter_rcu
+     0.03%  derper   [kernel.kallsyms]  [k] skb_gso_validate_network_len
+     0.03%  derper   derper             [.] runtime.park_m
+     0.03%  derper   [kernel.kallsyms]  [k] mlx5e_txqsq_get_next_pi
+     0.03%  derper   [kernel.kallsyms]  [k] napi_skb_cache_put
+     0.03%  derper   [kernel.kallsyms]  [k] skb_gso_transport_seglen
+     0.03%  derper   [kernel.kallsyms]  [k] __tcp_push_pending_frames
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_grow_window
+     0.03%  derper   [kernel.kallsyms]  [k] flush_tlb_func
+     0.03%  derper   [kernel.kallsyms]  [k] __rseq_handle_notify_resume
+     0.03%  derper   [kernel.kallsyms]  [k] dequeue_task_fair
+     0.03%  derper   [kernel.kallsyms]  [k] irqentry_exit_to_user_mode
+     0.03%  derper   [kernel.kallsyms]  [k] _raw_spin_unlock_bh
+     0.03%  derper   derper             [.] runtime.(*mcache).releaseAll
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_release_cb
+     0.03%  derper   derper             [.] runtime.(*mheap).freeSpanLocked
+     0.03%  derper   [kernel.kallsyms]  [k] __mod_memcg_lruvec_state
+     0.03%  derper   derper             [.] runtime.retake
+     0.03%  derper   derper             [.] runtime.empty
+     0.03%  derper   [kernel.kallsyms]  [k] nsecs_to_jiffies
+     0.03%  derper   [kernel.kallsyms]  [k] pick_next_task_fair
+     0.03%  derper   [kernel.kallsyms]  [k] update_curr_se
+     0.03%  derper   derper             [.] internal/poll.(*FD).readUnlock
+     0.03%  derper   derper             [.] runtime.(*mspan).moveInlineMarks
+     0.03%  derper   [kernel.kallsyms]  [k] security_socket_recvmsg
+     0.03%  derper   derper             [.] runtime.getfp
+     0.03%  derper   [kernel.kallsyms]  [k] fdget
+     0.03%  derper   [kernel.kallsyms]  [k] hrtimer_active
+     0.03%  derper   [kernel.kallsyms]  [k] update_rq_clock
+     0.03%  derper   [kernel.kallsyms]  [k] llist_add_batch
+     0.03%  derper   derper             [.] tailscale.com/metrics.(*MultiLabelMap[go.shape.struct { Reason string; Kind string }]).Add
+     0.03%  derper   [kernel.kallsyms]  [k] __futex_wait
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_send_delayed_ack
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_chrono_start
+     0.03%  derper   [kernel.kallsyms]  [k] tasklet_action
+     0.03%  derper   [kernel.kallsyms]  [k] cpuacct_charge
+     0.03%  derper   derper             [.] runtime.preemptone
+     0.03%  derper   derper             [.] runtime.(*m).clearAllpSnapshot
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_rate_gen
+     0.03%  derper   [kernel.kallsyms]  [k] __x64_sys_futex
+     0.03%  derper   derper             [.] tailscale.com/derp/derpserver.(*Server).noteClientActivity
+     0.03%  derper   derper             [.] net.(*TCPConn).SetWriteDeadline
+     0.03%  derper   derper             [.] runtime.mcall
+     0.03%  derper   derper             [.] tailscale.com/derp/derpserver.(*Server).recordDrop
+     0.03%  derper   [kernel.kallsyms]  [k] prep_new_page
+     0.03%  derper   [kernel.kallsyms]  [k] __perf_event_task_sched_out
+     0.03%  derper   derper             [.] runtime.(*pageAlloc).update
+     0.03%  derper   derper             [.] runtime.netpollblock
+     0.03%  derper   derper             [.] runtime.gcTrigger.test
+     0.03%  derper   [kernel.kallsyms]  [k] irqentry_enter_from_user_mode
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_rack_advance
+     0.03%  derper   [kernel.kallsyms]  [k] skb_defer_rx_timestamp
+     0.03%  derper   [kernel.kallsyms]  [k] put_prev_entity
+     0.03%  derper   [kernel.kallsyms]  [k] apparmor_socket_recvmsg
+     0.03%  derper   [kernel.kallsyms]  [k] schedule
+     0.03%  derper   derper             [.] runtime.markroot
+     0.03%  derper   derper             [.] crypto/tls.(*Conn).Write.deferwrap1
+     0.03%  derper   [kernel.kallsyms]  [k] __tcp_send_ack.part.0
+     0.03%  derper   derper             [.] runtime.(*sysMemStat).add
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_rate_skb_sent
+     0.03%  derper   [kernel.kallsyms]  [k] rb_next
+     0.03%  derper   [kernel.kallsyms]  [k] unmap_page_range
+     0.03%  derper   [kernel.kallsyms]  [k] get_mem_cgroup_from_mm
+     0.03%  derper   derper             [.] runtime.suspendG
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_rate_skb_delivered
+     0.03%  derper   [kernel.kallsyms]  [k] tcp_leave_memory_pressure
+     0.03%  derper   derper             [.] runtime.runqsteal
+     0.03%  derper   derper             [.] runtime.typedmemclr
+     0.03%  derper   [kernel.kallsyms]  [k] vruntime_eligible
+     0.03%  derper   derper             [.] sync.runtime_notifyListNotifyAll
+     0.03%  derper   derper             [.] internal/abi.Name.IsBlank
+     0.03%  derper   derper             [.] runtime.(*gcWork).tryStealSpan
+     0.03%  derper   derper             [.] runtime.futex.abi0
+     0.03%  derper   [kernel.kallsyms]  [k] tasklet_clear_sched
+     0.03%  derper   [kernel.kallsyms]  [k] ttwu_queue_wakelist
+     0.03%  derper   [kernel.kallsyms]  [k] skb_put
+     0.02%  derper   derper             [.] runtime.(*pageAlloc).alloc
+     0.02%  derper   derper             [.] runtime.goschedImpl
+     0.02%  derper   derper             [.] runtime.(*gcControllerState).findRunnableGCWorker
+     0.02%  derper   [kernel.kallsyms]  [k] intel_iommu_iotlb_sync_map
+     0.02%  derper   derper             [.] runtime.(*mcentral).uncacheSpan
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_tasklet_func
+     0.02%  derper   [kernel.kallsyms]  [k] futex_wake_mark
+     0.02%  derper   derper             [.] runtime.(*mspan).typePointersOfUnchecked
+     0.02%  derper   derper             [.] runtime.selectnbsend
+     0.02%  derper   derper             [.] tailscale.com/tstime.(*StdClock).Now
+     0.02%  derper   [kernel.kallsyms]  [k] free_unref_page
+     0.02%  derper   [kernel.kallsyms]  [k] lock_sock_nested
+     0.02%  derper   derper             [.] runtime.getempty
+     0.02%  derper   derper             [.] runtime.(*consistentHeapStats).release
+     0.02%  derper   derper             [.] runtime.deductSweepCredit
+     0.02%  derper   [kernel.kallsyms]  [k] sk_free
+     0.02%  derper   [kernel.kallsyms]  [k] __task_pid_nr_ns
+     0.02%  derper   derper             [.] runtime.releaseSudog
+     0.02%  derper   [kernel.kallsyms]  [k] futex_wait
+     0.02%  derper   [kernel.kallsyms]  [k] x64_setup_rt_frame
+     0.02%  derper   [kernel.kallsyms]  [k] free_iova_fast
+     0.02%  derper   derper             [.] runtime.(*gcWork).empty
+     0.02%  derper   [kernel.kallsyms]  [k] futex_hash
+     0.02%  derper   derper             [.] type:.eq.tailscale.com/derp/derpserver.dropReasonKindLabels
+     0.02%  derper   [kernel.kallsyms]  [k] __wake_up_sync_key
+     0.02%  derper   [kernel.kallsyms]  [k] switch_fpu_return
+     0.02%  derper   [kernel.kallsyms]  [k] mlx5e_tx_check_stop
+     0.02%  derper   derper             [.] runtime.(*gcControllerState).memoryLimitHeapGoal
+     0.02%  derper   [kernel.kallsyms]  [k] minmax_running_min
+     0.02%  derper   [kernel.kallsyms]  [k] get_signal
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_do_parse_auth_options
+     0.02%  derper   [kernel.kallsyms]  [k] asm_common_interrupt
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_gro_complete
+     0.02%  derper   derper             [.] runtime.(*gcControllerState).releaseNextGCMarkWorker
+     0.02%  derper   [kernel.kallsyms]  [k] update_entity_lag
+     0.02%  derper   [kernel.kallsyms]  [k] update_dl_rq_load_avg
+     0.02%  derper   [kernel.kallsyms]  [k] futex_q_lock
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_newly_delivered
+     0.02%  derper   [kernel.kallsyms]  [k] get_vma_policy
+     0.02%  derper   [kernel.kallsyms]  [k] refill_stock
+     0.02%  derper   derper             [.] runtime.gcWriteBarrier2
+     0.02%  derper   [kernel.kallsyms]  [k] pick_eevdf
+     0.02%  derper   [kernel.kallsyms]  [k] __pte_offset_map
+     0.02%  derper   [kernel.kallsyms]  [k] enqueue_task_fair
+     0.02%  derper   [kernel.kallsyms]  [k] get_futex_key
+     0.02%  derper   [kernel.kallsyms]  [k] __fpu_restore_sig
+     0.02%  derper   derper             [.] internal/poll.setDeadlineImpl.deferwrap1
+     0.02%  derper   [kernel.kallsyms]  [k] __update_idle_core
+     0.02%  derper   [kernel.kallsyms]  [k] ___slab_alloc
+     0.02%  derper   [kernel.kallsyms]  [k] __hrtimer_run_queues
+     0.02%  derper   [kernel.kallsyms]  [k] handle_mm_fault
+     0.02%  derper   derper             [.] runtime.gcShouldScheduleWorker
+     0.02%  derper   [kernel.kallsyms]  [k] sk_page_frag_refill
+     0.02%  derper   [kernel.kallsyms]  [k] update_cfs_group
+     0.02%  derper   derper             [.] runtime.wbZero
+     0.02%  derper   [kernel.kallsyms]  [k] inet_send_prepare
+     0.02%  derper   [kernel.kallsyms]  [k] perf_ctx_unlock
+     0.02%  derper   derper             [.] runtime.(*stkframe).argMapInternal
+     0.02%  derper   [kernel.kallsyms]  [k] __flush_smp_call_function_queue
+     0.02%  derper   [kernel.kallsyms]  [k] error_return
+     0.02%  derper   derper             [.] runtime.freeDeadSpanSPMCs
+     0.02%  derper   derper             [.] runtime.futexsleep
+     0.02%  derper   derper             [.] runtime.(*gcControllerState).revise
+     0.02%  derper   [kernel.kallsyms]  [k] do_futex
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_stream_memory_free
+     0.02%  derper   [kernel.kallsyms]  [k] set_next_task_idle
+     0.02%  derper   derper             [.] runtime.(*stackScanState).getPtr
+     0.02%  derper   derper             [.] runtime.runqput
+     0.02%  derper   [kernel.kallsyms]  [k] napi_skb_free_stolen_head
+     0.02%  derper   [kernel.kallsyms]  [k] default_send_IPI_mask_sequence_phys
+     0.02%  derper   [kernel.kallsyms]  [k] update_rt_rq_load_avg
+     0.02%  derper   [kernel.kallsyms]  [k] jiffies_to_usecs
+     0.02%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_rcx
+     0.02%  derper   [kernel.kallsyms]  [k] rcu_note_context_switch
+     0.02%  derper   derper             [.] runtime.newArenaMayUnlock
+     0.02%  derper   [kernel.kallsyms]  [k] mod_timer
+     0.02%  derper   [kernel.kallsyms]  [k] kmem_cache_size
+     0.02%  derper   [kernel.kallsyms]  [k] skb_copy_datagram_iter
+     0.02%  derper   [kernel.kallsyms]  [k] get_sigframe
+     0.02%  derper   [kernel.kallsyms]  [k] put_prev_task_fair
+     0.02%  derper   derper             [.] runtime.memequal_varlen
+     0.02%  derper   derper             [.] runtime.gogo.abi0
+     0.02%  derper   [kernel.kallsyms]  [k] apparmor_socket_sock_rcv_skb
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_cleanup_rbuf
+     0.02%  derper   [kernel.kallsyms]  [k] lock_vma_under_rcu
+     0.02%  derper   derper             [.] runtime.sysmon
+     0.02%  derper   derper             [.] runtime.newstack
+     0.02%  derper   derper             [.] runtime.semasleep
+     0.02%  derper   [kernel.kallsyms]  [k] irqentry_exit
+     0.02%  derper   [kernel.kallsyms]  [k] __enqueue_entity
+     0.02%  derper   derper             [.] internal/poll.(*FD).Write.deferwrap1
+     0.02%  derper   derper             [.] runtime.unblockTimerChan
+     0.02%  derper   [kernel.kallsyms]  [k] blkcg_maybe_throttle_current
+     0.02%  derper   derper             [.] runtime.globrunqgetbatch
+     0.02%  derper   [kernel.kallsyms]  [k] perf_pmu_sched_task
+     0.02%  derper   [kernel.kallsyms]  [k] bbr_lt_bw_sampling
+     0.02%  derper   [kernel.kallsyms]  [k] skb_push
+     0.02%  derper   derper             [.] runtime.memhash
+     0.02%  derper   [kernel.kallsyms]  [k] __x64_sys_write
+     0.02%  derper   derper             [.] runtime.(*scavengeIndex).free
+     0.02%  derper   derper             [.] runtime.(*mheap).allocNeedsZero
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_rack_update_reo_wnd
+     0.02%  derper   [kernel.kallsyms]  [k] record_times
+     0.02%  derper   [kernel.kallsyms]  [k] fpu__clear_user_states
+     0.02%  derper   [kernel.kallsyms]  [k] task_non_contending
+     0.02%  derper   [kernel.kallsyms]  [k] tcp_chrono_stop
+     0.02%  derper   [kernel.kallsyms]  [k] lapic_next_deadline
+     0.02%  derper   derper             [.] runtime.convT64
+     0.02%  derper   derper             [.] runtime.gcAssistAlloc
+     0.02%  derper   [kernel.kallsyms]  [k] arch_do_signal_or_restart
+     0.02%  derper   [kernel.kallsyms]  [k] __put_user_nocheck_4
+     0.02%  derper   [kernel.kallsyms]  [k] sugov_update_single_freq
+     0.02%  derper   derper             [.] runtime.sigtrampgo
+     0.02%  derper   [kernel.kallsyms]  [k] page_pool_refill_alloc_cache
+     0.02%  derper   [kernel.kallsyms]  [k] psi_flags_change
+     0.02%  derper   derper             [.] net.(*TCPConn).Read
+     0.02%  derper   derper             [.] runtime.notesleep
+     0.01%  derper   [kernel.kallsyms]  [k] __kfree_skb
+     0.01%  derper   [kernel.kallsyms]  [k] __cgroup_account_cputime
+     0.01%  derper   [kernel.kallsyms]  [k] page_counter_uncharge
+     0.01%  derper   [kernel.kallsyms]  [k] futex_unqueue
+     0.01%  derper   [kernel.kallsyms]  [k] __lruvec_stat_mod_folio
+     0.01%  derper   [kernel.kallsyms]  [k] kfree_skb_partial
+     0.01%  derper   [kernel.kallsyms]  [k] __count_memcg_events
+     0.01%  derper   [kernel.kallsyms]  [k] bbr_set_pacing_rate
+     0.01%  derper   [kernel.kallsyms]  [k] x86_pmu_disable
+     0.01%  derper   derper             [.] sync.(*poolChain).popTail
+     0.01%  derper   [kernel.kallsyms]  [k] __memset
+     0.01%  derper   derper             [.] runtime.usleep.abi0
+     0.01%  derper   [kernel.kallsyms]  [k] mem_cgroup_handle_over_high
+     0.01%  derper   derper             [.] runtime.(*stackScanState).putPtr
+     0.01%  derper   derper             [.] runtime.markrootSpans
+     0.01%  derper   [kernel.kallsyms]  [k] __x64_sys_epoll_pwait
+     0.01%  derper   derper             [.] runtime.(*pageAlloc).free
+     0.01%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_r10
+     0.01%  derper   [kernel.kallsyms]  [k] sched_clock_cpu
+     0.01%  derper   derper             [.] runtime.(*gcWork).dispose
+     0.01%  derper   [kernel.kallsyms]  [k] free_tail_page_prepare
+     0.01%  derper   [kernel.kallsyms]  [k] alloc_pages_noprof
+     0.01%  derper   derper             [.] runtime.sighandler
+     0.01%  derper   [kernel.kallsyms]  [k] prandom_u32_state
+     0.01%  derper   [kernel.kallsyms]  [k] rep_stos_alternative
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_schedule_loss_probe
+     0.01%  derper   derper             [.] runtime.isAbortPC
+     0.01%  derper   derper             [.] runtime.sigfwdgo
+     0.01%  derper   derper             [.] sync.(*Pool).getSlow
+     0.01%  derper   derper             [.] tailscale.com/derp/derpserver.(*lazyBufioWriter).Flush
+     0.01%  derper   [kernel.kallsyms]  [k] down_read_trylock
+     0.01%  derper   [kernel.kallsyms]  [k] mem_cgroup_uncharge_skmem
+     0.01%  derper   derper             [.] runtime.taggedPointerPack
+     0.01%  derper   derper             [.] runtime.netpollblockcommit
+     0.01%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_rdx
+     0.01%  derper   derper             [.] runtime.castogscanstatus
+     0.01%  derper   derper             [.] runtime.pidleget
+     0.01%  derper   derper             [.] runtime.nilinterhash
+     0.01%  derper   [kernel.kallsyms]  [k] exc_page_fault
+     0.01%  derper   derper             [.] internal/poll.(*FD).Read.deferwrap1
+     0.01%  derper   derper             [.] runtime.(*gcWork).balance
+     0.01%  derper   [kernel.kallsyms]  [k] do_dec_rlimit_put_ucounts
+     0.01%  derper   [kernel.kallsyms]  [k] _find_next_bit
+     0.01%  derper   [kernel.kallsyms]  [k] cond_accept_memory
+     0.01%  derper   derper             [.] runtime.doSigPreempt
+     0.01%  derper   [kernel.kallsyms]  [k] do_user_addr_fault
+     0.01%  derper   derper             [.] runtime.(*pageAlloc).find
+     0.01%  derper   [kernel.kallsyms]  [k] apparmor_socket_sendmsg
+     0.01%  derper   derper             [.] tailscale.com/metrics.(*MultiLabelMap[go.shape.struct { Reason string; Kind string }]).getOrFill
+     0.01%  derper   derper             [.] runtime.semacquire1
+     0.01%  derper   [kernel.kallsyms]  [k] _raw_spin_trylock
+     0.01%  derper   [kernel.kallsyms]  [k] reweight_entity
+     0.01%  derper   derper             [.] runtime.forEachPInternal
+     0.01%  derper   derper             [.] runtime.(*unwinder).initAt
+     0.01%  derper   [kernel.kallsyms]  [k] mlx5e_txqsq_wake
+     0.01%  derper   derper             [.] runtime.(*gcControllerState).trigger
+     0.01%  derper   derper             [.] runtime.(*mheap).alloc
+     0.01%  derper   [kernel.kallsyms]  [k] iommu_put_pages_list
+     0.01%  derper   [kernel.kallsyms]  [k] restore_fpregs_from_fpstate
+     0.01%  derper   [kernel.kallsyms]  [k] ktime_get_seconds
+     0.01%  derper   derper             [.] runtime.(*spanQueue).put
+     0.01%  derper   derper             [.] gosave_systemstack_switch
+     0.01%  derper   [kernel.kallsyms]  [k] call_function_single_prep_ipi
+     0.01%  derper   [kernel.kallsyms]  [k] collect_signal
+     0.01%  derper   [kernel.kallsyms]  [k] sk_leave_memory_pressure
+     0.01%  derper   [kernel.kallsyms]  [k] restore_sigcontext
+     0.01%  derper   derper             [.] runtime.(*mcache).prepareForSweep
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_data_ready
+     0.01%  derper   [kernel.kallsyms]  [k] page_counter_try_charge
+     0.01%  derper   [kernel.kallsyms]  [k] default_send_IPI_single_phys
+     0.01%  derper   derper             [.] gogo
+     0.01%  derper   [kernel.kallsyms]  [k] __memcg_slab_post_alloc_hook
+     0.01%  derper   [kernel.kallsyms]  [k] __send_signal_locked
+     0.01%  derper   [kernel.kallsyms]  [k] sched_balance_rq
+     0.01%  derper   [kernel.kallsyms]  [k] hrtimer_try_to_cancel.part.0
+     0.01%  derper   [kernel.kallsyms]  [k] mutex_lock
+     0.01%  derper   [kernel.kallsyms]  [k] tick_program_event
+     0.01%  derper   derper             [.] runtime.tracebackPCs
+     0.01%  derper   derper             [.] runtime.pidlegetSpinning
+     0.01%  derper   [kernel.kallsyms]  [k] __dequeue_dl_entity
+     0.01%  derper   derper             [.] runtime.(*timeHistogram).record
+     0.01%  derper   derper             [.] runtime.checkdead
+     0.01%  derper   [kernel.kallsyms]  [k] raise_softirq_irqoff
+     0.01%  derper   derper             [.] runtime.pcdatavalue
+     0.01%  derper   [kernel.kallsyms]  [k] mlx5_eq_async_int
+     0.01%  derper   [kernel.kallsyms]  [k] psi_task_change
+     0.01%  derper   derper             [.] runtime.(*mheap).allocMSpanLocked
+     0.01%  derper   derper             [.] runtime.(*limiterEvent).stop
+     0.01%  derper   derper             [.] runtime.(*gcWork).tryGetObj
+     0.01%  derper   [kernel.kallsyms]  [k] get_pfnblock_flags_mask
+     0.01%  derper   [kernel.kallsyms]  [k] bpf_lsm_socket_sock_rcv_skb
+     0.01%  derper   [kernel.kallsyms]  [k] enqueue_entity
+     0.01%  derper   [kernel.kallsyms]  [k] check_preempt_wakeup_fair
+     0.01%  derper   derper             [.] runtime.(*gcWork).tryGetSpan
+     0.01%  derper   derper             [.] runtime.(*pageCache).alloc
+     0.01%  derper   [kernel.kallsyms]  [k] apparmor_task_kill
+     0.01%  derper   [kernel.kallsyms]  [k] free_unref_page_commit
+     0.01%  derper   [kernel.kallsyms]  [k] __get_user_nocheck_4
+     0.01%  derper   derper             [.] runtime.runSafePointFn
+     0.01%  derper   derper             [.] runtime.(*pageCache).allocN
+     0.01%  derper   derper             [.] runtime.osyield.abi0
+     0.01%  derper   derper             [.] sync.runtime_procUnpin
+     0.01%  derper   [kernel.kallsyms]  [k] __x64_sys_nanosleep
+     0.01%  derper   derper             [.] net.(*TCPConn).Write
+     0.01%  derper   [kernel.kallsyms]  [k] yield_task_fair
+     0.01%  derper   [kernel.kallsyms]  [k] kmem_cache_alloc_noprof
+     0.01%  derper   derper             [.] runtime.gcNextMarkRoot
+     0.01%  derper   derper             [.] runtime.bgsweep
+     0.01%  derper   [kernel.kallsyms]  [k] __x64_sys_rt_sigreturn
+     0.01%  derper   [kernel.kallsyms]  [k] llist_reverse_order
+     0.01%  derper   [kernel.kallsyms]  [k] get_nohz_timer_target
+     0.01%  derper   derper             [.] internal/sync.(*Mutex).unlockSlow
+     0.01%  derper   derper             [.] internal/poll.(*pollDesc).wait
+     0.01%  derper   derper             [.] runtime.incidlelocked
+     0.01%  derper   [kernel.kallsyms]  [k] enqueue_hrtimer
+     0.01%  derper   derper             [.] runtime.blockTimerChan
+     0.01%  derper   derper             [.] runtime.(*mheap).setSpans
+     0.01%  derper   [kernel.kallsyms]  [k] mutex_unlock
+     0.01%  derper   derper             [.] runtime.(*pageBits).clearRange
+     0.01%  derper   [kernel.kallsyms]  [k] clockevents_program_event
+     0.01%  derper   derper             [.] runtime.(*spanQueue).steal
+     0.01%  derper   [kernel.kallsyms]  [k] mod_objcg_state
+     0.01%  derper   derper             [.] runtime.semrelease1
+     0.01%  derper   [kernel.kallsyms]  [k] ep_done_scan
+     0.01%  derper   [kernel.kallsyms]  [k] hrtimer_nanosleep
+     0.01%  derper   derper             [.] runtime.(*gcControllerState).heapGoalInternal
+     0.01%  derper   derper             [.] runtime.(*pageBits).popcntRange
+     0.01%  derper   [kernel.kallsyms]  [k] __irqentry_text_start
+     0.01%  derper   derper             [.] crypto/tls.(*xorNonceAEAD).explicitNonceLen
+     0.01%  derper   [kernel.kallsyms]  [k] bpf_lsm_file_permission
+     0.01%  derper   derper             [.] runtime.(*gcWork).putObjBatch
+     0.01%  derper   derper             [.] runtime.(*mLockProfile).start
+     0.01%  derper   [kernel.kallsyms]  [k] futex_wait_queue
+     0.01%  derper   [kernel.kallsyms]  [k] alloc_pages_mpol_noprof
+     0.01%  derper   [kernel.kallsyms]  [k] sched_clock
+     0.01%  derper   [kernel.kallsyms]  [k] do_sched_yield
+     0.01%  derper   derper             [.] runtime.casfrom_Gscanstatus
+     0.01%  derper   [kernel.kallsyms]  [k] timerqueue_del
+     0.01%  derper   derper             [.] internal/poll.runtime_pollWait
+     0.01%  derper   [kernel.kallsyms]  [k] __remove_hrtimer
+     0.01%  derper   [kernel.kallsyms]  [k] sk_forced_mem_schedule
+     0.01%  derper   [kernel.kallsyms]  [k] fpregs_mark_activate
+     0.01%  derper   derper             [.] runtime.(*pallocBits).findSmallN
+     0.01%  derper   [kernel.kallsyms]  [k] free_unref_folios
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_ack_tstamp
+     0.01%  derper   derper             [.] runtime.runqputbatch
+     0.01%  derper   [kernel.kallsyms]  [k] update_curr_dl_se
+     0.01%  derper   derper             [.] runtime.(*pageAlloc).allocRange
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_tsq_handler
+     0.01%  derper   [kernel.kallsyms]  [k] plist_add
+     0.01%  derper   [kernel.kallsyms]  [k] __folio_batch_add_and_move
+     0.01%  derper   [kernel.kallsyms]  [k] ip_queue_xmit
+     0.01%  derper   derper             [.] runtime.(*gcControllerState).assignWaitingGCWorker
+     0.01%  derper   [kernel.kallsyms]  [k] __pskb_pull_tail
+     0.01%  derper   derper             [.] runtime.sigsend
+     0.01%  derper   [kernel.kallsyms]  [k] __perf_event_task_sched_in
+     0.01%  derper   [kernel.kallsyms]  [k] task_h_load
+     0.01%  derper   [kernel.kallsyms]  [k] hrtimer_interrupt
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_tsq_write.part.0
+     0.01%  derper   [kernel.kallsyms]  [k] percpu_counter_add_batch
+     0.01%  derper   derper             [.] runtime.mergeSummaries
+     0.01%  derper   derper             [.] runtime.(*mspan).initHeapBits
+     0.01%  derper   derper             [.] runtime.selparkcommit
+     0.01%  derper   [kernel.kallsyms]  [k] __x64_sys_read
+     0.01%  derper   derper             [.] runtime.cgoSigtramp.abi0
+     0.01%  derper   [kernel.kallsyms]  [k] __hrtimer_init
+     0.01%  derper   derper             [.] runtime.ready
+     0.01%  derper   [kernel.kallsyms]  [k] policy_nodemask
+     0.01%  derper   derper             [.] runtime.efaceeq
+     0.01%  derper   derper             [.] runtime.forEachG
+     0.01%  derper   [kernel.kallsyms]  [k] enqueue_task
+     0.01%  derper   [kernel.kallsyms]  [k] futex_wait_setup
+     0.01%  derper   derper             [.] runtime.exitsyscallNoP
+     0.01%  derper   [kernel.kallsyms]  [k] folio_add_new_anon_rmap
+     0.01%  derper   [kernel.kallsyms]  [k] blk_cgroup_congested
+     0.01%  derper   [kernel.kallsyms]  [k] do_epoll_pwait.part.0
+     0.01%  derper   derper             [.] runtime.shrinkstack
+     0.01%  derper   [kernel.kallsyms]  [k] page_pool_alloc_pages
+     0.01%  derper   [kernel.kallsyms]  [k] perf_ctx_enable
+     0.01%  derper   derper             [.] runtime.injectglist
+     0.01%  derper   derper             [.] runtime.(*spanQueue).refill
+     0.01%  derper   [kernel.kallsyms]  [k] update_other_load_avgs
+     0.01%  derper   [kernel.kallsyms]  [k] up_read
+     0.01%  derper   [kernel.kallsyms]  [k] minmax_running_max
+     0.01%  derper   [kernel.kallsyms]  [k] fpu__alloc_mathframe
+     0.01%  derper   derper             [.] runtime.(*pageBits).setRange
+     0.01%  derper   [kernel.kallsyms]  [k] arch_scale_cpu_capacity
+     0.01%  derper   [kernel.kallsyms]  [k] tomoyo_socket_sendmsg
+     0.01%  derper   [kernel.kallsyms]  [k] bbr_cwnd_event
+     0.01%  derper   [kernel.kallsyms]  [k] recalc_sigpending
+     0.01%  derper   [kernel.kallsyms]  [k] folio_batch_move_lru
+     0.01%  derper   [kernel.kallsyms]  [k] _raw_spin_unlock_irq
+     0.01%  derper   derper             [.] runtime.(*mspan).heapBitsSmallForAddr
+     0.01%  derper   derper             [.] runtime.typeBitsBulkBarrier
+     0.01%  derper   [kernel.kallsyms]  [k] __hrtimer_next_event_base
+     0.01%  derper   [kernel.kallsyms]  [k] calc_wheel_index
+     0.01%  derper   [kernel.kallsyms]  [k] lru_gen_del_folio.constprop.0
+     0.01%  derper   [kernel.kallsyms]  [k] rb_prev
+     0.01%  derper   [kernel.kallsyms]  [k] do_nanosleep
+     0.01%  derper   [kernel.kallsyms]  [k] __futex_unqueue
+     0.01%  derper   [kernel.kallsyms]  [k] bpf_lsm_socket_sendmsg
+     0.01%  derper   [kernel.kallsyms]  [k] __dequeue_entity
+     0.01%  derper   [kernel.kallsyms]  [k] raw_spin_rq_lock_nested
+     0.01%  derper   [kernel.kallsyms]  [k] should_flush_tlb
+     0.01%  derper   [kernel.kallsyms]  [k] xfd_validate_state
+     0.01%  derper   [kernel.kallsyms]  [k] sysvec_reschedule_ipi
+     0.01%  derper   [kernel.kallsyms]  [k] _find_first_bit
+     0.01%  derper   derper             [.] runtime.(*limiterEvent).consume
+     0.01%  derper   [kernel.kallsyms]  [k] sysvec_call_function
+     0.01%  derper   [kernel.kallsyms]  [k] aa_may_signal
+     0.01%  derper   [kernel.kallsyms]  [k] dl_server_stop
+     0.01%  derper   derper             [.] runtime.(*gcCPULimiterState).updateLocked
+     0.01%  derper   [kernel.kallsyms]  [k] radix_tree_lookup
+     0.01%  derper   [kernel.kallsyms]  [k] _find_next_and_bit
+     0.01%  derper   [kernel.kallsyms]  [k] task_curr
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_send_ack
+     0.01%  derper   [kernel.kallsyms]  [k] __rb_insert_augmented
+     0.01%  derper   [kernel.kallsyms]  [k] prepare_signal
+     0.01%  derper   [kernel.kallsyms]  [k] inc_rlimit_get_ucounts
+     0.01%  derper   [kernel.kallsyms]  [k] __mem_cgroup_charge
+     0.01%  derper   derper             [.] runtime.pidleput
+     0.01%  derper   derper             [.] internal/sync.runtime_canSpin
+     0.01%  derper   [kernel.kallsyms]  [k] sched_balance_find_src_group
+     0.01%  derper   derper             [.] runtime.procresize
+     0.01%  derper   derper             [.] runtime.resetspinning
+     0.01%  derper   [kernel.kallsyms]  [k] refill_obj_stock
+     0.01%  derper   [kernel.kallsyms]  [k] early_xen_iret_patch
+     0.01%  derper   [kernel.kallsyms]  [k] lru_add
+     0.01%  derper   derper             [.] runtime.signalM
+     0.01%  derper   [kernel.kallsyms]  [k] ktime_get_update_offsets_now
+     0.01%  derper   [kernel.kallsyms]  [k] lru_gen_add_folio
+     0.01%  derper   derper             [.] internal/runtime/syscall/linux.EpollWait
+     0.01%  derper   [kernel.kallsyms]  [k] __free_one_page
+     0.01%  derper   [kernel.kallsyms]  [k] profile_signal_perm
+     0.01%  derper   [kernel.kallsyms]  [k] __mod_node_page_state
+     0.01%  derper   derper             [.] runtime.morestack.abi0
+     0.01%  derper   [kernel.kallsyms]  [k] skb_condense
+     0.01%  derper   [kernel.kallsyms]  [k] find_task_by_vpid
+     0.01%  derper   [kernel.kallsyms]  [k] _copy_from_user
+     0.01%  derper   [kernel.kallsyms]  [k] __pte_offset_map_lock
+     0.01%  derper   derper             [.] runtime.mProf_FlushLocked
+     0.01%  derper   [kernel.kallsyms]  [k] do_sigaltstack.constprop.0
+     0.01%  derper   [kernel.kallsyms]  [k] pte_offset_map_nolock
+     0.01%  derper   derper             [.] runtime.memequal64
+     0.01%  derper   derper             [.] runtime.send
+     0.01%  derper   [kernel.kallsyms]  [k] folios_put_refs
+     0.01%  derper   [kernel.kallsyms]  [k] hrtimer_reprogram
+     0.01%  derper   libc.so.6          [.] 0x000000000003fdf0
+     0.01%  derper   [kernel.kallsyms]  [k] _raw_spin_rq_lock_irqsave
+     0.01%  derper   derper             [.] runtime.(*pageAlloc).allocToCache
+     0.01%  derper   [kernel.kallsyms]  [k] vma_alloc_folio_noprof
+     0.01%  derper   [kernel.kallsyms]  [k] place_entity
+     0.01%  derper   [kernel.kallsyms]  [k] hrtimer_try_to_cancel
+     0.01%  derper   [kernel.kallsyms]  [k] tick_nohz_get_idle_calls_cpu
+     0.01%  derper   [kernel.kallsyms]  [k] wake_up_q
+     0.01%  derper   [kernel.kallsyms]  [k] restore_regs_and_return_to_kernel
+     0.01%  derper   [kernel.kallsyms]  [k] tcp_xmit_recovery
+     0.01%  derper   derper             [.] runtime.stopm
+     0.01%  derper   [kernel.kallsyms]  [k] __get_user_nocheck_8
+     0.01%  derper   derper             [.] runtime.sigtramp.abi0
+     0.01%  derper   derper             [.] runtime.(*spanInlineMarkBits).init
+     0.01%  derper   [kernel.kallsyms]  [k] complete_signal
+     0.01%  derper   [kernel.kallsyms]  [k] __sysvec_apic_timer_interrupt
+     0.01%  derper   derper             [.] runtime.gcFlushBgCredit
+     0.01%  derper   derper             [.] runtime.adjustframe
+     0.01%  derper   derper             [.] runtime.convTnoptr
+     0.01%  derper   [kernel.kallsyms]  [k] wake_q_add_safe
+     0.01%  derper   derper             [.] runtime.wbBufFlush.func1
+     0.01%  derper   [kernel.kallsyms]  [k] signal_setup_done
+     0.01%  derper   [kernel.kallsyms]  [k] skb_copy_bits
+     0.01%  derper   [kernel.kallsyms]  [k] select_idle_core.isra.0
+     0.01%  derper   [kernel.kallsyms]  [k] propagate_protected_usage
+     0.01%  derper   [kernel.kallsyms]  [k] set_user_sigmask
+     0.01%  derper   derper             [.] runtime.gcWriteBarrier4
+     0.01%  derper   [kernel.kallsyms]  [k] __vmf_anon_prepare
+     0.01%  derper   derper             [.] runtime.(*fixalloc).alloc
+     0.01%  derper   derper             [.] runtime.gcWriteBarrier1
+     0.01%  derper   [kernel.kallsyms]  [k] __folio_throttle_swaprate
+     0.01%  derper   derper             [.] runtime.(*mcentral).grow
+     0.01%  derper   derper             [.] runtime.adjustSignalStack
+     0.01%  derper   derper             [.] runtime.gcAssistAlloc1
+     0.01%  derper   derper             [.] runtime.stkbucket
+     0.01%  derper   [kernel.kallsyms]  [k] __zone_watermark_ok
+     0.01%  derper   derper             [.] runtime.checkTimersNoP
+     0.01%  derper   derper             [.] runtime.mapaccess1
+     0.01%  derper   [kernel.kallsyms]  [k] sysvec_apic_timer_interrupt
+     0.01%  derper   [kernel.kallsyms]  [k] irq_exit_rcu
+     0.01%  derper   [kernel.kallsyms]  [k] drain_stock
+     0.01%  derper   [kernel.kallsyms]  [k] __futex_queue
+     0.01%  derper   derper             [.] runtime.(*listHeadManual).push
+     0.01%  derper   derper             [.] runtime.acquirep
+     0.01%  derper   [kernel.kallsyms]  [k] _copy_to_user
+     0.01%  derper   derper             [.] runtime.(*pallocData).allocRange
+     0.01%  derper   [kernel.kallsyms]  [k] ttwu_do_activate
+     0.01%  derper   derper             [.] runtime.preemptall
+     0.00%  derper   derper             [.] runtime.trygetfull
+     0.00%  derper   [kernel.kallsyms]  [k] pick_task_idle
+     0.00%  derper   [kernel.kallsyms]  [k] __folio_mod_stat
+     0.00%  derper   [kernel.kallsyms]  [k] mlx5_cmd_comp_handler
+     0.00%  derper   [kernel.kallsyms]  [k] cpufreq_this_cpu_can_update
+     0.00%  derper   derper             [.] runtime.gcMarkDone.func1
+     0.00%  derper   [kernel.kallsyms]  [k] dequeue_signal
+     0.00%  derper   [kernel.kallsyms]  [k] __memcpy
+     0.00%  derper   derper             [.] runtime.(*semaRoot).dequeue
+     0.00%  derper   derper             [.] runtime.casGToWaitingForSuspendG
+     0.00%  derper   derper             [.] runtime.wbBufFlush
+     0.00%  derper   derper             [.] runtime.(*sweepLocked).sweep.(*mheap).freeSpan.func2
+     0.00%  derper   derper             [.] runtime.tgkill.abi0
+     0.00%  derper   derper             [.] runtime.(*mheap).alloc.func1
+     0.00%  derper   [kernel.kallsyms]  [k] security_task_kill
+     0.00%  derper   derper             [.] runtime.(*pageCache).flush
+     0.00%  derper   [kernel.kallsyms]  [k] asm_sysvec_reschedule_ipi
+     0.00%  derper   [kernel.kallsyms]  [k] uncharge_folio
+     0.00%  derper   [kernel.kallsyms]  [k] __x64_sys_sched_yield
+     0.00%  derper   derper             [.] sync.(*poolDequeue).popTail
+     0.00%  derper   derper             [.] runtime.sendDirect
+     0.00%  derper   [kernel.kallsyms]  [k] setup_signal_shadow_stack
+     0.00%  derper   [kernel.kallsyms]  [k] __msecs_to_jiffies
+     0.00%  derper   [kernel.kallsyms]  [k] free_pages_and_swap_cache
+     0.00%  derper   [kernel.kallsyms]  [k] copy_siginfo_to_user
+     0.00%  derper   [kernel.kallsyms]  [k] do_softirq.part.0
+     0.00%  derper   [kernel.kallsyms]  [k] cpu_util_cfs_boost
+     0.00%  derper   [kernel.kallsyms]  [k] access_error
+     0.00%  derper   derper             [.] runtime.markroot.func1
+     0.00%  derper   [kernel.kallsyms]  [k] __x64_sys_tgkill
+     0.00%  derper   derper             [.] runtime.(*wbBuf).reset
+     0.00%  derper   [kernel.kallsyms]  [k] plist_del
+     0.00%  derper   [kernel.kallsyms]  [k] sugov_get_util
+     0.00%  derper   derper             [.] runtime.(*pollDesc).setEventErr
+     0.00%  derper   [kernel.kallsyms]  [k] pte_mkwrite
+     0.00%  derper   derper             [.] runtime.checkRunqsNoP
+     0.00%  derper   derper             [.] runtime.(*gcControllerState).enlistWorker
+     0.00%  derper   [kernel.kallsyms]  [k] set_task_cpu
+     0.00%  derper   derper             [.] runtime.freeSomeWbufs
+     0.00%  derper   derper             [.] runtime.(*pallocBits).find
+     0.00%  derper   [kernel.kallsyms]  [k] __mod_zone_page_state
+     0.00%  derper   [kernel.kallsyms]  [k] count_memcg_events.constprop.0
+     0.00%  derper   derper             [.] runtime.isAsyncSafePoint
+     0.00%  derper   derper             [.] runtime.notetsleep_internal
+     0.00%  derper   derper             [.] runtime.startm
+     0.00%  derper   [kernel.kallsyms]  [k] task_active_pid_ns
+     0.00%  derper   derper             [.] runtime.(*bucket).mp
+     0.00%  derper   [kernel.kallsyms]  [k] hrtick_update
+     0.00%  derper   [kernel.kallsyms]  [k] __pm_relax
+     0.00%  derper   derper             [.] runtime.notewakeup
+     0.00%  derper   [kernel.kallsyms]  [k] __page_cache_release.part.0
+     0.00%  derper   derper             [.] runtime.(*semaRoot).queue
+     0.00%  derper   [kernel.kallsyms]  [k] send_signal_locked
+     0.00%  derper   [kernel.kallsyms]  [k] kthread_is_per_cpu
+     0.00%  derper   [kernel.kallsyms]  [k] dl_server_update
+     0.00%  derper   derper             [.] runtime.(*listHeadManual).pop
+     0.00%  derper   [kernel.kallsyms]  [k] memcmp
+     0.00%  derper   derper             [.] runtime.gcMarkDone
+     0.00%  derper   [kernel.kallsyms]  [k] set_next_entity
+     0.00%  derper   [kernel.kallsyms]  [k] asm_exc_page_fault
+     0.00%  derper   derper             [.] runtime.adjustpointers
+     0.00%  derper   derper             [.] runtime.putempty
+     0.00%  derper   derper             [.] runtime.wirep
+     0.00%  derper   derper             [.] runtime.cputicks.abi0
+     0.00%  derper   [kernel.kallsyms]  [k] restore_altstack
+     0.00%  derper   derper             [.] runtime.finishsweep_m
+     0.00%  derper   [kernel.kallsyms]  [k] __folio_put
+     0.00%  derper   [kernel.kallsyms]  [k] effective_cpu_util
+     0.00%  derper   [kernel.kallsyms]  [k] __put_user_8
+     0.00%  derper   derper             [.] runtime.releasep
+     0.00%  derper   [kernel.kallsyms]  [k] __queue_work.part.0
+     0.00%  derper   [kernel.kallsyms]  [k] __sigqueue_alloc
+     0.00%  derper   derper             [.] runtime.(*spanSetBlockAlloc).alloc
+     0.00%  derper   [kernel.kallsyms]  [k] get_timespec64
+     0.00%  derper   [kernel.kallsyms]  [k] check_kill_permission
+     0.00%  derper   [kernel.kallsyms]  [k] obj_cgroup_charge
+     0.00%  derper   [kernel.kallsyms]  [k] kthread_blkcg
+     0.00%  derper   [kernel.kallsyms]  [k] futex_setup_timer
+     0.00%  derper   [kernel.kallsyms]  [k] rcu_sched_clock_irq
+     0.00%  derper   derper             [.] sync.(*poolChain).popHead
+     0.00%  derper   [kernel.kallsyms]  [k] __sk_mem_reclaim
+     0.00%  derper   [kernel.kallsyms]  [k] kick_process
+     0.00%  derper   [kernel.kallsyms]  [k] __mod_lruvec_state
+     0.00%  derper   [kernel.kallsyms]  [k] set_current_blocked
+     0.00%  derper   [kernel.kallsyms]  [k] folio_remove_rmap_ptes
+     0.00%  derper   [kernel.kallsyms]  [k] mksaveddirty_shift
+     0.00%  derper   derper             [.] runtime.(*pageAlloc).scavengeOne
+     0.00%  derper   derper             [.] runtime.spanOfHeap
+     0.00%  derper   [kernel.kallsyms]  [k] task_tick_fair
+     0.00%  derper   [kernel.kallsyms]  [k] cpu_util
+     0.00%  derper   [kernel.kallsyms]  [k] folio_add_lru
+     0.00%  derper   derper             [.] runtime.xRegSave
+     0.00%  derper   [kernel.kallsyms]  [k] wakeup_preempt
+     0.00%  derper   [kernel.kallsyms]  [k] sched_clock_noinstr
+     0.00%  derper   derper             [.] runtime.releasepNoTrace
+     0.00%  derper   derper             [.] runtime.gcBgMarkWorker
+     0.00%  derper   derper             [.] runtime.startTheWorldWithSema
+     0.00%  derper   derper             [.] runtime.getpid.abi0
+     0.00%  derper   [kernel.kallsyms]  [k] perf_adjust_freq_unthr_context
+     0.00%  derper   [kernel.kallsyms]  [k] do_madvise
+     0.00%  derper   [kernel.kallsyms]  [k] __set_next_task_fair.part.0
+     0.00%  derper   derper             [.] runtime.gcstopm
+     0.00%  derper   derper             [.] runtime.acquirepNoTrace
+     0.00%  derper   [kernel.kallsyms]  [k] set_next_buddy
+     0.00%  derper   [kernel.kallsyms]  [k] __tasklet_schedule
+     0.00%  derper   derper             [.] runtime.stopTheWorldWithSema
+     0.00%  derper   [kernel.kallsyms]  [k] __put_user_nocheck_8
+     0.00%  derper   derper             [.] sync.(*poolChain).pushHead
+     0.00%  derper   [kernel.kallsyms]  [k] __smp_call_single_queue
+     0.00%  derper   [kernel.kallsyms]  [k] set_ptes.isra.0
+     0.00%  derper   derper             [.] runtime.(*unwinder).finishInternal
+     0.00%  derper   derper             [.] runtime.asyncPreempt.abi0
+     0.00%  derper   [kernel.kallsyms]  [k] pud_val
+     0.00%  derper   [kernel.kallsyms]  [k] copy_siginfo
+     0.00%  derper   derper             [.] runtime.gcEndWork
+     0.00%  derper   [kernel.kallsyms]  [k] dim_calc_stats
+     0.00%  derper   [kernel.kallsyms]  [k] asm_sysvec_call_function
+     0.00%  derper   derper             [.] runtime.(*gcControllerState).markWorkerStop
+     0.00%  derper   [kernel.kallsyms]  [k] native_set_pte
+     0.00%  derper   [kernel.kallsyms]  [k] intel_pmu_disable_all
+     0.00%  derper   [kernel.kallsyms]  [k] tcp_pace_kick
+     0.00%  derper   [kernel.kallsyms]  [k] folio_lruvec_lock_irqsave
+     0.00%  derper   [kernel.kallsyms]  [k] sched_balance_domains
+     0.00%  derper   [kernel.kallsyms]  [k] mutex_spin_on_owner
+     0.00%  derper   [kernel.kallsyms]  [k] bpf_lsm_socket_recvmsg
+     0.00%  derper   [kernel.kallsyms]  [k] iommu_unmap_fast
+     0.00%  derper   derper             [.] runtime.entersyscallHandleGCWait
+     0.00%  derper   [kernel.kallsyms]  [k] do_send_sig_info
+     0.00%  derper   derper             [.] runtime.gcBgMarkWorker.func1
+     0.00%  derper   [kernel.kallsyms]  [k] __bitmap_and
+     0.00%  derper   [kernel.kallsyms]  [k] __task_rq_lock
+     0.00%  derper   derper             [.] runtime.(*mheap).reclaim
+     0.00%  derper   derper             [.] runtime.(*spanQueue).tryDrain
+     0.00%  derper   [kernel.kallsyms]  [k] fpu__restore_sig
+     0.00%  derper   [kernel.kallsyms]  [k] pfn_pte
+     0.00%  derper   derper             [.] runtime.stackcache_clear
+     0.00%  derper   derper             [.] runtime.(*scavengeIndex).find
+     0.00%  derper   [kernel.kallsyms]  [k] resched_curr
+     0.00%  derper   [kernel.kallsyms]  [k] map_id_up
+     0.00%  derper   derper             [.] runtime.setg.abi0
+     0.00%  derper   derper             [.] runtime.(*scavChunkData).free
+     0.00%  derper   derper             [.] crypto/internal/fips140/aes/gcm.(*GCMWithXORCounterNonce).Overhead
+     0.00%  derper   [kernel.kallsyms]  [k] qi_submit_sync
+     0.00%  derper   [kernel.kallsyms]  [k] vm_normal_page
+     0.00%  derper   derper             [.] runtime.timeSleepUntil
+     0.00%  derper   derper             [.] sync/atomic.StoreUintptr
+     0.00%  derper   derper             [.] runtime.gcStart
+     0.00%  derper   [kernel.kallsyms]  [k] get_next_freq
+     0.00%  derper   [kernel.kallsyms]  [k] page_pool_put_unrefed_page
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_update_next_event
+     0.00%  derper   [kernel.kallsyms]  [k] folio_mapping
+     0.00%  derper   derper             [.] runtime.fastexprand
+     0.00%  derper   [kernel.kallsyms]  [k] build_detached_freelist
+     0.00%  derper   derper             [.] runtime.(*gcCPULimiterState).update
+     0.00%  derper   [kernel.kallsyms]  [k] clear_delayed.part.0.constprop.0
+     0.00%  derper   derper             [.] runtime.newInlineUnwinder
+     0.00%  derper   [kernel.kallsyms]  [k] perf_event_task_tick
+     0.00%  derper   libc.so.6          [.] 0x000000000003fdf7
+     0.00%  derper   [kernel.kallsyms]  [k] folio_alloc_mpol_noprof
+     0.00%  derper   derper             [.] runtime.(*pallocData).findScavengeCandidate
+     0.00%  derper   derper             [.] runtime.(*timer).maybeAdd
+     0.00%  derper   derper             [.] runtime.wbBufFlush.abi0
+     0.00%  derper   derper             [.] runtime.resumeG
+     0.00%  derper   derper             [.] runtime.mput
+     0.00%  derper   [kernel.kallsyms]  [k] raw_spin_rq_unlock
+     0.00%  derper   derper             [.] runtime.strhash
+     0.00%  derper   derper             [.] runtime.unlock
+     0.00%  derper   [kernel.kallsyms]  [k] sched_balance_trigger
+     0.00%  derper   derper             [.] runtime.(*unwinder).cgoCallers
+     0.00%  derper   [kernel.kallsyms]  [k] sugov_iowait_boost
+     0.00%  derper   derper             [.] runtime.exitsyscallTryGetP
+     0.00%  derper   derper             [.] sync.(*poolDequeue).pushHead
+     0.00%  derper   derper             [.] runtime.goschedIfBusy
+     0.00%  derper   derper             [.] runtime.(*timers).adjust
+     0.00%  derper   [kernel.kallsyms]  [k] native_smp_send_reschedule
+     0.00%  derper   derper             [.] runtime.(*timers).cleanHead
+     0.00%  derper   [kernel.kallsyms]  [k] hook_task_kill
+     0.00%  derper   derper             [.] runtime.(*unwinder).symPC
+     0.00%  derper   [kernel.kallsyms]  [k] cpus_share_cache
+     0.00%  derper   derper             [.] runtime.pcdatavalue2
+     0.00%  derper   derper             [.] runtime.(*pageAlloc).find.func1
+     0.00%  derper   [kernel.kallsyms]  [k] mas_prev_slot
+     0.00%  derper   [kernel.kallsyms]  [k] idr_find
+     0.00%  derper   [kernel.kallsyms]  [k] tlb_finish_mmu
+     0.00%  derper   derper             [.] runtime.futexwakeup
+     0.00%  derper   derper             [.] runtime.gcResetMarkState.func1
+     0.00%  derper   derper             [.] indexbytebody
+     0.00%  derper   [kernel.kallsyms]  [k] update_group_capacity
+     0.00%  derper   derper             [.] runtime.(*mspan).ensureSwept
+     0.00%  derper   [kernel.kallsyms]  [k] update_process_times
+     0.00%  derper   derper             [.] runtime.atomicwb
+     0.00%  derper   derper             [.] runtime.(*pageAlloc).scavenge
+     0.00%  derper   [kernel.kallsyms]  [k] kick_pool
+     0.00%  derper   [kernel.kallsyms]  [k] run_posix_cpu_timers
+     0.00%  derper   derper             [.] runtime.gcBgMarkWorker.func2
+     0.00%  derper   derper             [.] runtime.traceAllocFreeEnabled
+     0.00%  derper   [kernel.kallsyms]  [k] audit_signal_info
+     0.00%  derper   derper             [.] runtime.callers.func1
+     0.00%  derper   derper             [.] runtime.(*gcWork).init
+     0.00%  derper   [kernel.kallsyms]  [k] get_jiffies_update
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_run_softirq
+     0.00%  derper   derper             [.] runtime.(*gcControllerState).startCycle
+     0.00%  derper   derper             [.] runtime.readyWithTime
+     0.00%  derper   [kernel.kallsyms]  [k] __update_load_avg_blocked_se
+     0.00%  derper   [kernel.kallsyms]  [k] can_migrate_task
+     0.00%  derper   [kernel.kallsyms]  [k] account_system_index_time
+     0.00%  derper   [kernel.kallsyms]  [k] restore_signal_shadow_stack
+     0.00%  derper   derper             [.] runtime.(*timers).siftDown
+     0.00%  derper   derper             [.] runtime.(*m).snapshotAllp
+     0.00%  derper   derper             [.] sync/atomic.StorePointer
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_wakeup
+     0.00%  derper   [kernel.kallsyms]  [k] __cgroup_account_cputime_field
+     0.00%  derper   [kernel.kallsyms]  [k] __tlb_remove_folio_pages
+     0.00%  derper   [kernel.kallsyms]  [k] lru_add_drain_cpu
+     0.00%  derper   derper             [.] runtime.freeStackSpans
+     0.00%  derper   derper             [.] runtime.handoff
+     0.00%  derper   [kernel.kallsyms]  [k] arch_scale_freq_tick
+     0.00%  derper   [kernel.kallsyms]  [k] audit_signal_info_syscall
+     0.00%  derper   [kernel.kallsyms]  [k] kmem_cache_free_bulk.part.0
+     0.00%  derper   [kernel.kallsyms]  [k] nohz_balance_exit_idle
+     0.00%  derper   [kernel.kallsyms]  [k] migrate_task_rq_fair
+     0.00%  derper   derper             [.] runtime.lfnodeValidate
+     0.00%  derper   derper             [.] runtime.send.goready.func1
+     0.00%  derper   derper             [.] runtime.gcMarkTermination.func4
+     0.00%  derper   derper             [.] runtime.gosched_m
+     0.00%  derper   derper             [.] runtime.gcScanFinalizer
+     0.00%  derper   derper             [.] runtime.(*timers).run
+     0.00%  derper   [kernel.kallsyms]  [k] sched_tick
+     0.00%  derper   [kernel.kallsyms]  [k] cmd_ent_put
+     0.00%  derper   derper             [.] internal/sync.runtime_SemacquireMutex
+     0.00%  derper   [kernel.kallsyms]  [k] __sysvec_call_function
+     0.00%  derper   [kernel.kallsyms]  [k] uprobe_deny_signal
+     0.00%  derper   [kernel.kallsyms]  [k] irq_work_tick
+     0.00%  derper   [kernel.kallsyms]  [k] tmigr_requires_handle_remote
+     0.00%  derper   derper             [.] runtime.gcBeginWork
+     0.00%  derper   [kernel.kallsyms]  [k] __tlb_batch_free_encoded_pages
+     0.00%  derper   [kernel.kallsyms]  [k] __set_task_blocked
+     0.00%  derper   [kernel.kallsyms]  [k] mem_cgroup_from_task
+     0.00%  derper   [kernel.kallsyms]  [k] userfaultfd_remove
+     0.00%  derper   derper             [.] runtime.morestack_noctxt.abi0
+     0.00%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_rbp
+     0.00%  derper   [kernel.kallsyms]  [k] __mem_cgroup_uncharge_folios
+     0.00%  derper   [kernel.kallsyms]  [k] alloc_iova
+     0.00%  derper   [kernel.kallsyms]  [k] asm_sysvec_apic_timer_interrupt
+     0.00%  derper   derper             [.] runtime.sysUnusedOS
+     0.00%  derper   [kernel.kallsyms]  [k] folio_add_lru_vma
+     0.00%  derper   derper             [.] runtime.parkunlock_c
+     0.00%  derper   [kernel.kallsyms]  [k] net_dim_step
+     0.00%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_rbx
+     0.00%  derper   derper             [.] internal/sync.runtime_nanotime
+     0.00%  derper   [kernel.kallsyms]  [k] perf_pmu_nop_void
+     0.00%  derper   derper             [.] runtime.(*inlineUnwinder).next
+     0.00%  derper   derper             [.] internal/sync.runtime_Semrelease
+     0.00%  derper   [kernel.kallsyms]  [k] flush_tlb_mm_range
+     0.00%  derper   [kernel.kallsyms]  [k] any_notifier
+     0.00%  derper   derper             [.] runtime.stackpoolalloc
+     0.00%  derper   derper             [.] runtime.mProf_Malloc
+     0.00%  derper   derper             [.] runtime.(*pageAlloc).findMappedAddr
+     0.00%  derper   [kernel.kallsyms]  [k] p4d_offset
+     0.00%  derper   [kernel.kallsyms]  [k] cpufreq_driver_resolve_freq
+     0.00%  derper   [kernel.kallsyms]  [k] devx_event_notifier
+     0.00%  derper   derper             [.] runtime.gcMark
+     0.00%  derper   [kernel.kallsyms]  [k] dec_rlimit_put_ucounts
+     0.00%  derper   derper             [.] runtime.exitsyscall.func3
+     0.00%  derper   derper             [.] runtime.newstack.abi0
+     0.00%  derper   [kernel.kallsyms]  [k] zap_page_range_single
+     0.00%  derper   [kernel.kallsyms]  [k] net_dim_stats_compare
+     0.00%  derper   [kernel.kallsyms]  [k] insert_work
+     0.00%  derper   [kernel.kallsyms]  [k] mas_prev
+     0.00%  derper   derper             [.] runtime.(*scavengerState).init.func2
+     0.00%  derper   derper             [.] runtime.copystack
+     0.00%  derper   [kernel.kallsyms]  [k] fq_codel_enqueue
+     0.00%  derper   derper             [.] runtime.(*timer).updateHeap
+     0.00%  derper   [kernel.kallsyms]  [k] native_read_msr
+     0.00%  derper   derper             [.] runtime.(*scavChunkData).alloc
+     0.00%  derper   [kernel.kallsyms]  [k] futex_get_value_locked
+     0.00%  derper   [kernel.kallsyms]  [k] find_vma_prev
+     0.00%  derper   [kernel.kallsyms]  [k] __queue_work
+     0.00%  derper   derper             [.] runtime.reentersyscall.func4
+     0.00%  derper   derper             [.] runtime.gcPaceScavenger
+     0.00%  derper   derper             [.] runtime.mallocgcSmallScanHeader
+     0.00%  derper   derper             [.] runtime.notetsleep
+     0.00%  derper   [kernel.kallsyms]  [k] blk_mq_flush_plug_list
+     0.00%  derper   [kernel.kallsyms]  [k] native_send_call_func_single_ipi
+     0.00%  derper   derper             [.] runtime.(*timers).addHeap
+     0.00%  derper   derper             [.] runtime.preemptPark
+     0.00%  derper   derper             [.] sync.poolCleanup
+     0.00%  derper   derper             [.] runtime.gcComputeStartingStackSize
+     0.00%  derper   [kernel.kallsyms]  [k] do_send_specific
+     0.00%  derper   derper             [.] runtime.nextMarkBitArenaEpoch
+     0.00%  derper   [kernel.kallsyms]  [k] __x64_sys_getpid
+     0.00%  derper   [kernel.kallsyms]  [k] calc_global_load_tick
+     0.00%  derper   [kernel.kallsyms]  [k] lru_add_drain
+     0.00%  derper   [kernel.kallsyms]  [k] pmd_val
+     0.00%  derper   derper             [.] runtime.pcdatavalue1
+     0.00%  derper   derper             [.] internal/sync.runtime_doSpin
+     0.00%  derper   [kernel.kallsyms]  [k] __mem_cgroup_uncharge
+     0.00%  derper   derper             [.] runtime.gcParkAssist
+     0.00%  derper   [kernel.kallsyms]  [k] need_active_balance
+     0.00%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_r12
+     0.00%  derper   [kernel.kallsyms]  [k] ktime_add_safe
+     0.00%  derper   [kernel.kallsyms]  [k] __bitmap_andnot
+     0.00%  derper   [kernel.kallsyms]  [k] complete
+     0.00%  derper   [kernel.kallsyms]  [k] tick_nohz_handler
+     0.00%  derper   derper             [.] runtime.mgetSpecific
+     0.00%  derper   [kernel.kallsyms]  [k] tcp_trim_head
+     0.00%  derper   [kernel.kallsyms]  [k] timespec64_add_safe
+     0.00%  derper   derper             [.] sync.(*Pool).pinSlow
+     0.00%  derper   [kernel.kallsyms]  [k] account_user_time
+     0.00%  derper   derper             [.] runtime.mProf_Malloc.func1
+     0.00%  derper   [kernel.kallsyms]  [k] __blk_flush_plug
+     0.00%  derper   derper             [.] runtime.gcMarkTermination
+     0.00%  derper   derper             [.] runtime.asyncPreempt2
+     0.00%  derper   [kernel.kallsyms]  [k] pskb_expand_head
+     0.00%  derper   derper             [.] runtime.(*gcCPULimiterState).accumulate
+     0.00%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_r14
+     0.00%  derper   derper             [.] runtime.injectglist.func1
+     0.00%  derper   [kernel.kallsyms]  [k] bpf_lsm_task_kill
+     0.00%  derper   derper             [.] runtime.(*timers).siftUp
+     0.00%  derper   [kernel.kallsyms]  [k] task_tick_mm_cid
+     0.00%  derper   derper             [.] crypto/tls.init.func1
+     0.00%  derper   derper             [.] runtime.prepareFreeWorkbufs
+     0.00%  derper   [kernel.kallsyms]  [k] sched_balance_softirq
+     0.00%  derper   derper             [.] runtime.(*scavengerState).run
+     0.00%  derper   [kernel.kallsyms]  [k] tlb_gather_mmu
+     0.00%  derper   derper             [.] runtime.gcAssistAlloc.func2
+     0.00%  derper   derper             [.] runtime.stackpoolfree
+     0.00%  derper   [kernel.kallsyms]  [k] get_task_cred
+     0.00%  derper   derper             [.] runtime.freeSomeWbufs.func1
+     0.00%  derper   [kernel.kallsyms]  [k] mlock_drain_local
+     0.00%  derper   derper             [.] runtime.casGToPreemptScan
+     0.00%  derper   derper             [.] runtime.lock
+     0.00%  derper   [kernel.kallsyms]  [k] remove_entity_load_avg
+     0.00%  derper   derper             [.] runtime.clearpools
+     0.00%  derper   [kernel.kallsyms]  [k] sched_use_asym_prio
+     0.00%  derper   derper             [.] runtime.(*moduledata).funcName
+     0.00%  derper   derper             [.] runtime.chansend.func1
+     0.00%  derper   [kernel.kallsyms]  [k] dump_buf
+     0.00%  derper   [kernel.kallsyms]  [k] rcu_segcblist_ready_cbs
+     0.00%  derper   derper             [.] runtime.profilealloc
+     0.00%  derper   derper             [.] runtime.addspecial
+     0.00%  derper   [kernel.kallsyms]  [k] queue_work_on
+     0.00%  derper   [kernel.kallsyms]  [k] timekeeping_advance
+     0.00%  derper   [kernel.kallsyms]  [k] free_pcppages_bulk
+     0.00%  derper   derper             [.] runtime.(*mSpanList).insert
+     0.00%  derper   derper             [.] runtime.setprofilebucket
+     0.00%  derper   [kernel.kallsyms]  [k] cpuacct_account_field
+     0.00%  derper   derper             [.] runtime.fillAligned
+     0.00%  derper   derper             [.] runtime.freeSpecial
+     0.00%  derper   derper             [.] runtime.makeslicecopy
+     0.00%  derper   derper             [.] tailscale.com/derp/derpserver.init.func1
+     0.00%  derper   [kernel.kallsyms]  [k] update_vsyscall
+     0.00%  derper   derper             [.] internal/bytealg.IndexByteString.abi0
+     0.00%  derper   derper             [.] runtime.(*scavengerState).wake
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_cancel
+     0.00%  derper   [kernel.kallsyms]  [k] __run_timers
+     0.00%  derper   derper             [.] runtime.syscallingThread.releaseP
+     0.00%  derper   [kernel.kallsyms]  [k] fq_flush_iotlb
+     0.00%  derper   derper             [.] runtime.stackalloc
+     0.00%  derper   derper             [.] runtime.scanConservative
+     0.00%  derper   derper             [.] runtime.gcSweep
+     0.00%  derper   [kernel.kallsyms]  [k] ktime_get_ts64
+     0.00%  derper   [kernel.kallsyms]  [k] cmd_comp_notifier
+     0.00%  derper   [kernel.kallsyms]  [k] pwq_tryinc_nr_active
+     0.00%  derper   derper             [.] runtime.gcMarkDone.func2
+     0.00%  derper   [kernel.kallsyms]  [k] wake_up_process
+     0.00%  derper   derper             [.] runtime.checkIdleGCNoP
+     0.00%  derper   [kernel.kallsyms]  [k] __do_softirq
+     0.00%  derper   derper             [.] runtime.gcPrepareMarkRoots
+     0.00%  derper   derper             [.] runtime.gcMarkTinyAllocs
+     0.00%  derper   [kernel.kallsyms]  [k] down_read
+     0.00%  derper   [kernel.kallsyms]  [k] from_kuid_munged
+     0.00%  derper   [kernel.kallsyms]  [k] put_cpu_partial
+     0.00%  derper   [kernel.kallsyms]  [k] account_process_tick
+     0.00%  derper   derper             [.] runtime.stackfree
+     0.00%  derper   derper             [.] runtime.(*gcControllerState).resetLive
+     0.00%  derper   derper             [.] runtime.readyWithTime.goready.func1
+     0.00%  derper   derper             [.] runtime.madvise.abi0
+     0.00%  derper   [kernel.kallsyms]  [k] __bitmap_or_equal
+     0.00%  derper   derper             [.] runtime.wakeNetPoller
+     0.00%  derper   derper             [.] runtime.sysUsedOS
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_forward
+     0.00%  derper   [kernel.kallsyms]  [k] tick_do_update_jiffies64
+     0.00%  derper   [kernel.kallsyms]  [k] schedule_hrtimeout_range_clock
+     0.00%  derper   derper             [.] runtime.bgscavenge
+     0.00%  derper   derper             [.] runtime.putfull
+     0.00%  derper   [kernel.kallsyms]  [k] __put_partials
+     0.00%  derper   [kernel.kallsyms]  [k] dim_on_top
+     0.00%  derper   [kernel.kallsyms]  [k] acct_account_cputime
+     0.00%  derper   derper             [.] runtime.(*mSpanList).remove
+     0.00%  derper   [kernel.kallsyms]  [k] raise_softirq
+     0.00%  derper   [kernel.kallsyms]  [k] mas_prev_setup.constprop.0
+     0.00%  derper   derper             [.] runtime.gcMarkDone.forEachP.func5
+     0.00%  derper   [kernel.kallsyms]  [k] uncharge_batch
+     0.00%  derper   [kernel.kallsyms]  [k] siginfo_layout
+     0.00%  derper   [kernel.kallsyms]  [k] __free_pages
+     0.00%  derper   derper             [.] runtime.mProf_Free
+     0.00%  derper   [kernel.kallsyms]  [k] madvise_dontneed_free_valid_vma
+     0.00%  derper   [kernel.kallsyms]  [k] free_pages
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_sleeper_start_expires
+     0.00%  derper   [kernel.kallsyms]  [k] detach_entity_load_avg
+     0.00%  derper   [kernel.kallsyms]  [k] sched_mm_cid_migrate_to
+     0.00%  derper   derper             [.] runtime.(*gcControllerState).commit
+     0.00%  derper   [kernel.kallsyms]  [k] pgd_none
+     0.00%  derper   derper             [.] runtime.(*listHeadManual).remove
+     0.00%  derper   [kernel.kallsyms]  [k] blk_finish_plug
+     0.00%  derper   [kernel.kallsyms]  [k] ep_autoremove_wake_function
+     0.00%  derper   [kernel.kallsyms]  [k] intel_cpufreq_fast_switch
+     0.00%  derper   derper             [.] runtime.(*scavengerState).park
+     0.00%  derper   [kernel.kallsyms]  [k] free_swap_cache
+     0.00%  derper   [kernel.kallsyms]  [k] detach_task
+     0.00%  derper   [kernel.kallsyms]  [k] futex_q_unlock
+     0.00%  derper   [kernel.kallsyms]  [k] native_send_call_func_ipi
+     0.00%  derper   derper             [.] runtime.getempty.func1
+     0.00%  derper   [kernel.kallsyms]  [k] kfree_skb_list_reason
+     0.00%  derper   derper             [.] runtime.(*gcControllerState).endCycle
+     0.00%  derper   derper             [.] runtime.GOMAXPROCS
+     0.00%  derper   [kernel.kallsyms]  [k] blk_start_plug
+     0.00%  derper   derper             [.] runtime.gcMarkDone.func3
+     0.00%  derper   derper             [.] runtime.findnull
+     0.00%  derper   derper             [.] runtime.gcStart.func4
+     0.00%  derper   [kernel.kallsyms]  [k] native_flush_tlb_multi
+     0.00%  derper   derper             [.] runtime.(*scavengerState).init.func3
+     0.00%  derper   [kernel.kallsyms]  [k] set_normalized_timespec64
+     0.00%  derper   [kernel.kallsyms]  [k] tmigr_handle_remote
+     0.00%  derper   derper             [.] runtime.asyncPreempt2.func1
+     0.00%  derper   [kernel.kallsyms]  [k] kmem_cache_free_bulk
+     0.00%  derper   [kernel.kallsyms]  [k] timekeeping_update
+     0.00%  derper   derper             [.] runtime.(*gcCPULimiterState).finishGCTransition
+     0.00%  derper   [kernel.kallsyms]  [k] mix_interrupt_randomness
+     0.00%  derper   derper             [.] sync.(*poolDequeue).popHead
+     0.00%  derper   [kernel.kallsyms]  [k] drain_obj_stock
+     0.00%  derper   [kernel.kallsyms]  [k] get_free_pages_noprof
+     0.00%  derper   [kernel.kallsyms]  [k] generic_smp_call_function_single_interrupt
+     0.00%  derper   derper             [.] runtime.callers
+     0.00%  derper   [kernel.kallsyms]  [k] tlb_next_batch
+     0.00%  derper   derper             [.] runtime.(*timer).stop
+     0.00%  derper   [kernel.kallsyms]  [k] clockevents_program_min_delta
+     0.00%  derper   derper             [.] runtime.(*cleanupQueue).flush
+     0.00%  derper   [kernel.kallsyms]  [k] ioread32be
+     0.00%  derper   [kernel.kallsyms]  [k] unmap_single_vma
+     0.00%  derper   [kernel.kallsyms]  [k] __x64_sys_madvise
+     0.00%  derper   [kernel.kallsyms]  [k] __pte
+     0.00%  derper   [kernel.kallsyms]  [k] blake2s_compress_ssse3
+     0.00%  derper   derper             [.] runtime.(*pageAlloc).scavenge.func1
+     0.00%  derper   derper             [.] runtime.(*piController).next
+     0.00%  derper   [kernel.kallsyms]  [k] pte_val
+     0.00%  derper   derper             [.] runtime.gcResetMarkState
+     0.00%  derper   derper             [.] runtime.(*mspan).heapBits
+     0.00%  derper   derper             [.] runtime.casGFromPreempted
+     0.00%  derper   [kernel.kallsyms]  [k] __intel_pmu_enable_all.isra.0
+     0.00%  derper   [kernel.kallsyms]  [k] hrtimer_init_sleeper
+     0.00%  derper   derper             [.] runtime.(*scavengeIndex).nextGen
+     0.00%  derper   [kernel.kallsyms]  [k] update_fast_timekeeper
+     0.00%  derper   [kernel.kallsyms]  [k] dl_server_start
+     0.00%  derper   [kernel.kallsyms]  [k] deactivate_task
+     0.00%  derper   [kernel.kallsyms]  [k] attach_entity_load_avg
+     0.00%  derper   [kernel.kallsyms]  [k] start_dl_timer
+     0.00%  derper   [kernel.kallsyms]  [k] enqueue_dl_entity
+     0.00%  derper   [kernel.kallsyms]  [k] dl_server_update_idle_time
+     0.00%  derper   [kernel.kallsyms]  [k] clear_pending_if_disabled
+     0.00%  derper   derper             [.] runtime.adjustctxt
+     0.00%  derper   derper             [.] runtime.asyncPreempt2.abi0
+     0.00%  derper   derper             [.] runtime.(*mheap).allocManual
+     0.00%  derper   [kernel.kallsyms]  [k] task_contending
+     0.00%  derper   derper             [.] runtime.gcMarkTermination.func3
+     0.00%  derper   [kernel.kallsyms]  [k] group_balance_cpu
+     0.00%  derper   derper             [.] runtime.markrootFreeGStacks
+     0.00%  derper   [kernel.kallsyms]  [k] free_slab
+     0.00%  derper   [kernel.kallsyms]  [k] run_timer_softirq
+     0.00%  derper   [kernel.kallsyms]  [k] skb_split
+     0.00%  derper   derper             [.] runtime.gcMarkTermination.func4.1
+     0.00%  derper   [kernel.kallsyms]  [k] pvclock_gtod_notify
+     0.00%  derper   derper             [.] runtime.(*bucket).stk
+     0.00%  derper   derper             [.] runtime.(*spanQueue).drain
+     0.00%  derper   derper             [.] runtime.gcControllerCommit
+     0.00%  derper   derper             [.] runtime.markrootBlock
+     0.00%  derper   derper             [.] runtime.gcMarkTermination.func2
+     0.00%  derper   derper             [.] runtime.bulkBarrierPreWriteSrcOnly
+     0.00%  derper   derper             [.] runtime.(*gcWork).putObj
+     0.00%  derper   derper             [.] runtime.entersyscallWakeSysmon
+     0.00%  derper   [kernel.kallsyms]  [k] cache_tag_flush_iotlb
+     0.00%  derper   [kernel.kallsyms]  [k] profile_tick
+     0.00%  derper   [kernel.kallsyms]  [k] on_each_cpu_cond_mask
+     0.00%  derper   derper             [.] runtime.schedEnableUser
+     0.00%  derper   [kernel.kallsyms]  [k] pte_pfn
+     0.00%  derper   derper             [.] runtime.(*scavengerState).init.func4
+     0.00%  derper   [kernel.kallsyms]  [k] default_wake_function
+     0.00%  derper   [kernel.kallsyms]  [k] __x86_indirect_thunk_r13
+     0.00%  derper   [kernel.kallsyms]  [k] wake_up_state
+     0.00%  derper   [kernel.kallsyms]  [k] __bitmap_weight
+     0.00%  derper   [kernel.kallsyms]  [k] __skb_unclone_keeptruesize
+     0.00%  derper   derper             [.] runtime.(*cpuStats).accumulate
+     0.00%  derper   derper             [.] sync.(*Pool).pinSlow.deferwrap1
+     0.00%  derper   derper             [.] runtime.gcPaceSweeper
+     0.00%  derper   derper             [.] runtime.handoffp
+     0.00%  derper   [kernel.kallsyms]  [k] allocate_slab
+     0.00%  derper   [kernel.kallsyms]  [k] cpufreq_stats_record_transition
+     0.00%  derper   derper             [.] runtime.(*mheap).freeManual
+     0.00%  derper   derper             [.] runtime.write
+     0.00%  derper   [kernel.kallsyms]  [k] get_partial_node.part.0
+     0.00%  derper   [kernel.kallsyms]  [k] scsi_handle_queue_ramp_up
+     0.00%  derper   [kernel.kallsyms]  [k] get_random_u32
+     0.00%  derper   [kernel.kallsyms]  [k] bbr_check_probe_rtt_done
+     0.00%  derper   [kernel.kallsyms]  [k] __mutex_lock.constprop.0
+     0.00%  derper   derper             [.] runtime.funcMaxSPDelta
+     0.00%  derper   [kernel.kallsyms]  [k] housekeeping_cpumask
+     0.00%  derper   [kernel.kallsyms]  [k] eventfd_poll
+     0.00%  derper   [kernel.kallsyms]  [k] sched_clock_tick
+     0.00%  derper   derper             [.] runtime.gcMarkTermination.forEachP.func7
+     0.00%  derper   derper             [.] runtime.(*scavengeIndex).setEmpty
+     0.00%  derper   [kernel.kallsyms]  [k] obj_cgroup_uncharge_pages
+     0.00%  derper   [kernel.kallsyms]  [k] eventfd_write
+     0.00%  derper   derper             [.] runtime.gcMarkTermination.func1
+     0.00%  derper   [kernel.kallsyms]  [k] ata_qc_complete
+     0.00%  derper   [kernel.kallsyms]  [k] __free_slab
+     0.00%  derper   [kernel.kallsyms]  [k] _find_first_and_bit
+     0.00%  derper   [kernel.kallsyms]  [k] arch_check_zapped_pte
+     0.00%  derper   derper             [.] runtime.mProf_Flush
+     0.00%  derper   [kernel.kallsyms]  [k] free_one_page
+     0.00%  derper   [kernel.kallsyms]  [k] call_timer_fn
+     0.00%  derper   [kernel.kallsyms]  [k] requeue_delayed_entity
+     0.00%  derper   [kernel.kallsyms]  [k] task_mm_cid_work
+     0.00%  derper   [kernel.kallsyms]  [k] net_rps_action_and_irq_enable
+     0.00%  derper   [kernel.kallsyms]  [k] delayed_work_timer_fn
+     0.00%  derper   [kernel.kallsyms]  [k] e1000_irq_enable
+     0.00%  derper   [kernel.kallsyms]  [k] smp_call_function_single_async
+     0.00%  derper   [kernel.kallsyms]  [k] __x64_sys_sched_getaffinity
+     0.00%  derper   [kernel.kallsyms]  [k] vsnprintf
+     0.00%  derper   [kernel.kallsyms]  [k] security_task_getscheduler
+
+
+#
+# (Tip: To group events which need to be collected together for accuracy use {}: perf record -e {cycles,branches}' ...)
+#
