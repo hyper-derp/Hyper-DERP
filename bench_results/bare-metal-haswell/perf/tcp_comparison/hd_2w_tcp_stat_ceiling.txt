@@ -1,0 +1,10 @@
+
+ Performance counter stats for process id '2958':
+
+    92,233,171,946      cycles                                                                
+    80,346,511,903      instructions                     #    0.87  insn per cycle            
+        59,764,152      LLC-load-misses                                                       
+       126,737,576      cache-misses                                                          
+
+      15.002694772 seconds time elapsed
+

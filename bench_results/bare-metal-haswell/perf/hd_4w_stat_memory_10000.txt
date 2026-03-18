@@ -1,0 +1,13 @@
+
+ Performance counter stats for process id '2144':
+
+    53,363,163,950      L1-dcache-loads                                                         (45.08%)
+     3,314,942,863      L1-dcache-load-misses            #    6.21% of all L1-dcache accesses   (34.39%)
+       993,645,690      LLC-loads                                                               (34.28%)
+       406,230,226      LLC-load-misses                  #   40.88% of all LL-cache accesses    (46.34%)
+       365,721,647      LLC-stores                                                              (28.52%)
+       147,802,474      LLC-store-misses                                                        (28.57%)
+        18,765,671      dTLB-load-misses                                                        (42.89%)
+
+      15.001558161 seconds time elapsed
+

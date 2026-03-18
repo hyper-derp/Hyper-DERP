@@ -1,0 +1,10 @@
+
+ Performance counter stats for process id '2007':
+
+           156,194      context-switches                                                      
+               351      cpu-migrations                                                        
+     1,441,919,328      cache-references                                                      
+       234,806,376      cache-misses                     #   16.28% of all cache refs         
+
+      15.002526774 seconds time elapsed
+

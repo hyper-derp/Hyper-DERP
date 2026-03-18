@@ -1,0 +1,1225 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 116K of event 'cycles:P'
+# Event count (approx.): 90174117760
+#
+# Overhead  Command     Shared Object      Symbol                                                                                                            
+# ........  ..........  .................  ..................................................................................................................
+#
+    12.96%  hyper-derp  [kernel.kallsyms]  [k] aes_gcm_dec_update_aesni_avx
+            |          
+             --12.90%--aes_gcm_dec_update_aesni_avx
+                       gcm_decrypt_aesni_avx
+                       tls_decrypt_sg
+                       tls_rx_one_record
+                       tls_sw_recvmsg
+                       inet_recvmsg
+                       sock_recvmsg
+                       io_recv
+                       io_issue_sqe
+                       io_poll_task_func
+                       __io_run_local_work
+                       io_cqring_wait
+                       __do_sys_io_uring_enter
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       0x7f1876307100
+                       io_uring_wait_cqes
+                       hyper_derp::WorkerRun(void*)
+
+    11.80%  hyper-derp  [kernel.kallsyms]  [k] aes_gcm_enc_update_aesni_avx
+            |          
+             --11.71%--aes_gcm_enc_update_aesni_avx
+                       gcm_encrypt_aesni_avx
+                       tls_push_record
+                       bpf_exec_tx_verdict
+                       tls_sw_sendmsg
+                       sock_sendmsg
+                       io_send
+                       io_issue_sqe
+                       io_submit_sqes
+                       __do_sys_io_uring_enter
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       |          
+                        --11.71%--io_uring_submit$plt
+                                  hyper_derp::WorkerRun(void*)
+
+     4.02%  hyper-derp  [kernel.kallsyms]  [k] rep_movs_alternative
+            |          
+             --3.88%--rep_movs_alternative
+                       |          
+                       |--3.16%--_copy_from_iter
+                       |          sk_msg_memcopy_from_iter
+                       |          tls_sw_sendmsg
+                       |          sock_sendmsg
+                       |          io_send
+                       |          io_issue_sqe
+                       |          io_submit_sqes
+                       |          __do_sys_io_uring_enter
+                       |          do_syscall_64
+                       |          entry_SYSCALL_64_after_hwframe
+                       |          io_uring_submit$plt
+                       |          hyper_derp::WorkerRun(void*)
+                       |          
+                        --0.71%--_copy_to_iter
+                                  __skb_datagram_iter
+                                  skb_copy_datagram_iter
+                                  |          
+                                   --0.71%--tls_sw_recvmsg
+                                             inet_recvmsg
+                                             sock_recvmsg
+                                             io_recv
+                                             io_issue_sqe
+                                             io_poll_task_func
+                                             __io_run_local_work
+                                             io_cqring_wait
+                                             __do_sys_io_uring_enter
+                                             do_syscall_64
+                                             entry_SYSCALL_64_after_hwframe
+                                             0x7f1876307100
+                                             io_uring_wait_cqes
+                                             hyper_derp::WorkerRun(void*)
+
+     2.22%  hyper-derp  [kernel.kallsyms]  [k] skb_release_data
+            |          
+             --2.19%--skb_release_data
+                       |          
+                        --2.07%--consume_skb
+                                  |          
+                                   --2.04%--tls_sw_recvmsg
+                                             inet_recvmsg
+                                             sock_recvmsg
+                                             io_recv
+                                             io_issue_sqe
+                                             io_poll_task_func
+                                             __io_run_local_work
+                                             io_cqring_wait
+                                             __do_sys_io_uring_enter
+                                             do_syscall_64
+                                             entry_SYSCALL_64_after_hwframe
+                                             0x7f1876307100
+                                             io_uring_wait_cqes
+                                             hyper_derp::WorkerRun(void*)
+
+     1.98%  hyper-derp  hyper-derp         [.] hyper_derp::ForwardMsg(hyper_derp::Worker*, hyper_derp::FrameType, unsigned char*, int, hyper_derp::Peer*)
+            |          
+             --1.95%--hyper_derp::ForwardMsg(hyper_derp::Worker*, hyper_derp::FrameType, unsigned char*, int, hyper_derp::Peer*)
+                       hyper_derp::WorkerRun(void*)
+
+     1.73%  hyper-derp  [kernel.kallsyms]  [k] memset_orig
+            |          
+             --1.65%--memset_orig
+                       |          
+                       |--0.91%--kmem_cache_alloc_node_noprof
+                       |          |          
+                       |           --0.63%--kmalloc_reserve
+                       |                     |          
+                       |                      --0.63%--__alloc_skb
+                       |          
+                        --0.50%--__kmalloc_noprof
+
+     1.63%  hyper-derp  [kernel.kallsyms]  [k] clear_page_erms
+            |          
+             --1.60%--clear_page_erms
+                       |          
+                        --1.60%--prep_new_page
+                                  get_page_from_freelist
+                                  __alloc_pages_noprof
+                                  alloc_pages_mpol_noprof
+                                  |          
+                                  |--1.04%--skb_page_frag_refill
+                                  |          sk_page_frag_refill
+                                  |          sk_msg_alloc
+                                  |          tls_sw_sendmsg
+                                  |          sock_sendmsg
+                                  |          io_send
+                                  |          io_issue_sqe
+                                  |          io_submit_sqes
+                                  |          __do_sys_io_uring_enter
+                                  |          do_syscall_64
+                                  |          entry_SYSCALL_64_after_hwframe
+                                  |          io_uring_submit$plt
+                                  |          hyper_derp::WorkerRun(void*)
+                                  |          
+                                   --0.55%--alloc_skb_with_frags
+                                             tls_decrypt_sg
+                                             tls_rx_one_record
+                                             tls_sw_recvmsg
+                                             inet_recvmsg
+                                             sock_recvmsg
+                                             io_recv
+                                             io_issue_sqe
+                                             io_poll_task_func
+                                             __io_run_local_work
+                                             io_cqring_wait
+                                             __do_sys_io_uring_enter
+                                             do_syscall_64
+                                             entry_SYSCALL_64_after_hwframe
+                                             0x7f1876307100
+                                             io_uring_wait_cqes
+                                             hyper_derp::WorkerRun(void*)
+
+     1.60%  hyper-derp  [kernel.kallsyms]  [k] scatterwalk_copychunks
+            |          
+             --1.57%--scatterwalk_copychunks
+                       |          
+                        --0.94%--skcipher_walk_next
+                                  |          
+                                   --0.68%--gcm_decrypt_aesni_avx
+                                             tls_decrypt_sg
+                                             tls_rx_one_record
+                                             tls_sw_recvmsg
+                                             inet_recvmsg
+                                             sock_recvmsg
+                                             io_recv
+                                             io_issue_sqe
+                                             io_poll_task_func
+                                             __io_run_local_work
+                                             io_cqring_wait
+                                             __do_sys_io_uring_enter
+                                             do_syscall_64
+                                             entry_SYSCALL_64_after_hwframe
+                                             0x7f1876307100
+                                             io_uring_wait_cqes
+                                             hyper_derp::WorkerRun(void*)
+
+     1.09%  hyper-derp  hyper-derp         [.] hyper_derp::WorkerRun(void*)
+     1.06%  hyper-derp  [kernel.kallsyms]  [k] __skb_to_sgvec
+            |          
+             --1.04%--__skb_to_sgvec
+                       |          
+                        --0.75%--__skb_to_sgvec
+                                  |          
+                                   --0.61%--skb_to_sgvec
+                                             tls_decrypt_sg
+                                             tls_rx_one_record
+                                             tls_sw_recvmsg
+                                             inet_recvmsg
+                                             sock_recvmsg
+                                             io_recv
+                                             io_issue_sqe
+                                             io_poll_task_func
+                                             __io_run_local_work
+                                             io_cqring_wait
+                                             __do_sys_io_uring_enter
+                                             do_syscall_64
+                                             entry_SYSCALL_64_after_hwframe
+                                             0x7f1876307100
+                                             io_uring_wait_cqes
+                                             hyper_derp::WorkerRun(void*)
+
+     0.96%  hyper-derp  [kernel.kallsyms]  [k] tls_decrypt_sg
+            |          
+             --0.87%--tls_decrypt_sg
+                       tls_rx_one_record
+                       tls_sw_recvmsg
+                       inet_recvmsg
+                       sock_recvmsg
+                       io_recv
+                       io_issue_sqe
+                       io_poll_task_func
+                       __io_run_local_work
+                       io_cqring_wait
+                       __do_sys_io_uring_enter
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       0x7f1876307100
+                       io_uring_wait_cqes
+                       hyper_derp::WorkerRun(void*)
+
+     0.93%  hyper-derp  [kernel.kallsyms]  [k] skb_copy_bits
+            |          
+             --0.90%--skb_copy_bits
+                       |          
+                        --0.54%--skb_copy_bits
+
+     0.93%  hyper-derp  [kernel.kallsyms]  [k] tls_sw_sendmsg
+            |          
+             --0.82%--tls_sw_sendmsg
+                       sock_sendmsg
+                       io_send
+                       io_issue_sqe
+                       io_submit_sqes
+                       __do_sys_io_uring_enter
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       io_uring_submit$plt
+                       hyper_derp::WorkerRun(void*)
+
+     0.91%  hyper-derp  [kernel.kallsyms]  [k] skcipher_walk_next
+            |          
+             --0.89%--skcipher_walk_next
+
+     0.74%  hyper-derp  [kernel.kallsyms]  [k] pfn_to_dma_pte
+            |          
+             --0.73%--pfn_to_dma_pte
+
+     0.74%  hyper-derp  [kernel.kallsyms]  [k] gcm_decrypt_aesni_avx
+            |          
+             --0.66%--gcm_decrypt_aesni_avx
+                       tls_decrypt_sg
+                       tls_rx_one_record
+                       tls_sw_recvmsg
+                       inet_recvmsg
+                       sock_recvmsg
+                       io_recv
+                       io_issue_sqe
+                       io_poll_task_func
+                       __io_run_local_work
+                       io_cqring_wait
+                       __do_sys_io_uring_enter
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       0x7f1876307100
+                       io_uring_wait_cqes
+                       hyper_derp::WorkerRun(void*)
+
+     0.71%  hyper-derp  [kernel.kallsyms]  [k] tls_sw_recvmsg
+            |          
+             --0.66%--tls_sw_recvmsg
+                       inet_recvmsg
+                       sock_recvmsg
+                       io_recv
+                       io_issue_sqe
+                       io_poll_task_func
+                       __io_run_local_work
+                       io_cqring_wait
+                       __do_sys_io_uring_enter
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       0x7f1876307100
+                       io_uring_wait_cqes
+                       hyper_derp::WorkerRun(void*)
+
+     0.70%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_alloc_node_noprof
+            |          
+             --0.65%--kmem_cache_alloc_node_noprof
+
+     0.70%  hyper-derp  [kernel.kallsyms]  [k] __kmalloc_noprof
+            |          
+             --0.66%--__kmalloc_noprof
+
+     0.66%  hyper-derp  [kernel.kallsyms]  [k] skcipher_walk_done
+            |          
+             --0.64%--skcipher_walk_done
+
+     0.64%  hyper-derp  [kernel.kallsyms]  [k] native_queued_spin_lock_slowpath
+            |          
+             --0.64%--native_queued_spin_lock_slowpath
+
+     0.64%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_free
+            |          
+             --0.63%--kmem_cache_free
+
+     0.62%  hyper-derp  [kernel.kallsyms]  [k] __skb_nsg
+            |          
+             --0.60%--__skb_nsg
+
+     0.61%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_lock_bh
+            |          
+             --0.59%--_raw_spin_lock_bh
+
+     0.54%  hyper-derp  hyper-derp         [.] hyper_derp::EnqueueSend(hyper_derp::Worker*, hyper_derp::Peer*, unsigned char*, int)
+     0.52%  hyper-derp  hyper-derp         [.] hyper_derp::DrainSendQueue(hyper_derp::Worker*, hyper_derp::Peer*, int)
+            |          
+             --0.52%--hyper_derp::HandleSendCqe(hyper_derp::Worker*, io_uring_cqe*)
+                       hyper_derp::WorkerRun(void*)
+
+     0.52%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_lock_irqsave
+            |          
+             --0.52%--_raw_spin_lock_irqsave
+
+     0.51%  hyper-derp  [kernel.kallsyms]  [k] __check_object_size
+     0.50%  hyper-derp  [kernel.kallsyms]  [k] tasklet_action_common
+     0.49%  hyper-derp  [kernel.kallsyms]  [k] intel_iommu_map_pages
+     0.48%  hyper-derp  [kernel.kallsyms]  [k] aes_gcm_dec_final_aesni_avx
+     0.48%  hyper-derp  [kernel.kallsyms]  [k] dma_pte_clear_level
+     0.48%  hyper-derp  [kernel.kallsyms]  [k] get_page_from_freelist
+     0.45%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_lock
+     0.44%  hyper-derp  [kernel.kallsyms]  [k] alloc_skb_with_frags
+     0.42%  hyper-derp  [kernel.kallsyms]  [k] free_unref_page
+     0.42%  hyper-derp  [kernel.kallsyms]  [k] mlx5_eq_comp_int
+     0.42%  hyper-derp  [kernel.kallsyms]  [k] __mod_memcg_state
+     0.40%  hyper-derp  [kernel.kallsyms]  [k] kfree
+     0.39%  hyper-derp  [kernel.kallsyms]  [k] aa_sk_perm
+     0.39%  hyper-derp  [kernel.kallsyms]  [k] __tcp_transmit_skb
+     0.38%  hyper-derp  hyper-derp         [.] hyper_derp::Fnv1a(unsigned char const*, int)
+     0.38%  hyper-derp  [kernel.kallsyms]  [k] kernel_fpu_begin_mask
+     0.35%  hyper-derp  [kernel.kallsyms]  [k] sk_msg_clone
+     0.34%  hyper-derp  [kernel.kallsyms]  [k] read_tsc
+     0.34%  hyper-derp  [kernel.kallsyms]  [k] io_issue_sqe
+     0.33%  hyper-derp  [kernel.kallsyms]  [k] __copy_skb_header
+     0.33%  hyper-derp  [kernel.kallsyms]  [k] __softirqentry_text_end
+     0.33%  hyper-derp  [kernel.kallsyms]  [k] io_send
+     0.32%  hyper-derp  [kernel.kallsyms]  [k] __alloc_skb
+     0.32%  hyper-derp  [kernel.kallsyms]  [k] __alloc_pages_noprof
+     0.31%  hyper-derp  [kernel.kallsyms]  [k] __iommu_dma_unmap
+     0.31%  hyper-derp  [kernel.kallsyms]  [k] tcp_write_xmit
+     0.31%  hyper-derp  [kernel.kallsyms]  [k] __rmqueue_pcplist
+     0.31%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_poll_tx_cq
+     0.31%  hyper-derp  [kernel.kallsyms]  [k] skcipher_walk_aead_common
+     0.30%  hyper-derp  [kernel.kallsyms]  [k] __io_submit_flush_completions
+     0.30%  hyper-derp  [kernel.kallsyms]  [k] simd_aead_decrypt
+     0.29%  hyper-derp  [kernel.kallsyms]  [k] __virt_addr_valid
+     0.28%  hyper-derp  [kernel.kallsyms]  [k] sk_msg_alloc
+     0.28%  hyper-derp  libc.so.6          [.] 0x0000000000162c6e
+     0.26%  hyper-derp  [kernel.kallsyms]  [k] gcm_process_assoc
+     0.26%  hyper-derp  [kernel.kallsyms]  [k] native_write_msr
+     0.25%  hyper-derp  libc.so.6          [.] 0x0000000000162c64
+     0.25%  hyper-derp  [kernel.kallsyms]  [k] native_irq_return_iret
+     0.24%  hyper-derp  [kernel.kallsyms]  [k] io_submit_sqes
+     0.24%  hyper-derp  [kernel.kallsyms]  [k] tcp_ack
+     0.24%  hyper-derp  libc.so.6          [.] 0x0000000000162c60
+     0.24%  hyper-derp  [kernel.kallsyms]  [k] sock_sendmsg
+     0.23%  hyper-derp  hyper-derp         [.] hyper_derp::SubmitSend(hyper_derp::Worker*, int, unsigned char const*, int, int)
+     0.23%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_xmit
+     0.23%  hyper-derp  [kernel.kallsyms]  [k] __sk_mem_raise_allocated
+     0.23%  hyper-derp  [kernel.kallsyms]  [k] memcpy_orig
+     0.22%  hyper-derp  [kernel.kallsyms]  [k] entry_SYSRETQ_unsafe_stack
+     0.22%  hyper-derp  libc.so.6          [.] 0x0000000000162c69
+     0.22%  hyper-derp  [kernel.kallsyms]  [k] __skb_datagram_iter
+     0.22%  hyper-derp  [kernel.kallsyms]  [k] tcp_read_done
+     0.22%  hyper-derp  [kernel.kallsyms]  [k] ip_finish_output2
+     0.21%  hyper-derp  [kernel.kallsyms]  [k] try_charge_memcg
+     0.21%  hyper-derp  [kernel.kallsyms]  [k] ktime_get
+     0.21%  hyper-derp  [kernel.kallsyms]  [k] tls_strp_check_rcv
+     0.21%  hyper-derp  [kernel.kallsyms]  [k] free_unref_page_commit
+     0.21%  hyper-derp  [kernel.kallsyms]  [k] gcm_encrypt_aesni_avx
+     0.20%  hyper-derp  [kernel.kallsyms]  [k] __tcp_select_window
+     0.20%  hyper-derp  [kernel.kallsyms]  [k] tcp_recv_skb
+     0.20%  hyper-derp  [kernel.kallsyms]  [k] tls_rx_one_record
+     0.20%  hyper-derp  [kernel.kallsyms]  [k] __wake_up_common
+     0.19%  hyper-derp  [kernel.kallsyms]  [k] _copy_to_iter
+     0.19%  hyper-derp  [kernel.kallsyms]  [k] __local_bh_enable_ip
+     0.19%  hyper-derp  libc.so.6          [.] 0x0000000000162c2b
+     0.19%  hyper-derp  [kernel.kallsyms]  [k] fq_ring_free_locked
+     0.19%  hyper-derp  [kernel.kallsyms]  [k] __list_del_entry_valid_or_report
+     0.19%  hyper-derp  [kernel.kallsyms]  [k] io_poll_wake
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] __rcu_read_lock
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] __ip_queue_xmit
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_unlock_irqrestore
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] __build_skb_around
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] sk_msg_free_elem
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] __rcu_read_unlock
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] sk_msg_memcopy_from_iter
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] alloc_iova_fast
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] tls_rx_msg_size
+     0.18%  hyper-derp  [kernel.kallsyms]  [k] prep_new_page
+     0.17%  hyper-derp  [kernel.kallsyms]  [k] __iommu_dma_map
+     0.17%  hyper-derp  [kernel.kallsyms]  [k] tls_push_record
+     0.17%  hyper-derp  [kernel.kallsyms]  [k] crypto_aead_decrypt
+     0.17%  hyper-derp  [kernel.kallsyms]  [k] __dev_queue_xmit
+     0.17%  hyper-derp  [kernel.kallsyms]  [k] sg_next
+     0.16%  hyper-derp  liburing.so.2.9    [.] __io_uring_get_cqe
+     0.16%  hyper-derp  [kernel.kallsyms]  [k] alloc_pages_mpol_noprof
+     0.16%  hyper-derp  [kernel.kallsyms]  [k] security_socket_sendmsg
+     0.16%  hyper-derp  [kernel.kallsyms]  [k] skb_copy_header
+     0.16%  hyper-derp  [kernel.kallsyms]  [k] dma_map_page_attrs
+     0.16%  hyper-derp  [kernel.kallsyms]  [k] tcp_current_mss
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] mutex_unlock
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] tcp_sendmsg_locked
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] __mod_timer
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] tcp_rcv_space_adjust
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] gup_fast_fallback
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] sock_def_readable
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] aes_gcm_aad_update_aesni_avx
+     0.15%  hyper-derp  [kernel.kallsyms]  [k] tls_rx_rec_wait
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] cgroup_rstat_updated
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] tcp_rcv_established
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_napi_poll
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_poll_rx_cq
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] skb_splice_from_iter
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] _copy_from_iter
+     0.14%  hyper-derp  [kernel.kallsyms]  [k] kernel_fpu_end
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] tcp_wfree
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] io_sendmsg_prep_setup
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] skb_release_head_state
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] consume_skb
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] __iommu_map
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] __cond_resched
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] handle_softirqs
+     0.13%  hyper-derp  [kernel.kallsyms]  [k] __iommu_unmap
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_skb_from_cqe_linear
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_txwqe_complete
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] irq_fpu_usable
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] iommu_pgsize.isra.0
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] tls_padding_length.part.0
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] iommu_dma_map_page
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] mod_memcg_state
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] ip_finish_output
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] iommu_dma_alloc_iova
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] kmalloc_reserve
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] sg_init_table
+     0.12%  hyper-derp  [kernel.kallsyms]  [k] iommu_map
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] scatterwalk_ffwd
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] tcp_established_options
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] tcp_cleanup_rbuf
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] __list_add_valid_or_report
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] skb_append_pagefrags
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] tls_push_sg
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] error_entry
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] tomoyo_socket_sendmsg_permission
+     0.11%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032a0
+     0.11%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032fd
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] update_curr
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_sq_xmit_prepare.isra.0
+     0.11%  hyper-derp  [kernel.kallsyms]  [k] __tcp_cleanup_rbuf
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] net_rx_action
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_handle_rx_dim
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] __update_load_avg_se
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] ip_output
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] lapic_next_deadline
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] dev_gro_receive
+     0.10%  hyper-derp  hyper-derp         [.] hyper_derp::HandleSendCqe(hyper_derp::Worker*, io_uring_cqe*)
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_poll_xdpsq_cq
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] napi_build_skb
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_trylock
+     0.10%  hyper-derp  hyper-derp         [.] hyper_derp::BuildRecvPacket(unsigned char*, std::array<unsigned char, 32ul> const&, unsigned char const*, int)
+     0.10%  hyper-derp  [kernel.kallsyms]  [k] free_iova_fast
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] __get_xps_queue_idx
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] release_sock
+     0.09%  hyper-derp  hyper-derp         [.] hyper_derp::ProcessXfer(hyper_derp::Worker*)
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] scatterwalk_map_and_copy
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] __wake_up_sync_key
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_select_queue
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] intel_iommu_unmap_pages
+     0.09%  hyper-derp  liburing.so.2.9    [.] 0x000000000000319b
+     0.09%  hyper-derp  hyper-derp         [.] hyper_derp::SubmitPeerSend(hyper_derp::Worker*, hyper_derp::Peer*, unsigned char const*, int, int)
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] skb_copy_datagram_iter
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] bbr_main
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] import_ubuf
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] io_sendmsg_prep
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] tls_device_rx_resync_new_rec
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_poll_ico_cq
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] __sk_mem_reduce_allocated
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] io_netmsg_recycle
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] __schedule
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] tls_strp_load_anchor_with_queue
+     0.09%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_txwqe_build_dsegs
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] tcp_tso_segs
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] tls_strp_msg_load
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] nf_hook_slow
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] lock_sock_nested
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_unlock
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] alloc_pages_noprof
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] mutex_lock_interruptible
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] ip_skb_dst_mtu
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] io_poll_task_func
+     0.08%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031ad
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] io_recv
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] __memset
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] skb_to_sgvec
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] syscall_return_via_sysret
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_features_check
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] entry_SYSCALL_64
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] __hrtimer_run_queues
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] policy_nodemask
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] iov_iter_extract_pages
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] napi_pp_put_page
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_build_rx_skb
+     0.08%  hyper-derp  [kernel.kallsyms]  [k] skb_split
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] tls_get_rec
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] __folio_put
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] psi_group_change
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] tcp_v4_rcv
+     0.07%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031a6
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] crypto_aead_encrypt
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] __ip_local_out
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] __update_load_avg_cfs_rq
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] inet_sendmsg
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] __netif_receive_skb_core.constprop.0
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] tcp_schedule_loss_probe.part.0
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] sch_direct_xmit
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] update_load_avg
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] dev_hard_start_xmit
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] inet_gro_receive
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] io_cqring_wait
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] iommu_dma_unmap_page
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] cryptd_aead_child
+     0.07%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003159
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] intel_iommu_iova_to_phys
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] tcp_mstamp_refresh
+     0.07%  hyper-derp  [kernel.kallsyms]  [k] skb_try_coalesce
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] mem_cgroup_charge_skmem
+     0.06%  hyper-derp  hyper-derp         [.] __io_uring_get_cqe$plt
+     0.06%  hyper-derp  liburing.so.2.9    [.] 0x000000000000329d
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] kfree_skbmem
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] __do_sys_io_uring_enter
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] psi_task_switch
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] sk_msg_zerocopy_from_iter
+     0.06%  hyper-derp  libc.so.6          [.] 0x0000000000162c31
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] dma_unmap_page_attrs
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_completion_event
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] cond_accept_memory
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_start_range_ns
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_interrupt
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_consume_skb
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] sock_from_file
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] perf_ctx_disable
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] sock_rfree
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] sock_recvmsg
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] __release_sock
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] _find_first_bit
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] __ip_finish_output
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] handle_edge_irq
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] domain_unmap
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] check_stack_object
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_handle_rx_cqe
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] __refill_stock
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] aes_gcm_enc_final_aesni_avx
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] avg_vruntime
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] sk_page_frag_refill
+     0.06%  hyper-derp  [kernel.kallsyms]  [k] __radix_tree_lookup
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] skb_network_protocol
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] validate_xmit_skb
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_unlock_bh
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] netif_skb_features
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] skb_page_frag_refill
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] ___slab_alloc
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] notifier_call_chain
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __sk_msg_free
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __hrtimer_next_event_base
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __sk_dst_check
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] iommu_put_pages_list
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] netdev_pick_tx
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tls_make_aad
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] io_msg_alloc_async
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] skcipher_walk_first
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tcp_stream_memory_free
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] check_preempt_wakeup_fair
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] ipv4_mtu
+     0.05%  hyper-derp  libc.so.6          [.] 0x0000000000162c44
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tcp_rate_check_app_limited
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __common_interrupt
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __sk_mem_schedule
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] bbr_min_tso_segs
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] io_poll_get_ownership_slowpath
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] clockevents_program_event
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] irq_chip_ack_parent
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] get_pfnblock_flags_mask
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __tasklet_schedule_common
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tcp_v4_do_rcv
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tls_record_content_type.isra.0
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] refill_stock
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] sk_stream_error
+     0.05%  hyper-derp  libc.so.6          [.] 0x0000000000162c80
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] enqueue_task_fair
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] io_buffer_select
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tls_tx_records
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] is_vmalloc_addr
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tcp_gro_receive
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] apparmor_ip_postroute
+     0.05%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003100
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] tcp_release_cb
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __memcg_slab_free_hook
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] __slab_free
+     0.05%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003117
+     0.05%  hyper-derp  libc.so.6          [.] 0x0000000000162c85
+     0.05%  hyper-derp  [kernel.kallsyms]  [k] iommu_get_dma_domain
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] napi_schedule_prep
+     0.04%  hyper-derp  libc.so.6          [.] 0x0000000000162ac9
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] skb_free_head
+     0.04%  hyper-derp  liburing.so.2.9    [.] 0x000000000000314c
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] io_recv_finish
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_post_rx_wqes
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_data_queue
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __irqentry_text_end
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] fq_codel_dequeue
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __napi_schedule
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] simd_aead_encrypt
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] common_interrupt
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] pick_next_task_fair
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] skcipher_walk_aead_decrypt
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] restore_fpregs_from_fpstate
+     0.04%  hyper-derp  libc.so.6          [.] 0x0000000000162c3e
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] idle_cpu
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_tsq_write.part.0
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] netdev_core_pick_tx
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __inet_lookup_established
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] lock_timer_base
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tls_strp_msg_done
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __skb_clone
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] skb_attempt_defer_free
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] native_sched_clock
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] ipv4_dst_check
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] try_to_wake_up
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] sched_balance_update_blocked_averages
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_options_write.isra.0
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __netif_receive_skb_list_core
+     0.04%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003137
+     0.04%  hyper-derp  liburing.so.2.9    [.] 0x000000000000311c
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_try_coalesce
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_rearm_rto
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] sched_balance_newidle
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] rb_erase
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] ip_send_check
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] dequeue_entity
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __iov_iter_get_pages_alloc
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] bpf_exec_tx_verdict
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_txwqe_build_eseg.isra.0
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] fget
+     0.04%  hyper-derp  libc.so.6          [.] 0x0000000000162c7b
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] bpf_skops_write_hdr_opt.isra.0
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __napi_build_skb
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_pace_kick
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_ack_update_rtt
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] ip_rcv_finish_core.isra.0
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] ktime_get_update_offsets_now
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_event_new_data_sent
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __usecs_to_jiffies
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] __enqueue_entity
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] syscall_exit_to_user_mode
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] mlx5_eq_cq_get
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] tcp_poll
+     0.04%  hyper-derp  [kernel.kallsyms]  [k] fast_mix
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tick_program_event
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] place_entity
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] mem_cgroup_uncharge_skmem
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] ip_rcv_core
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] timerqueue_add
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] validate_xmit_xfrm
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __calc_delta.constprop.0
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] page_counter_uncharge
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] do_syscall_64
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __io_run_local_work
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_check_space
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_update_skb_after_send
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] switch_fpu_return
+     0.03%  hyper-derp  libc.so.6          [.] 0x0000000000162c77
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] xas_start
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] inet_send_prepare
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_validate_incoming
+     0.03%  hyper-derp  libc.so.6          [.] 0x0000000000162c18
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] mutex_lock
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] skb_gro_receive
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] cpuacct_charge
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __irq_exit_rcu
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tls_rx_reader_acquire
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_v4_early_demux
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_tsq_handler
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] put_prev_entity
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] enqueue_timer
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_handle_tx_dim
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] slab_update_freelist.isra.0
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] eth_type_trans
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] try_get_folio
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] update_curr_se
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] simple_copy_to_iter
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_leave_memory_pressure
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] rb_insert_color
+     0.03%  hyper-derp  liburing.so.2.9    [.] 0x000000000000310d
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] netif_receive_skb_list_internal
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] validate_xmit_skb_list
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __qdisc_run
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_run_softirq
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_rbtree_insert
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_v4_send_check
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] fput
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __mem_cgroup_uncharge
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] llist_reverse_order
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] workqueue_softirq_action
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] sk_forced_mem_schedule
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __memcpy
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_send_mss
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_stream_alloc_skb
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __tcp_send_ack.part.0
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] note_interrupt
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __handle_irq_event_percpu
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] napi_complete_done
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] detach_if_pending
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __sysvec_apic_timer_interrupt
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] psi_task_change
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp_try_rmem_schedule
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] inet_recvmsg
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] ip_local_out
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] apic_ack_irq
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] sk_free
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] handle_irq_event
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] security_socket_recvmsg
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] iov_iter_advance
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] perf_ctx_unlock
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] dql_completed
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __perf_event_task_sched_out
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] sysvec_apic_timer_interrupt
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] qi_submit_sync
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] finish_task_switch.isra.0
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] tcp4_gro_receive
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] wake_up_var
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] pick_task_fair
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] is_last_ethertype_ip.constprop.0
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] __queue_work.part.0
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] enqueue_entity
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] skb_gso_validate_network_len
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] sock_poll
+     0.03%  hyper-derp  [kernel.kallsyms]  [k] napi_consume_skb
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] irq_int_handler
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_push
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] napi_gro_receive
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] __sock_wfree
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_skb_entail
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] net_dim
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] io_req_post_cqe
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] queue_work_on
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] save_fpregs_to_fpstate
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_v4_fill_cb
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] atomic_notifier_call_chain
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] rb_next
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] page_pool_put_unrefed_netmem
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162c91
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] bbr_packets_in_net_at_edt
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] skb_clone
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] mlx5_cq_tasklet_cb
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] x86_pmu_disable
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] update_rq_clock
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162cea
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] dequeue_entities
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162ce5
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] ip_list_rcv
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_wmem_schedule
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_txqsq_get_next_pi
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162caa
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_in_ack_event
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] io_fill_cqe_aux
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] ip_sublist_rcv
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_delack_max
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tls_sk_poll
+     0.02%  hyper-derp  liburing.so.2.9    [.] io_uring_wait_cqes
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162c8a
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] skb_push
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] bbr_set_pacing_rate
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tasklet_clear_sched
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_measure_rcv_mss
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] bbr_quantization_budget
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] x64_sys_call
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_rate_skb_sent
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_event_data_recv
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] put_cmsg
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] sk_filter_trim_cap
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] vruntime_eligible
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] sk_reset_timer
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] iommu_iova_to_phys
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162ce0
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] arch_exit_to_user_mode_prepare.isra.0
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_grow_window
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_tx_check_stop
+     0.02%  hyper-derp  hyper-derp         [.] memcpy$plt
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] irqentry_enter
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] intel_iommu_iotlb_sync_map
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] restore_regs_and_return_to_kernel
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_free_rx_wqes
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162cef
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] add_interrupt_randomness
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_chrono_stop
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_tasklet_func
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] page_counter_try_charge
+     0.02%  hyper-derp  libc.so.6          [.] 0x0000000000162c73
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] irq_enter_rcu
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] free_tail_page_prepare
+     0.02%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032e8
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] apparmor_socket_sendmsg
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] enqueue_hrtimer
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] pick_eevdf
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] sk_leave_memory_pressure
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] __tcp_ack_snd_check
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] entry_SYSCALL_64_after_hwframe
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] __napi_poll
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tls_data_ready
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_small_queue_check.isra.0
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_newly_delivered
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] ip_local_deliver
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] rcu_note_context_switch
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_queue_rcv
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tomoyo_socket_sendmsg
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_reprogram
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] process_rx_list
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_page_release_fragmented.isra.0
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] gup_fast_pte_range
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] native_apic_mem_eoi
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] tcp_urg
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] bpf_lsm_socket_sendmsg
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] kick_pool
+     0.02%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_lock_irq
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] dequeue_task_fair
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] raw_local_deliver
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_rate_gen
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] inet_ehashfn
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] error_return
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] xa_load
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] security_sock_rcv_skb
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __dequeue_entity
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_alloc_bulk_noprof
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __tcp_push_pending_frames
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __pskb_trim_head
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_add_backlog
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tls_strp_data_ready
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] perf_pmu_sched_task
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_gro_pull_header
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] skb_csum_hwoffload_help
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] kthread_is_per_cpu
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162c04
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __rseq_handle_notify_resume
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] ip_protocol_deliver_rcu
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] apparmor_socket_recvmsg
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __sk_mem_reclaim
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] ttwu_queue_wakelist
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] asm_sysvec_apic_timer_interrupt
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_send_delayed_ack
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_rate_skb_delivered
+     0.01%  hyper-derp  liburing.so.2.9    [.] io_uring_wait_cqes@plt
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __zone_watermark_ok
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] skb_put
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] bbr_lt_bw_sampling
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] napi_skb_cache_get
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] build_detached_freelist
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162ccc
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] bbr_cwnd_event
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] fpregs_assert_state_consistent
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] record_times
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] rb_first
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __perf_event_task_sched_in
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp4_gro_complete
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] minmax_running_min
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] pskb_expand_head
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] put_cpu_partial
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] put_prev_task_fair
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] schedule
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] skb_gso_transport_seglen
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] resched_curr
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tls_rx_msg_ready
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_active
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] prandom_u32_state
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_downgrade_zcopy_pure
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_fragment_tstamp
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_inbound_hash
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __rb_insert_augmented
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __queue_work
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] timerqueue_del
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] skb_defer_rx_timestamp
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __xfrm_policy_check2.constprop.0
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tls_sw_sock_is_readable
+     0.01%  hyper-derp  hyper-derp         [.] io_uring_submit$plt
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162b94
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] mem_cgroup_handle_over_high
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] xas_load
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] inet_gro_complete
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] nsecs_to_jiffies
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] xfd_validate_state
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] ip_local_deliver_finish
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] asm_common_interrupt
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] mlx5e_txqsq_wake
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] napi_skb_cache_put
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] psi_flags_change
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] io_run_task_work
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003130
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] iov_iter_bvec
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] raise_softirq_irqoff
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] sched_clock
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] sched_clock_cpu
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] enqueue_task
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] ttwu_do_activate
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] wakeup_preempt
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] mod_timer
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] syscall_exit_to_user_mode_prepare
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] task_non_contending
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] update_entity_lag
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x00000000000033ca
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tasklet_action
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __get_user_8
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_rack_update_reo_wnd
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] ktime_get_seconds
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __hrtimer_init
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] update_rt_rq_load_avg
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162c53
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __remove_hrtimer
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] drain_stock
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] vfs_write
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] iommu_unmap_fast
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] update_cfs_group
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __update_idle_core
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __io_req_task_work_add
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] early_xen_iret_patch
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tls_rx_reader_release.isra.0
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] set_next_task_idle
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] do_softirq.part.0
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] clockevents_program_min_delta
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __init_swait_queue_head
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162c8e
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __sk_flush_backlog
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x000000000000322b
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_free_bulk.part.0
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] entry_SYSCALL_64_safe_stack
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] skb_zerocopy_clone
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032f2
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] sock_put
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __dequeue_dl_entity
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] update_curr_dl_se
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_gro_complete
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x000000000000314f
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] get_nohz_timer_target
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __x86_indirect_thunk_rcx
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] bpf_lsm_socket_recvmsg
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_update_next_event
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_do_parse_auth_options
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] _copy_from_user
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162ca2
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] sk_msg_free
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] blkcg_maybe_throttle_current
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_schedule_loss_probe
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] bpf_lsm_socket_sock_rcv_skb
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003235
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] napi_gro_complete.constprop.0
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] __x64_sys_io_uring_enter
+     0.01%  hyper-derp  libc.so.6          [.] 0x0000000000162cfc
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] aa_file_perm
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] perf_pmu_nop_void
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] sugov_update_single_freq
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] irqentry_exit
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_data_ready
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] perf_adjust_freq_unthr_context
+     0.01%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031a0
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] raw_spin_rq_lock_nested
+     0.01%  hyper-derp  [kernel.kallsyms]  [k] tcp_rack_advance
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] propagate_protected_usage
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162c98
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __cgroup_account_cputime
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031be
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] jiffies_to_usecs
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] get_timespec64
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cc7
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162ca6
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __mod_zone_page_state
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __x86_indirect_thunk_rbp
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_rq_lock_irqsave
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_size
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cad
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_ack_tstamp
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] aes_gcm_aad_update
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] idr_find
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000311b
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] rcu_sched_clock_irq
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003300
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162ac0
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tls_strp_read_copy
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __set_next_task_fair.part.0
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162ad1
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] set_next_entity
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] cache_tag_flush_all
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] page_pool_refill_alloc_cache
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __pskb_pull_tail
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_alloc_noprof
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] get_user_pages_fast
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] update_vsyscall
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] arch_scale_cpu_capacity
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] free_pcppages_bulk
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] skb_condense
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031a7
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __tasklet_schedule
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] memcmp
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] gup_fast_folio_allowed
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162c9d
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000320b
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003229
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] autoremove_wake_function
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] account_system_index_time
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] hrtick_update
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_balance_trigger
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cf3
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] update_dl_rq_load_avg
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sync_regs
+     0.00%  hyper-derp  liburing.so.2.9    [.] io_uring_submit
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __x86_indirect_thunk_r10
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cba
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] perf_ctx_enable
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __wake_up
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] cpufreq_this_cpu_can_update
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] dl_server_update
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] rb_prev
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162b80
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] napi_skb_free_stolen_head
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] mlx5_eq_async_int
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sugov_get_util
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162ac3
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] ip_queue_xmit
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003112
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __pte_offset_map
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] try_grab_folio_fast
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] update_other_load_avgs
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] pmd_write
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] qi_batch_flush_descs
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] task_tick_fair
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] fq_flush_iotlb
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_chrono_start
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] timekeeping_advance
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __irqentry_text_start
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_send_ack
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] skcipher_walk_aead_encrypt
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] calc_wheel_index
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003153
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] kfree_skb_partial
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] security_file_permission
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032ec
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003102
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_try_to_cancel.part.0
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d01
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031af
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] page_pool_alloc_pages
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_trim_head
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003121
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] napi_gro_flush
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] dim_calc_stats
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] update_process_times
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000033d0
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_cancel
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __put_user_8
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162c93
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003108
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d06
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] irqentry_exit_to_user_mode
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] minmax_running_max
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] kfree_skb_list_reason
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] radix_tree_lookup
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] apparmor_file_permission
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] fdget_pos
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] irq_work_tick
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000330e
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031a5
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] clear_pending_if_disabled
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] insert_work
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d0a
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] eventfd_write
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003258
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_clock_noinstr
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] effective_cpu_util
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] irqentry_enter_from_user_mode
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] calc_global_load
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] skb_headers_offset_update
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cb5
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] call_function_single_prep_ipi
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tmigr_requires_handle_remote
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tmigr_handle_remote
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] irq_exit_rcu
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] update_sd_lb_stats.constprop.0
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] rw_verify_area
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000315d
+     0.00%  hyper-derp  liburing.so.2.9    [.] io_uring_wait_cqe_timeout
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] rcu_segcblist_ready_cbs
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] pwq_tryinc_nr_active
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] cache_tag_flush_iotlb
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] io_poll_issue
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000322d
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] dl_server_stop
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] intel_pmu_disable_all
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003370
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031b0
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032b9
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] pick_task_idle
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] apparmor_socket_sock_rcv_skb
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000313f
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] hrtimer_init
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] raw_spin_rq_unlock
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] ksys_write
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] ktime_add_safe
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_balance_rq
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __msecs_to_jiffies
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] e1000_irq_enable
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __x64_sys_write
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000315b
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032a5
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tick_do_update_jiffies64
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] eventfd_poll
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003410
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] queue_delayed_work_on
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_clock_tick
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __x64_sys_read
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] ntp_get_next_leap
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __run_timers
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000008f624
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] update_wall_time
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __do_softirq
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000033d8
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000033b4
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] task_mm_cid_work
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] alloc_iova
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] fq_codel_enqueue
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000030d8
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __free_one_page
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] run_timer_softirq
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __put_partials
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __kfree_skb
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cbf
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] reweight_entity
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] timekeeping_update
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] calc_global_load_tick
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __x86_indirect_thunk_rdx
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_delack_timer_handler
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d17
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003452
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_tick
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_write_timer
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] pvclock_gtod_notify
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] _get_random_bytes
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162b96
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cf7
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000030cb
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] mlx5_cmd_comp_handler
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_xmit_recovery
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162c58
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] native_read_msr
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tick_nohz_get_idle_calls_cpu
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] tcp_write_timer_handler
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] llist_add_batch
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000009a9e7
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d0e
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] iov_iter_get_pages2
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031ab
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] arch_scale_freq_tick
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003145
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d11
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __wake_up_locked_key
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000312c
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162c4a
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] _raw_spin_unlock_irq
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_balance_domains
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000032ee
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] nohz_balance_exit_idle
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000310a
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003118
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162c37
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] any_notifier
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000030c3
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003290
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] net_dim_step
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000008f62d
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162cd2
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003450
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] sched_balance_softirq
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __io_poll_execute
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000008f6af
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000031a3
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000310f
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000325c
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003376
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] kmem_cache_free_bulk
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x000000000000341d
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000009a9ec
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000030c0
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x00000000000030c6
+     0.00%  hyper-derp  libc.so.6          [.] 0x0000000000162d26
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] clear_delayed.part.0.constprop.0
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000008f66e
+     0.00%  hyper-derp  liburing.so.2.9    [.] 0x0000000000003266
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] __x64_sys_clock_nanosleep
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] common_nsleep
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] do_nanosleep
+     0.00%  hyper-derp  [kernel.kallsyms]  [k] select_estimate_accuracy
+     0.00%  hyper-derp  libc.so.6          [.] __nanosleep
+     0.00%  hyper-derp  libc.so.6          [.] 0x000000000009a9ee
+
+
+#
+# (Tip: Show individual samples with: perf script)
+#

@@ -1,0 +1,10 @@
+
+ Performance counter stats for process id '3090':
+
+   134,568,856,751      cycles                                                                
+   120,568,003,723      instructions                     #    0.90  insn per cycle            
+        31,934,984      LLC-load-misses                                                       
+        89,617,364      cache-misses                                                          
+
+      15.002509245 seconds time elapsed
+

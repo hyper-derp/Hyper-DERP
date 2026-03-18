@@ -1,0 +1,10 @@
+
+ Performance counter stats for process id '2144':
+
+           297,248      context-switches                                                      
+               843      cpu-migrations                                                        
+     2,587,120,163      cache-references                                                      
+       555,550,926      cache-misses                     #   21.47% of all cache refs         
+
+      15.002557066 seconds time elapsed
+

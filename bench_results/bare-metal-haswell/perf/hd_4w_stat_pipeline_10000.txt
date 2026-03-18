@@ -1,0 +1,10 @@
+
+ Performance counter stats for process id '2144':
+
+   210,383,167,180      cycles                                                                
+   248,412,761,265      instructions                     #    1.18  insn per cycle            
+    32,458,872,628      branches                                                              
+       398,769,148      branch-misses                    #    1.23% of all branches           
+
+      15.002561733 seconds time elapsed
+

@@ -1,0 +1,13 @@
+
+ Performance counter stats for process id '2007':
+
+    29,714,600,162      L1-dcache-loads                                                         (42.77%)
+     1,813,530,871      L1-dcache-load-misses            #    6.10% of all L1-dcache accesses   (34.50%)
+       549,075,370      LLC-loads                                                               (28.67%)
+       219,494,660      LLC-load-misses                  #   39.98% of all LL-cache accesses    (42.99%)
+       211,597,726      LLC-stores                                                              (28.56%)
+        78,551,049      LLC-store-misses                                                        (28.50%)
+         9,699,666      dTLB-load-misses                                                        (42.74%)
+
+      15.001919870 seconds time elapsed
+
