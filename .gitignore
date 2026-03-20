@@ -44,7 +44,9 @@ certs/
 .env.*
 !.env.example
 
-# Benchmark data (archived in HD-bench-data repo)
+# Archived in HD-bench-data repo
 bench_results/
 test-design/
 bare-metal/
+test-infra/
+scripts/

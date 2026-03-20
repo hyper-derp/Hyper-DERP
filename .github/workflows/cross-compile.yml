@@ -42,7 +42,7 @@ jobs:
         run: |
           cmake \
             -DCMAKE_TOOLCHAIN_FILE=\
-          CMakeCrossCompile-aarch64.cmake \
+          cmake/aarch64-toolchain.cmake \
             -G Ninja \
             -B build-arm64
 

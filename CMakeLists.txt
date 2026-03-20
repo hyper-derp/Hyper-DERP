@@ -115,8 +115,8 @@ include("cmake/libderp.cmake")
 add_executable(hyper-derp src/main.cc)
 target_link_libraries(hyper-derp PRIVATE libderp)
 
-# Tools.
-add_subdirectory(tools)
+# Benchmark tools.
+add_subdirectory(tools/bench)
 
 # Tests.
 enable_testing()

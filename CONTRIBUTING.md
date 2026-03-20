@@ -31,7 +31,7 @@ For ARM64 cross-compilation:
 ```bash
 sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 sudo apt install liburing-dev:arm64 libsodium-dev:arm64
-cmake -DCMAKE_TOOLCHAIN_FILE=CMakeCrossCompile-aarch64.cmake \
+cmake -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
   -B build-arm64
 cmake --build build-arm64
 ```
@@ -64,14 +64,14 @@ Run all linters before submitting a PR:
 
 ```bash
 # C++ lint
-cpplint --recursive src/ include/ tests/ tools/
+cpplint --recursive src/ include/ tests/ tools/bench/
 
 # clang-tidy (from the build directory)
 cd build-release
 run-clang-tidy -checks='-*,modernize-*,bugprone-*,performance-*'
 
 # Python lint
-flake8 scripts/ tools/
+flake8 tools/analysis/
 ```
 
 Fix all warnings. CI will reject PRs with lint failures.

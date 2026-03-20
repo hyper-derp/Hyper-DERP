@@ -211,7 +211,7 @@ cmake --build build-debug -j
 
 ```sh
 sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-cmake -DCMAKE_TOOLCHAIN_FILE=CMakeCrossCompile-aarch64.cmake \
+cmake -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
   -B build-arm64
 cmake --build build-arm64 -j
 ```

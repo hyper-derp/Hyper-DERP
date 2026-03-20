@@ -108,7 +108,7 @@ IDE integration and clang-tidy.
 
 ## ARM64 Cross-Compile
 
-Create a toolchain file `CMakeCrossCompile-aarch64.cmake`:
+The toolchain file `cmake/aarch64-toolchain.cmake`:
 
 ```cmake
 set(CMAKE_SYSTEM_NAME Linux)
@@ -135,7 +135,7 @@ Build:
 
 ```sh
 cmake -B build-arm64 \
-  -DCMAKE_TOOLCHAIN_FILE=CMakeCrossCompile-aarch64.cmake \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Release \
   -G Ninja
 cmake --build build-arm64 -j

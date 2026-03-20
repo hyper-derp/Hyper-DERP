@@ -1,7 +1,7 @@
 # CMake toolchain file for ARM64 (aarch64) cross-compilation.
 #
 # Usage:
-#   cmake -DCMAKE_TOOLCHAIN_FILE=CMakeCrossCompile-aarch64.cmake ..
+#   cmake -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake ..
 #
 # Prerequisites:
 #   sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu

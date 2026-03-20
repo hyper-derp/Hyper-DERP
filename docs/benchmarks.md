@@ -22,7 +22,7 @@ produce reproducible, statistically valid results.
 ### Test Infrastructure
 
 - **Scale test tool** -- `derp-scale-test` (built from
-  `tools/`). Generates configurable peer counts, message
+  `tools/bench/`). Generates configurable peer counts, message
   rates, and payload sizes against a DERP relay.
 - **Tunnel tests** -- real Tailscale clients with
   self-hosted Headscale control plane. Zero contact with
@@ -139,7 +139,7 @@ cmake --build build -j --target derp-scale-test
 ```
 
 The `derp-scale-test` binary is built from sources in
-`tools/`. It generates configurable synthetic DERP traffic
+`tools/bench/`. It generates configurable synthetic DERP traffic
 against a relay server.
 
 ### Run a Basic Throughput Test
