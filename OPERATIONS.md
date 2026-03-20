@@ -186,3 +186,8 @@ The kernel or socket type doesn't support zero-copy sends.
 The worker automatically falls back to regular send for that
 peer (sets `no_zc` flag). This is normal for AF_UNIX
 sockets or older kernels.
+
+## Contact
+
+- **Security vulnerabilities:** security@hyper-derp.dev
+- **Release and packaging:** release@hyper-derp.dev

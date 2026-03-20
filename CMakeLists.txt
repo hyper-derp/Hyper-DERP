@@ -127,7 +127,7 @@ include(CTest)
 # Fuzz targets (only with Clang + libFuzzer).
 option(ENABLE_FUZZING "Build fuzz targets" OFF)
 if(ENABLE_FUZZING)
-  add_subdirectory(fuzz)
+  add_subdirectory(tests/fuzz)
 endif()
 
 # ============================================================================
