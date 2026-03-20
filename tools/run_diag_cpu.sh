@@ -4,9 +4,9 @@
 # 3 runs per rate, 15s each.
 set -uo pipefail
 
-RELAY=10.50.0.1
-RELAY_SSH=hd-test01
-RELAY_USER=worker
+RELAY=${RELAY:?Set RELAY env var}
+RELAY_SSH=${RELAY_SSH:?Set RELAY_SSH env var}
+RELAY_USER=${RELAY_USER:-worker}
 HD_PORT=3341
 SIZE=1400
 PEERS=20

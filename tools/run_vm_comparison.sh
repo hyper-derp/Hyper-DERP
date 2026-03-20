@@ -9,12 +9,13 @@
 
 set -euo pipefail
 
-SSH_KEY=~/.ssh/id_ed25519_targets
-RELAY_IP=10.101.1.1
-CLIENT_IP=10.101.1.2
-SSH_RELAY="ssh -i $SSH_KEY worker@$RELAY_IP"
-SSH_CLIENT="ssh -i $SSH_KEY worker@$CLIENT_IP"
-SCP_FROM_CLIENT="scp -i $SSH_KEY worker@$CLIENT_IP"
+SSH_KEY="${SSH_KEY:?Set SSH_KEY env var (path to SSH key)}"
+RELAY_IP="${RELAY_IP:?Set RELAY_IP env var}"
+CLIENT_IP="${CLIENT_IP:?Set CLIENT_IP env var}"
+SSH_USER="${RELAY_USER:-worker}"
+SSH_RELAY="ssh -i $SSH_KEY ${SSH_USER}@$RELAY_IP"
+SSH_CLIENT="ssh -i $SSH_KEY ${SSH_USER}@$CLIENT_IP"
+SCP_FROM_CLIENT="scp -i $SSH_KEY ${SSH_USER}@$CLIENT_IP"
 
 TS_PORT=3340
 HD_PORT=3341

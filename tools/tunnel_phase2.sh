@@ -6,9 +6,9 @@ set -uo pipefail
 
 # ---- Config --------------------------------------------------
 
-RELAY_INT=10.10.0.2
-SSH_KEY=$HOME/.ssh/id_ed25519_targets
-SSH_USER=worker
+RELAY_INT=${RELAY_INT:?Set RELAY_INT env var}
+SSH_KEY=${SSH_KEY:?Set SSH_KEY env var}
+SSH_USER=${SSH_USER:-worker}
 HS_KEY="${HS_KEY:?Set HS_KEY env var (headscale preauthkey)}"
 
 TS_PORT=3340
@@ -19,13 +19,13 @@ DURATION=15
 # Pair definitions: sender → receiver (Tailscale IPs).
 # Pair 1: bench-client (100.64.0.2) → tunnel-relay (100.64.0.1)
 # Pair 2: tunnel-client-2 (100.64.0.5) → tunnel-client-3 (100.64.0.6)
-PAIR1_SENDER_INT=10.10.0.3   # bench-client (this VM)
-PAIR1_RECV_TS=100.64.0.1     # tunnel-relay
-PAIR1_RECV_INT=10.10.0.2     # tunnel-relay internal
+PAIR1_SENDER_INT=${PAIR1_SENDER_INT:?Set PAIR1_SENDER_INT env var}
+PAIR1_RECV_TS=${PAIR1_RECV_TS:?Set PAIR1_RECV_TS env var}
+PAIR1_RECV_INT=${PAIR1_RECV_INT:?Set PAIR1_RECV_INT env var}
 
-PAIR2_SENDER_INT=10.10.0.4   # tunnel-client-2
-PAIR2_RECV_TS=100.64.0.6     # tunnel-client-3
-PAIR2_RECV_INT=10.10.0.5     # tunnel-client-3 internal
+PAIR2_SENDER_INT=${PAIR2_SENDER_INT:?Set PAIR2_SENDER_INT env var}
+PAIR2_RECV_TS=${PAIR2_RECV_TS:?Set PAIR2_RECV_TS env var}
+PAIR2_RECV_INT=${PAIR2_RECV_INT:?Set PAIR2_RECV_INT env var}
 
 OUT=/tmp/tunnel_phase2
 mkdir -p "$OUT"/{hd,ts}/{pair1,pair2}/{tcp1,tcp4,udp,ping,latload}

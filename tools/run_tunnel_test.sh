@@ -1,11 +1,12 @@
 #!/bin/bash
 # Bare Metal Tunnel Test — all 6 phases.
-# Runs locally on Raptor Lake (relay), SSHes to hd-test01 (client).
+# Runs locally (relay), SSHes to $CLIENT_SSH (client).
 # Implements bare-metal/TUNNEL_TEST_PLAN.md.
 set -uo pipefail
 
-CLIENT_SSH=hd-test01
-CLIENT_USER=worker
+CLIENT_SSH="${CLIENT_SSH:?Set CLIENT_SSH env var (client hostname)}"
+CLIENT_USER="${CLIENT_USER:-worker}"
+RELAY_IP="${RELAY_IP:?Set RELAY_IP env var (relay IP address)}"
 HD_PORT=3341
 TS_PORT=3340
 CERT_DIR=/tmp/bench_certs_local
@@ -42,7 +43,7 @@ start_ts() {
   log "  Starting TS relay..."
   sudo pkill -9 derper 2>/dev/null; sleep 1
   sudo setsid derper -certmode manual -certdir "$CERT_DIR" \
-    -a :${TS_PORT} -hostname 10.50.0.2 \
+    -a :${TS_PORT} -hostname ${RELAY_IP} \
     </dev/null >/tmp/ts_tunnel.log 2>&1 &
   sleep 4
   log "  TS relay on :${TS_PORT}"
@@ -95,7 +96,7 @@ regions:
     nodes:
       - name: "bm-relay"
         regionid: 900
-        hostname: "10.50.0.2"
+        hostname: "${RELAY_IP}"
 $([ -n "$certname" ] && echo "        certname: \"$certname\"")
         derpport: $port
         insecurefortests: true
@@ -333,7 +334,7 @@ run_phase6() {
     sleep 3
     # Reconnect.
     ns_cmd "$sns3" "tailscale --socket=$(ts_sock "$sns3") up \
-      --login-server http://10.50.0.2:8080 --accept-dns=false \
+      --login-server http://${RELAY_IP}:8080 --accept-dns=false \
       2>/dev/null" || true
   done
 
@@ -351,8 +352,10 @@ collect_system_info() {
   {
     echo "test: bare_metal_tunnel"
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "relay: Raptor Lake i5-13600KF (10.50.0.2)"
-    echo "client: Haswell E5-1650 v3 (10.50.0.1)"
+    echo "relay: $(lscpu | grep 'Model name' | \
+      sed 's/.*: *//') ($RELAY_IP)"
+    echo "client: $(ccmd 'lscpu | grep \"Model name\" | \
+      sed \"s/.*: *//\"') ($CLIENT_SSH)"
     echo "relay_kernel: $(uname -r)"
     echo "client_kernel: $(ccmd 'uname -r')"
     echo "pairs: 4"
@@ -368,8 +371,8 @@ collect_system_info() {
 
 main() {
   log "Bare Metal Tunnel Test"
-  log "Relay: Raptor Lake (local)"
-  log "Client: Haswell (hd-test01)"
+  log "Relay: $RELAY_IP (local)"
+  log "Client: $CLIENT_SSH"
   log ""
 
   collect_system_info

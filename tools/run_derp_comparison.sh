@@ -14,7 +14,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${PROJECT_DIR}/build"
 RELAY="${BUILD_DIR}/hyper-derp"
 CLIENT="${BUILD_DIR}/tools/derp-test-client"
-DERPER="${HOME}/go/bin/derper"
+DERPER="${DERPER:?Set DERPER env var (path to Go derper binary)}"
 
 OUTPUT_DIR="${1:-${PROJECT_DIR}/bench_results/comparison-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$OUTPUT_DIR"

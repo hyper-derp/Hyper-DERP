@@ -1,0 +1,83 @@
+name: Bug Report
+description: Report a bug in Hyper-DERP.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Thank you for reporting a bug.  Please fill in the
+        details below so we can reproduce and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: >
+        A clear description of the bug.
+      placeholder: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: >
+        Minimal steps to trigger the bug.
+      placeholder: |
+        1. Start hyper-derp with flags ...
+        2. Connect a client ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Hyper-DERP Version
+      description: >
+        Output of `hyper-derp --version` or the git commit.
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      options:
+        - Built from source
+        - Debian package (APT)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >
+        OS, kernel version, CPU architecture, and any other
+        relevant details.
+      placeholder: |
+        OS: Ubuntu 24.04
+        Kernel: 6.8.0
+        Arch: x86_64
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: >
+        Paste any relevant log output.  This field is
+        automatically formatted as code.
+      render: text

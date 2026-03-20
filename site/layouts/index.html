@@ -1,0 +1,37 @@
+{{ define "main" }}
+<div class="hero">
+  <h1>Hyper-DERP</h1>
+  <p class="tagline">
+    High-performance DERP relay server in C++23
+    with io_uring.
+  </p>
+  <div class="stats">
+    <div class="stat">
+      <span class="number">2-12x</span>
+      <span class="label">throughput vs Go derper</span>
+    </div>
+    <div class="stat">
+      <span class="number">48x</span>
+      <span class="label">fewer retransmits</span>
+    </div>
+    <div class="stat">
+      <span class="number">5x</span>
+      <span class="label">lower p99 latency</span>
+    </div>
+  </div>
+  <div class="install-cmd">
+    sudo apt install hyper-derp
+  </div>
+  <div class="links">
+    <a class="primary" href="/docs/">Documentation</a>
+    <a class="secondary" href="/benchmarks/">Benchmarks</a>
+    <a class="secondary" href="/install/">Install</a>
+    <a class="secondary"
+      href="https://github.com/hyper-derp/hyper-derp">
+      GitHub
+    </a>
+  </div>
+</div>
+
+{{ .Content }}
+{{ end }}

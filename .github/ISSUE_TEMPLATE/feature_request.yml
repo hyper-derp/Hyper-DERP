@@ -1,0 +1,56 @@
+name: Feature Request
+description: Suggest a feature or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Thank you for your suggestion.  Please describe the
+        feature you would like to see.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >
+        What problem does this feature solve?  Is there a
+        current workaround?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: >
+        Describe the feature and how it should work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: >
+        Any alternative approaches you have thought about.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Hyper-DERP does this affect?
+      options:
+        - Data plane (io_uring, kTLS)
+        - Control plane (HTTP API, metrics)
+        - Packaging / installation
+        - Documentation
+        - Build system
+        - Other
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: >
+        Any other information, benchmarks, or references that
+        support this request.

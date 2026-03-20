@@ -1,8 +1,0 @@
-2026/03/12 11:11:23 Running in dev mode.
-2026/03/12 11:11:23 STUN server listening on [::]:3478
-2026/03/12 11:11:23 No mesh key specified for dev via TAILSCALE_DERPER_MESH_KEY
-2026/03/12 11:11:23 No mesh key configured for --dev mode
-2026/03/12 11:11:23 derper: serving on :3340
-2026/03/12 11:12:25 derp: 10.101.2.2:47522: client [l9C9m]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:47522: read: connection reset by peer
-2026/03/12 11:12:48 derp: 10.101.2.2:59366: client [Qzhx4]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:59366: read: connection reset by peer
-2026/03/12 11:13:01 derp: 10.101.2.2:39726: client [6R7/9]: readFrameHeader: read tcp 10.101.2.1:3340->10.101.2.2:39726: read: connection reset by peer

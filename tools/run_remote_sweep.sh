@@ -13,7 +13,7 @@
 #     [--workers 2] [--output-dir path] [--duration 10]
 #
 # Prerequisites on both machines:
-#   - derper binary at /home/karl/go/bin/derper (relay)
+#   - derper binary on PATH or set DERPER env var (relay)
 #   - SSH key auth configured
 #   - Elevated permissions for sysctl tuning (sudo)
 
@@ -35,9 +35,9 @@ SIZE=1400
 RATE=0
 PAIR_COUNTS="1 2 5 10 25 50 100 250 500 1000"
 OUTPUT_DIR=""
-DERPER_PATH="/home/karl/go/bin/derper"
+DERPER_PATH="${DERPER:-/usr/local/bin/derper}"
 REMOTE_DIR="/tmp/hyper-derp-bench"
-SSH_KEY="${HOME}/.ssh/id_ed25519_targets"
+SSH_KEY="${SSH_KEY:-${HOME}/.ssh/id_ed25519}"
 
 TS_PORT=3340
 HD_PORT=3341

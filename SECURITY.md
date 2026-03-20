@@ -5,7 +5,7 @@
 If you discover a security vulnerability in Hyper-DERP,
 please report it responsibly.
 
-**Email:** karl@localhost
+**Email:** security@hyper-derp.dev
 **Subject:** [SECURITY] Hyper-DERP vulnerability report
 
 Please include:

@@ -17,10 +17,10 @@ set -uo pipefail
 ZONE="europe-west3-b"
 RELAY_VM="bench-relay"
 CLIENT_VM="bench-client"
-CLIENT_IP="34.107.77.129"
-RELAY_IP="34.179.179.146"
-SSH_KEY="$HOME/.ssh/id_ed25519_targets"
-SSH_USER="worker"
+CLIENT_IP=${CLIENT_IP:?Set CLIENT_IP env var}
+RELAY_IP=${RELAY_IP:?Set RELAY_IP env var}
+SSH_KEY=${SSH_KEY:?Set SSH_KEY env var}
+SSH_USER=${SSH_USER:-worker}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -196,14 +196,14 @@ deploy_binaries() {
     "$SSH_KEY" \
     "${SSH_USER}@${CLIENT_IP}:/tmp/id_key" 2>/dev/null
   ssh_client \
-    'sudo mkdir -p /home/worker/.ssh && \
+    "sudo mkdir -p /home/${SSH_USER}/.ssh && \
      sudo cp /tmp/id_key \
-       /home/worker/.ssh/id_ed25519_targets && \
-     sudo chown worker:worker \
-       /home/worker/.ssh/id_ed25519_targets && \
+       /home/${SSH_USER}/.ssh/id_relay && \
+     sudo chown ${SSH_USER}:${SSH_USER} \
+       /home/${SSH_USER}/.ssh/id_relay && \
      sudo chmod 600 \
-       /home/worker/.ssh/id_ed25519_targets && \
-     rm -f /tmp/id_key'
+       /home/${SSH_USER}/.ssh/id_relay && \
+     rm -f /tmp/id_key"
   log "  SSH key installed on client"
 }
 

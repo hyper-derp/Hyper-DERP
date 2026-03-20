@@ -1,11 +1,11 @@
 #!/bin/bash
 # Haswell Remaining Tests — D (TS flame graph) + E (TCP latency).
-# Implements /home/karl/dev/HD-bench/HASWELL_REMAINING_PLAN.md.
+# Implements the Haswell remaining test plan.
 set -uo pipefail
 
-RELAY=10.50.0.1
-RELAY_SSH=hd-test01
-RELAY_USER=worker
+RELAY=${RELAY:?Set RELAY env var}
+RELAY_SSH=${RELAY_SSH:?Set RELAY_SSH env var}
+RELAY_USER=${RELAY_USER:-worker}
 HD_PORT=3341
 TS_PORT=3340
 SIZE=1400
@@ -13,8 +13,10 @@ PEERS=20
 PAIRS=10
 PERF_DURATION=15
 
-PERF_OUT=/home/karl/dev/Hyper-DERP/bench_results/bare-metal-haswell/perf
-LAT_OUT=/home/karl/dev/Hyper-DERP/bench_results/bare-metal-haswell/tcp_latency
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PERF_OUT=${PERF_OUT:-${PROJECT_DIR}/bench_results/bare-metal-haswell/perf}
+LAT_OUT=${LAT_OUT:-${PROJECT_DIR}/bench_results/bare-metal-haswell/tcp_latency}
 mkdir -p "$PERF_OUT" "$LAT_OUT"
 
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }

@@ -1,9 +1,0 @@
-date: 2026-03-13T08:51:17+00:00
-relay: 10.10.0.4
-kernel: 6.12.73+deb13-cloud-amd64
-cpu: INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.30GHz
-peers: 20
-pairs: 10
-duration: 10s
-size: 1400B
-rates: 10 50 100 250 500 1000 2000 3000 5000 7500 10000 15000 20000

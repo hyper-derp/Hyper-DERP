@@ -24,7 +24,7 @@ BUILD_DIR="${PROJECT_DIR}/build"
 RELAY="${BUILD_DIR}/hyper-derp"
 SCALE="${BUILD_DIR}/tools/derp-scale-test"
 CLIENT="${BUILD_DIR}/tools/derp-test-client"
-DERPER="/home/karl/go/bin/derper"
+DERPER="${DERPER:?Set DERPER env var (path to Go derper binary)}"
 
 TS_PORT=3340
 HD_PORT=3341

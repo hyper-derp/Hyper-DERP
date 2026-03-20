@@ -6,9 +6,9 @@ set -uo pipefail
 
 # ---- Network / relay -----------------------------------------
 
-RELAY=${RELAY:-10.10.0.2}
-RELAY_USER=${RELAY_USER:-worker}
-RELAY_KEY=${RELAY_KEY:-$HOME/.ssh/id_ed25519_targets}
+RELAY="${RELAY:?Set RELAY env var (relay IP)}"
+RELAY_USER="${RELAY_USER:-worker}"
+RELAY_KEY="${RELAY_KEY:?Set RELAY_KEY env var (path to SSH key)}"
 TS_PORT=3340
 SIZE=1400
 
@@ -132,13 +132,13 @@ openssl req -x509 -newkey ec \
   -pkeyopt ec_paramgen_curve:prime256v1 \
   -keyout /tmp/key.pem -out /tmp/cert.pem \
   -days 1 -nodes \
-  -subj "/CN=10.10.0.2" \
-  -addext "subjectAltName=IP:10.10.0.2,DNS:bench-relay" \
+  -subj "/CN=${RELAY}" \
+  -addext "subjectAltName=IP:${RELAY},DNS:bench-relay" \
   2>/dev/null
 CERTDIR=/tmp/derper-certs
 mkdir -p "$CERTDIR"
-cp /tmp/cert.pem "$CERTDIR/10.10.0.2.crt"
-cp /tmp/key.pem "$CERTDIR/10.10.0.2.key"
+cp /tmp/cert.pem "\$CERTDIR/${RELAY}.crt"
+cp /tmp/key.pem "\$CERTDIR/${RELAY}.key"
 '
 
 # Start TS with TLS.
@@ -148,7 +148,7 @@ relay_cmd "sudo setsid derper -dev \
   -a :${TS_PORT} \
   -certmode manual \
   -certdir /tmp/derper-certs \
-  -hostname 10.10.0.2 \
+  -hostname ${RELAY} \
   </dev/null >/tmp/ts.log 2>&1 &"
 sleep 4
 

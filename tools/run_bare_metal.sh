@@ -31,8 +31,8 @@ done
 
 # ---- Network / relay -----------------------------------------
 
-RELAY=${RELAY:-10.50.0.1}
-RELAY_SSH=${RELAY_SSH:-hd-test01}
+RELAY=${RELAY:?Set RELAY env var}
+RELAY_SSH=${RELAY_SSH:?Set RELAY_SSH env var}
 RELAY_USER=${RELAY_USER:-worker}
 HD_PORT=3341
 TS_PORT=3340

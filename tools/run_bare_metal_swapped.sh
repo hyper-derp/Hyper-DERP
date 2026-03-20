@@ -1,8 +1,8 @@
 #!/bin/bash
 # Bare Metal — Swapped Roles.
-# Raptor Lake (ksys, local) = relay.
-# Haswell (hd-test01) = client.
-# HD kTLS vs TS TLS, 4w and 8w on Raptor Lake.
+# Bare Metal -- Swapped Roles.
+# Local machine = relay, remote ($CLIENT_SSH) = client.
+# HD kTLS vs TS TLS, 4w and 8w configurations.
 set -uo pipefail
 
 # ---- Flags ---------------------------------------------------
@@ -25,11 +25,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- Network ------------------------------------------------
-# Relay = local (10.50.0.2), Client = hd-test01 (10.50.0.1)
+# Relay = local ($RELAY_IP), Client = $CLIENT_SSH
 
-RELAY_IP=10.50.0.2
-CLIENT_SSH=hd-test01
-CLIENT_USER=worker
+RELAY_IP="${RELAY_IP:?Set RELAY_IP env var (relay IP address)}"
+CLIENT_SSH="${CLIENT_SSH:?Set CLIENT_SSH env var (client hostname)}"
+CLIENT_USER="${CLIENT_USER:-worker}"
 HD_PORT=3341
 TS_PORT=3340
 HD_METRICS_PORT=9090
@@ -391,8 +391,8 @@ collect_system_info() {
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "config: $label"
     echo "workers: $workers"
-    echo "relay: $RELAY_IP (local, Raptor Lake)"
-    echo "client: $CLIENT_SSH (Haswell)"
+    echo "relay: $RELAY_IP (local)"
+    echo "client: $CLIENT_SSH"
     echo "peers: $PEERS"
     echo "pairs: $PAIRS"
     echo "duration: ${DURATION}s"
@@ -549,8 +549,8 @@ run_config() {
   log ""
   log "============================================"
   log "  Config: ${label} (${workers} workers)"
-  log "  Relay: Raptor Lake (local)"
-  log "  Client: Haswell (hd-test01)"
+  log "  Relay: $RELAY_IP (local)"
+  log "  Client: $CLIENT_SSH"
   log "============================================"
 
   collect_system_info "$label" "$workers" "$out"
@@ -657,10 +657,10 @@ run_config() {
 # ---- Main ----------------------------------------------------
 
 main() {
-  log "Bare Metal — Swapped Roles (Raptor Lake relay)"
+  log "Bare Metal -- Swapped Roles"
   log "Output: $OUT_BASE"
-  log "Relay: $RELAY_IP (local, Raptor Lake i5-13600KF)"
-  log "Client: $CLIENT_SSH (Haswell E5-1650 v3)"
+  log "Relay: $RELAY_IP (local)"
+  log "Client: $CLIENT_SSH"
   log ""
 
   # Ensure client has cpu dir.

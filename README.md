@@ -1,14 +1,23 @@
 # Hyper-DERP
 
-High-performance DERP relay server written in C++23 with
-`io_uring`. Drop-in replacement for Tailscale's Go-based
-[derper](https://pkg.go.dev/tailscale.com/derp) with 2-12x
-higher throughput, up to 48x fewer TCP retransmits, and
-significantly lower tail latency under load.
+High-performance DERP relay server in C++23 with `io_uring`.
 
-Compatible with Tailscale and Headscale clients.
+![Build](https://github.com/hyper-derp/hyper-derp/actions/workflows/build.yml/badge.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Platform: Linux](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)
 
-## Benchmark Highlights
+## What Is This?
+
+[DERP](https://tailscale.com/blog/how-tailscale-works/) (Designated
+Encrypted Relay for Packets) is the relay protocol that Tailscale
+clients fall back to when direct WireGuard connections fail.
+Hyper-DERP is a drop-in replacement for Tailscale's Go-based
+[derper](https://pkg.go.dev/tailscale.com/derp) that delivers
+2-12x higher throughput, up to 48x fewer TCP retransmits, and
+significantly lower tail latency under load. It is compatible
+with Tailscale, Headscale, and any standard DERP client.
+
+## Performance
 
 Measured on GCP c4-highcpu VMs (Intel Xeon Platinum 8581C),
 DERP over kTLS, 25 runs per data point.
@@ -24,16 +33,9 @@ Go derper v1.96.1 release build.
 | 16 | 12,068 Mbps | 7,743 Mbps | **1.6x** at 20G | 1.7% | 18.9% |
 
 The advantage grows as resources shrink. At 2 vCPU, TS drops
-93% of offered traffic at 5 Gbps. HD delivers 3 Gbps.
+93% of offered traffic at 5 Gbps while HD delivers 3 Gbps.
 
-Loss percentages are measured at the offered rate shown. HD has
-zero internal packet drops at all configurations (no xfer_drops,
-send_drops, or slab_exhausts). Reported loss reflects messages
-in TCP send buffers when the 15-second test window closes — the
-gap between offered rate and relay throughput, not relay packet
-loss.
-
-### Tail Latency Under Load (p99, at TS TLS ceiling)
+### Tail Latency (p99, at TS TLS ceiling)
 
 | vCPU | HD p99 | TS p99 | Ratio |
 |-----:|-------:|-------:|------:|
@@ -53,13 +55,11 @@ and self-hosted Headscale control plane. 10 runs, 15s each.
 | Retransmits (1 pair) | 9,184 | 560 | **16x fewer** |
 | Retransmits (3 pairs) | 9,566 | 399 | **24x fewer** |
 | Retransmits (5 min) | 192,689 | 3,956 | **48x fewer** |
-| Throughput under churn | 1,007 Mbps | 1,730 Mbps | **1.72x** |
 
-HD retransmits *decrease* under load — io_uring batched sends
-coalesce into smoother TCP flow. TS retransmits stay constant
-regardless of load.
+HD retransmits *decrease* under load -- io_uring batched sends
+coalesce into smoother TCP flow.
 
-### Cross-Cloud (AWS c7i, eu-central-1)
+### Cross-Cloud (AWS c7i)
 
 | vCPU | GCP HD/TS | AWS HD/TS |
 |-----:|----------:|----------:|
@@ -67,54 +67,121 @@ regardless of load.
 | 16 | 1.6x | 1.3x |
 
 The advantage is architectural, not platform-specific.
+Full benchmark reports are available at
+[hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/).
 
 ## Architecture
 
-Three-layer design:
+Three-layer design with complete isolation between planes:
 
 ```
 Accept Thread
-  TCP accept → kTLS handshake → HTTP upgrade → NaCl box
-  → assign peer to data plane shard (FNV-1a hash)
+  TCP accept -> kTLS handshake -> HTTP upgrade -> NaCl box
+  -> assign peer to data plane shard (FNV-1a hash)
 
 Data Plane (io_uring workers, one per shard)
   Multishot recv with provided buffer rings
   SPSC cross-shard transfer rings (lock-free)
-  Batched eventfd signaling (one per dest per CQE batch)
-  P3 bitmask: O(active sources) ProcessXfer, not O(N-1)
-  SEND_ZC for frames >4KB, regular send for WireGuard MTU
-  MSG_MORE coalescing on first-send
-  Backpressure: pause recv when send queues exceed threshold
+  Batched eventfd signaling
+  SEND_ZC for large frames, MSG_MORE coalescing
+  Backpressure: pause recv when send queues full
 
 Control Plane (single-threaded, epoll)
   Ping/pong, watcher notifications, peer presence
-  Fully isolated from data plane — no shared locks
+  Fully isolated from data plane -- no shared locks
 ```
 
 Data-oriented design: plain structs, free functions, no virtual
 dispatch, cache-friendly field ordering, zero allocation on the
 hot path (~70 MB pre-allocated per worker).
 
-### Why It's Faster
+**Why it's faster:** io_uring batched I/O vs per-packet syscalls,
+kTLS kernel-level AES-GCM vs userspace crypto, sharded workers
+vs shared-map contention, and send coalescing for smoother TCP
+flow. See [docs/architecture.md](docs/architecture.md) for
+details.
 
-1. **io_uring vs goroutines.** Batched I/O submission amortizes
-   syscall overhead. One `io_uring_enter` handles dozens of
-   pending sends. Go derper makes one `write` syscall per packet
-   per goroutine.
+## Quick Start
 
-2. **kTLS vs userspace TLS.** AES-GCM encryption runs in the
-   kernel. Worker threads never touch crypto. Go's `crypto/tls`
-   encrypts in userspace per goroutine, competing for CPU.
+```sh
+cmake --preset default
+cmake --build build -j
+sudo modprobe tls
+./build/hyper-derp --port 443 \
+  --cert /path/to/cert.pem --key /path/to/key.pem
+```
 
-3. **Sharded workers vs shared state.** Each worker owns a
-   disjoint peer set. Cross-shard forwarding uses lock-free
-   SPSC rings. Go derper's goroutines contend on shared maps.
+## Install from APT
 
-4. **Send coalescing.** Batched io_uring submissions produce
-   smoother TCP flow — fewer congestion events, fewer
-   retransmits. This is why retransmits *decrease* under load.
+```sh
+# Add GPG key
+curl -fsSL https://hyper-derp.dev/repo/key.gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/hyper-derp.gpg
 
-## Dependencies
+# Add repository
+echo "deb [signed-by=/usr/share/keyrings/hyper-derp.gpg] \
+  https://hyper-derp.dev/repo stable main" | \
+  sudo tee /etc/apt/sources.list.d/hyper-derp.list
+
+# Install
+sudo apt update && sudo apt install hyper-derp
+```
+
+## Usage
+
+```sh
+# Show all options
+./build/hyper-derp --help
+
+# Auto-detect worker count and kTLS
+./build/hyper-derp --port 443 \
+  --cert /path/to/cert.pem --key /path/to/key.pem
+
+# Explicit worker count and CPU pinning
+./build/hyper-derp --port 443 --workers 4 --pin-workers 0-3 \
+  --cert cert.pem --key key.pem
+
+# With metrics endpoint
+./build/hyper-derp --port 443 --workers 4 \
+  --cert cert.pem --key key.pem \
+  --metrics-port 9090 --debug-endpoints
+```
+
+### kTLS Prerequisites
+
+```sh
+sudo modprobe tls
+lsmod | grep tls
+```
+
+HD auto-detects kTLS support via OpenSSL. Without the `tls`
+kernel module loaded, OpenSSL falls back to userspace TLS
+silently.
+
+### Worker Count Guidance
+
+- **With kTLS (production):** use default (vCPU / 2). More
+  workers means more parallel crypto throughput.
+- **Without TLS (testing only):** cap at 4 workers.
+
+## Configuration
+
+See [OPERATIONS.md](OPERATIONS.md) for production tuning:
+sysctl settings, CPU pinning, memory footprint, and Prometheus
+alerting.
+
+## Compatibility
+
+Hyper-DERP implements the Tailscale DERP wire protocol and is
+compatible with:
+
+- **Tailscale** clients (all platforms)
+- **Headscale** self-hosted control planes
+- Any client that speaks the standard DERP protocol
+
+## Building
+
+### Dependencies
 
 System packages (Debian/Ubuntu):
 
@@ -125,10 +192,10 @@ sudo apt install \
   libgtest-dev libgmock-dev libcli11-dev
 ```
 
-Requires Linux with `io_uring` support (kernel 6.1+ recommended
-for DEFER_TASKRUN and SINGLE_ISSUER).
+Requires Linux with `io_uring` support (kernel 6.1+
+recommended for DEFER_TASKRUN and SINGLE_ISSUER).
 
-## Build
+### Build Commands
 
 ```sh
 # Release
@@ -140,63 +207,19 @@ cmake --preset debug
 cmake --build build-debug -j
 ```
 
-## Usage
+### ARM64 Cross-Compile
 
 ```sh
-# Show all options
-./build/hyper-derp --help
-
-# Start relay (auto-detect worker count, kTLS)
-./build/hyper-derp --port 443 \
-  --cert /path/to/cert.pem --key /path/to/key.pem
-
-# Explicit worker count and CPU pinning
-./build/hyper-derp --port 443 --workers 4 --pin-workers 0-3 \
-  --cert cert.pem --key key.pem
-
-# With metrics endpoint (separate plain HTTP port)
-./build/hyper-derp --port 443 --workers 4 \
-  --cert cert.pem --key key.pem \
-  --metrics-port 9090 --debug-endpoints
+sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+cmake -DCMAKE_TOOLCHAIN_FILE=CMakeCrossCompile-aarch64.cmake \
+  -B build-arm64
+cmake --build build-arm64 -j
 ```
 
-### kTLS Prerequisites
+Targets AWS Graviton and Ampere (Oracle/Azure) instances.
+io_uring is architecture-independent on kernel 6.1+.
 
-```sh
-# Load kernel TLS module (required before starting)
-sudo modprobe tls
-
-# Verify
-lsmod | grep tls
-```
-
-HD auto-detects kTLS support via OpenSSL. Check startup log for
-`BIO_get_ktls_send` confirmation. Without the TLS module loaded,
-OpenSSL falls back to userspace TLS silently.
-
-### Worker Count Guidance
-
-- **With kTLS (production):** use default (vCPU / 2). More
-  workers = more parallel crypto throughput. 8 workers on 16
-  vCPU outperforms 4 workers under kTLS.
-- **Without TLS (testing only):** cap at 4 workers. Higher
-  counts cause cross-shard backpressure oscillation under
-  extreme load.
-
-## Testing
-
-```sh
-# All tests
-ctest --preset debug
-
-# Unit tests (protocol, HTTP, handshake)
-ctest --preset debug -R unit_tests
-
-# Integration tests (fork-based, process-isolated)
-ctest --preset debug -R integration_tests
-```
-
-## Packaging
+### Packaging
 
 ```sh
 cmake --build build --target package
@@ -208,23 +231,37 @@ Installs systemd unit (`hyper-derp.service`), example config
 (`/etc/hyper-derp/hyper-derp.conf.example`), and binaries to
 `/usr/bin/`.
 
-See [OPERATIONS.md](OPERATIONS.md) for production tuning
-(sysctl, CPU pinning, memory footprint, Prometheus alerting).
+## Testing
+
+```sh
+# All tests
+ctest --preset debug
+
+# Unit tests only
+ctest --preset debug -R unit_tests
+
+# Integration tests (fork-based, process-isolated)
+ctest --preset debug -R integration_tests
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions,
+code style requirements, and the PR process.
 
 ## Benchmark Methodology
 
 All benchmark data collected with:
 - 25 runs per high-rate data point, 5 at low rates
 - 95% confidence intervals (t-distribution)
-- TS ceiling probes to scale latency loads per config
-- Strict isolation (one server at a time, cache drops)
-- Go derper: v1.96.1 release build (-trimpath, stripped)
+- Strict isolation (one server at a time, cache drops between)
+- Go derper v1.96.1 release build (-trimpath, stripped)
 - Tunnel tests: Headscale control plane, zero Tailscale contact
 - Both GCP and AWS to confirm cross-cloud consistency
 
-Full reports: `bench_results/gcp-c4-phase-b/REPORT.md`,
-`bench_results/aws-c7i-phase-b/REPORT.md`
+Full reports at
+[hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/).
 
 ## License
 
-MIT
+[MIT](LICENSE)

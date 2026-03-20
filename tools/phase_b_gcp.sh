@@ -12,7 +12,7 @@ set -euo pipefail
 ZONE=europe-west3-b
 RELAY_VM=bench-relay
 CLIENT_VM=bench-client
-SSH_KEY=~/.ssh/id_ed25519_targets
+SSH_KEY=${SSH_KEY:?Set SSH_KEY env var}
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
   -o ConnectTimeout=30"

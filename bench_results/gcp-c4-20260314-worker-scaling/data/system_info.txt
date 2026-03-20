@@ -1,4 +1,0 @@
-test: worker_scaling
-date: 2026-03-14T08:45:48Z
-relay: 10.10.0.2
-spsc_ring_size: 16384

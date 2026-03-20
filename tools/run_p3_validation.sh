@@ -5,9 +5,9 @@ set -uo pipefail
 
 # ---- Network / relay -----------------------------------------
 
-RELAY=${RELAY:-10.10.0.2}
-RELAY_USER=${RELAY_USER:-worker}
-RELAY_KEY=${RELAY_KEY:-$HOME/.ssh/id_ed25519_targets}
+RELAY="${RELAY:?Set RELAY env var (relay IP)}"
+RELAY_USER="${RELAY_USER:-worker}"
+RELAY_KEY="${RELAY_KEY:?Set RELAY_KEY env var (path to SSH key)}"
 HD_PORT=3341
 SIZE=1400
 
@@ -212,7 +212,7 @@ openssl req -x509 -newkey ec \
   -keyout /tmp/hd_key.pem -out /tmp/hd_cert.pem \
   -days 1 -nodes \
   -subj "/CN=bench-relay" \
-  -addext "subjectAltName=IP:10.10.0.2,DNS:bench-relay" \
+  -addext "subjectAltName=IP:${RELAY},DNS:bench-relay" \
   2>/dev/null
 '
 # Load tls module on client too.

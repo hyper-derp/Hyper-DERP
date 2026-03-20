@@ -1,12 +1,12 @@
 #!/bin/bash
 # Haswell Bare Metal — Profiling & Diagnostics.
-# Implements /home/karl/dev/HD-bench/HASWELL_PERF_PLAN.md.
+# Implements the Haswell perf profiling plan.
 # Relay = hd-test01 (Haswell), Client = ksys (Raptor Lake).
 set -uo pipefail
 
-RELAY=10.50.0.1
-RELAY_SSH=hd-test01
-RELAY_USER=worker
+RELAY=${RELAY:?Set RELAY env var}
+RELAY_SSH=${RELAY_SSH:?Set RELAY_SSH env var}
+RELAY_USER=${RELAY_USER:-worker}
 HD_PORT=3341
 TS_PORT=3340
 SIZE=1400
@@ -15,7 +15,9 @@ PAIRS=10
 DURATION=20
 PERF_DURATION=15
 
-OUT=/home/karl/dev/Hyper-DERP/bench_results/bare-metal-haswell/perf
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+OUT=${OUT_DIR:-${PROJECT_DIR}/bench_results/bare-metal-haswell/perf}
 mkdir -p "$OUT" "$OUT/tcpdump" "$OUT/tcp_comparison"
 
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
@@ -262,7 +264,7 @@ run_tcpdump() {
 
   # ss snapshots.
   rcmd "bash -c 'for i in \$(seq 1 15); do \
-    echo \"=== t=\$i ===\"; ss -tin dst 10.50.0.2; sleep 1; \
+    echo \"=== t=\$i ===\"; ss -tin dst ${RELAY}; sleep 1; \
     done > /tmp/ss_${rate}.txt'" 25
 
   kill "$bg_pid" 2>/dev/null; wait "$bg_pid" 2>/dev/null

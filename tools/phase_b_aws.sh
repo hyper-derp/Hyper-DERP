@@ -16,20 +16,20 @@
 set -euo pipefail
 
 REGION=eu-central-1
-SUBNET=subnet-013ffb967de90ded4
-SG=sg-004195fd69106db9a
+SUBNET=${SUBNET:?Set SUBNET env var}
+SG=${SG:?Set SG env var}
 KEY_NAME=hd-bench-key
-AMI=ami-0095fce07fcf25905
+AMI=${AMI:?Set AMI env var}
 PLACEMENT_GROUP=hd-bench
-RELAY_INTERNAL_IP=10.20.0.10
-CLIENT_INTERNAL_IP=10.20.0.20
+RELAY_INTERNAL_IP=${RELAY_INTERNAL_IP:?Set RELAY_INTERNAL_IP env var}
+CLIENT_INTERNAL_IP=${CLIENT_INTERNAL_IP:?Set CLIENT_INTERNAL_IP env var}
 
-SSH_KEY=~/.ssh/id_ed25519_targets
+SSH_KEY=${SSH_KEY:?Set SSH_KEY env var}
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
   -o ConnectTimeout=30"
 # Debian AMI default user is "admin".
-SSH_USER=admin
+SSH_USER=${SSH_USER:-admin}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -465,7 +465,7 @@ aws-c7i-phase-b/${vcpu}vcpu"
       "${SSH_USER}@$cip" \
       "RELAY=$RELAY_INTERNAL_IP \
        RELAY_USER=$SSH_USER \
-       RELAY_KEY=\$HOME/.ssh/id_ed25519_targets \
+       RELAY_KEY=\$HOME/.ssh/id_relay \
        /tmp/run_phase_b.sh \
         --only $vcpu" 2>&1 | \
       tee -a "${PROJECT_DIR}/bench_results/\

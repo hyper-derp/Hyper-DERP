@@ -5,10 +5,10 @@ set -uo pipefail
 
 # ---- Config --------------------------------------------------
 
-RELAY_INT=10.10.0.2
-RELAY_TS=100.64.0.1
-SSH_KEY=$HOME/.ssh/id_ed25519_targets
-SSH_USER=worker
+RELAY_INT="${RELAY:?Set RELAY env var (relay internal IP)}"
+RELAY_TS="${RELAY_TS:?Set RELAY_TS env var (relay Tailscale IP)}"
+SSH_KEY="${SSH_KEY:?Set SSH_KEY env var (path to SSH key)}"
+SSH_USER="${RELAY_USER:-worker}"
 HS_KEY="${HS_KEY:?Set HS_KEY env var (headscale preauthkey)}"
 
 HD_PORT=3341

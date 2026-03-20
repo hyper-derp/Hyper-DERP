@@ -1,0 +1,40 @@
+baseURL = "https://hyper-derp.dev/"
+languageCode = "en-us"
+title = "Hyper-DERP"
+enableRobotsTXT = true
+
+[params]
+  description = "High-performance DERP relay server in C++23 with io_uring"
+  repoURL = "https://github.com/hyper-derp/hyper-derp"
+
+[menu]
+  [[menu.main]]
+    name = "Home"
+    url = "/"
+    weight = 1
+  [[menu.main]]
+    name = "Docs"
+    url = "/docs/"
+    weight = 2
+  [[menu.main]]
+    name = "Benchmarks"
+    url = "/benchmarks/"
+    weight = 3
+  [[menu.main]]
+    name = "Install"
+    url = "/install/"
+    weight = 4
+  [[menu.main]]
+    name = "GitHub"
+    url = "https://github.com/hyper-derp/hyper-derp"
+    weight = 5
+    [menu.main.params]
+      external = true
+
+[markup]
+  [markup.highlight]
+    style = "monokai"
+    lineNos = false
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true

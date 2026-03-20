@@ -7,9 +7,9 @@ set -uo pipefail
 
 # ---- Network / relay -----------------------------------------
 
-RELAY=${RELAY:-10.10.0.2}
-RELAY_USER=${RELAY_USER:-worker}
-RELAY_KEY=${RELAY_KEY:-$HOME/.ssh/id_ed25519_targets}
+RELAY="${RELAY:?Set RELAY env var (relay IP)}"
+RELAY_USER="${RELAY_USER:-worker}"
+RELAY_KEY="${RELAY_KEY:?Set RELAY_KEY env var (path to SSH key)}"
 HD_PORT=3341
 HD_METRICS_PORT=9090
 SIZE=1400

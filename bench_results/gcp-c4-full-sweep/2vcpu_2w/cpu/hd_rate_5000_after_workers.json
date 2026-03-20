@@ -1,1 +1,0 @@
-{"workers":[{"id":0,"recv_bytes":91903439620,"send_bytes":95130510193,"send_drops":16,"slab_exhausts":0,"xfer_drops":219616,"send_epipe":15,"send_econnreset":1,"send_eagain":0,"peers":0},{"peers":0,"send_eagain":0,"send_econnreset":0,"send_epipe":0,"xfer_drops":412086,"slab_exhausts":0,"send_drops":0,"send_bytes":88983454077,"recv_bytes":120482860167,"id":1}]}

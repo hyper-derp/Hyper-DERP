@@ -26,9 +26,9 @@ done
 
 # ---- Network / relay -----------------------------------------
 
-RELAY=${RELAY:-10.10.0.2}
+RELAY=${RELAY:?Set RELAY env var}
 RELAY_USER=${RELAY_USER:-worker}
-RELAY_KEY=${RELAY_KEY:-$HOME/.ssh/id_ed25519_targets}
+RELAY_KEY=${RELAY_KEY:?Set RELAY_KEY env var}
 HD_PORT=3341
 TS_PORT=3340
 HD_METRICS_PORT=9090

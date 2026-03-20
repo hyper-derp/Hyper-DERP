@@ -1,0 +1,50 @@
+name: ARM64 Cross-Compile
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-compile-arm64:
+    name: Build (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compile toolchain
+        run: |
+          sudo dpkg --add-architecture arm64
+          # Add arm64 package sources.  The default Ubuntu
+          # sources only carry amd64; arm64 lives under the
+          # ports mirror.
+          sudo tee /etc/apt/sources.list.d/arm64.list <<'LIST'
+          deb [arch=arm64] http://ports.ubuntu.com/ \
+            noble main universe
+          deb [arch=arm64] http://ports.ubuntu.com/ \
+            noble-updates main universe
+          LIST
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            liburing-dev:arm64 \
+            libsodium-dev:arm64
+
+      - name: Configure (arm64)
+        run: |
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=\
+          CMakeCrossCompile-aarch64.cmake \
+            -G Ninja \
+            -B build-arm64
+
+      - name: Build (arm64)
+        run: cmake --build build-arm64 -j$(nproc)

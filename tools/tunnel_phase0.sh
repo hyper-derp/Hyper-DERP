@@ -6,12 +6,12 @@ set -uo pipefail
 
 # ---- Config --------------------------------------------------
 
-RELAY=34.179.176.160
-RELAY_INT=10.10.0.2
-CLIENT=34.179.179.146
-CLIENT_INT=10.10.0.3
-SSH_KEY=~/.ssh/id_ed25519_targets
-SSH_USER=worker
+RELAY=${RELAY:?Set RELAY env var}
+RELAY_INT=${RELAY_INT:?Set RELAY_INT env var}
+CLIENT=${CLIENT:?Set CLIENT env var}
+CLIENT_INT=${CLIENT_INT:?Set CLIENT_INT env var}
+SSH_KEY=${SSH_KEY:?Set SSH_KEY env var}
+SSH_USER=${SSH_USER:-worker}
 HD_PORT=3341
 TS_PORT=3340
 
@@ -60,19 +60,19 @@ log "Step 1: Start Go derper on relay with TLS"
 ssh_relay "sudo pkill -9 derper 2>/dev/null; sleep 1"
 
 # Generate cert with IP SAN.
-ssh_relay '
+ssh_relay "
 openssl req -x509 -newkey ec \
   -pkeyopt ec_paramgen_curve:prime256v1 \
   -keyout /tmp/key.pem -out /tmp/cert.pem \
   -days 1 -nodes \
-  -subj "/CN=10.10.0.2" \
-  -addext "subjectAltName=IP:10.10.0.2,DNS:bench-relay" \
+  -subj '/CN=${RELAY_INT}' \
+  -addext 'subjectAltName=IP:${RELAY_INT},DNS:bench-relay' \
   2>/dev/null
 CERTDIR=/tmp/derper-certs
-mkdir -p "$CERTDIR"
-cp /tmp/cert.pem "$CERTDIR/10.10.0.2.crt"
-cp /tmp/key.pem "$CERTDIR/10.10.0.2.key"
-'
+mkdir -p \"\\\$CERTDIR\"
+cp /tmp/cert.pem \"\\\$CERTDIR/${RELAY_INT}.crt\"
+cp /tmp/key.pem \"\\\$CERTDIR/${RELAY_INT}.key\"
+"
 
 ssh_relay "sudo setsid derper -dev \
   -a :${DERP_MAP_PORT} \

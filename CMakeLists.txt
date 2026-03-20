@@ -154,13 +154,13 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
 set(CPACK_PACKAGE_DESCRIPTION
   "Tailscale-compatible DERP relay server built with C++23 and io_uring for high-throughput, low-latency packet relay.")
 set(CPACK_PACKAGE_CONTACT
-  "karl <karl@localhost>")
+  "Hyper-DERP <maintainers@hyper-derp.dev>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
   "liburing2 (>= 2.9), libsodium23 (>= 1.0.18), libspdlog1.15 (>= 1:1.15)")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE
-  "https://github.com/karl/hyper-derp")
+  "https://github.com/hyper-derp/hyper-derp")
 # Let dpkg-architecture determine the correct name.
 execute_process(
   COMMAND dpkg --print-architecture

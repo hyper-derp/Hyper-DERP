@@ -1,1 +1,0 @@
-./tools/run_scaling_sweep.sh: line 51: 253541 Killed                  ip netns exec "$NS_RELAY" "$@"

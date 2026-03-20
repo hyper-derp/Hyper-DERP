@@ -11,7 +11,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${PROJECT_DIR}/build"
 RELAY="${BUILD_DIR}/hyper-derp"
 SCALE="${BUILD_DIR}/tools/derp-scale-test"
-DERPER="/home/karl/go/bin/derper"
+DERPER="${DERPER:?Set DERPER env var (path to Go derper binary)}"
 
 # Network config (same as run_ktls_comparison.sh).
 BRIDGE="virbr-targets"
@@ -21,8 +21,8 @@ VETH_RELAY_HOST="veth-rh"
 VETH_RELAY_NS="veth-rns"
 VETH_CLIENT_HOST="veth-ch"
 VETH_CLIENT_NS="veth-cns"
-RELAY_IP="10.101.2.1"
-CLIENT_IP="10.101.2.2"
+RELAY_IP="${RELAY_IP:-10.101.2.1}"
+CLIENT_IP="${CLIENT_IP:-10.101.2.2}"
 NETMASK="20"
 
 TS_PORT=3340

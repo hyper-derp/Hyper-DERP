@@ -15,9 +15,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-# Hardcode the user's home — sudo changes $HOME to /root.
-REAL_HOME="/home/karl"
-SSH_KEY="${REAL_HOME}/.ssh/id_ed25519_targets"
+# Resolve the invoking user's home (sudo changes $HOME).
+REAL_HOME="${REAL_HOME:-$(getent passwd "${SUDO_USER:-$USER}" \
+  | cut -d: -f6)}"
+SSH_KEY="${SSH_KEY:-${REAL_HOME}/.ssh/id_ed25519}"
 BRIDGE="virbr-targets"
 HOST_IP="10.101.0.1"
 BASE_IMG="/var/lib/libvirt/images/deb-01.qcow2"

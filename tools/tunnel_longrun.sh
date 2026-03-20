@@ -1,27 +1,27 @@
 #!/bin/bash
 # Tunnel Long Duration Rerun — 5 min sustained, 3 pairs.
 # Fixes: full DERP reconnect + iperf3 restart before each relay.
-# Run from bench-client (10.10.0.3).
+# Run from the bench-client machine.
 set -uo pipefail
 
 # ---- Config --------------------------------------------------
 
-RELAY_INT=10.10.0.2
-SSH_KEY=$HOME/.ssh/id_ed25519_targets
-SSH_USER=worker
+RELAY_INT="${RELAY:?Set RELAY env var (relay internal IP)}"
+SSH_KEY="${SSH_KEY:?Set SSH_KEY env var (path to SSH key)}"
+SSH_USER="${RELAY_USER:-worker}"
 HS_KEY="${HS_KEY:?Set HS_KEY env var (headscale preauthkey)}"
 
 TS_PORT=3340
 HD_PORT=3341
 DURATION=300
 
-P1_RECV_TS=100.64.0.1
-P2_SEND_INT=10.10.0.4
-P2_RECV_TS=100.64.0.6
-P2_RECV_INT=10.10.0.5
-P3_SEND_INT=10.10.0.7
-P3_RECV_TS=100.64.0.4
-P3_RECV_INT=10.10.0.8
+P1_RECV_TS="${P1_RECV_TS:?Set P1_RECV_TS env var}"
+P2_SEND_INT="${P2_SEND_INT:?Set P2_SEND_INT env var}"
+P2_RECV_TS="${P2_RECV_TS:?Set P2_RECV_TS env var}"
+P2_RECV_INT="${P2_RECV_INT:?Set P2_RECV_INT env var}"
+P3_SEND_INT="${P3_SEND_INT:?Set P3_SEND_INT env var}"
+P3_RECV_TS="${P3_RECV_TS:?Set P3_RECV_TS env var}"
+P3_RECV_INT="${P3_RECV_INT:?Set P3_RECV_INT env var}"
 
 OUT=/tmp/tunnel_longrun
 mkdir -p "$OUT"/{hd,ts}/cpu
