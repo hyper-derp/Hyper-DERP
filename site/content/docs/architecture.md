@@ -1,48 +1,69 @@
 ---
 title: "Architecture"
-description: "Three-layer design of the Hyper-DERP relay."
+description: >-
+  Three-layer design, shard-per-core model, and io_uring
+  internals.
 weight: 1
+draft: true
 ---
 
-Hyper-DERP is a three-layer DERP relay: an accept thread, a
-sharded io_uring data plane, and a single-threaded epoll
-control plane. The layers share no locks on the forwarding
-path.
+## Overview
 
-## Layer Overview
+Hyper-DERP is structured as three layers:
 
-```
-Accept Thread
-  TCP accept -> kTLS handshake -> HTTP upgrade -> NaCl box
-  -> assign peer to data plane shard (FNV-1a hash)
+1. **Accept layer** -- listens for incoming connections,
+   performs TLS handshake (or hands off to kTLS), and
+   assigns each connection to a worker shard.
+2. **Data plane** -- per-worker io_uring event loops that
+   handle all packet forwarding. Each worker owns a
+   disjoint set of connections; no locking required on the
+   hot path.
+3. **Control plane** -- handles DERP protocol control
+   messages (mesh key exchange, peer discovery, keep-alive)
+   on a separate low-priority ring.
 
-Data Plane (io_uring workers, one per shard)
-  Multishot recv with provided buffer rings
-  SPSC cross-shard transfer rings (lock-free)
-  Batched eventfd signaling
-  SEND_ZC for large frames, MSG_MORE coalescing
-  Backpressure: pause recv when send queues full
+## Shard-per-Core Model
 
-Control Plane (single-threaded, epoll)
-  Ping/pong, watcher notifications, peer presence
-  Fully isolated from data plane -- no shared locks
-```
+Each worker thread owns:
 
-## Why Shard-Per-Core
+- One io_uring instance
+- A set of client connections (pinned by accept-round-robin
+  or SO_INCOMING_CPU)
+- A provided buffer ring for zero-copy receives
+- SPSC ring endpoints for cross-worker forwarding
 
-Each data plane worker owns its peers exclusively. Cross-shard
-forwarding uses lock-free SPSC rings with eventfd signaling.
-This eliminates contention on the forwarding path, similar to
-the Seastar/ScyllaDB approach but applied to a relay server.
+No locks on the forwarding path. Cross-worker traffic
+(client A on worker 0 sending to client B on worker 1)
+goes through a lock-free SPSC ring per worker pair.
 
-## Data-Oriented Design
+## Provided Buffer Rings
 
-Plain structs, free functions, no virtual dispatch.
-Cache-friendly field ordering and zero allocation on the hot
-path (~70 MB pre-allocated per worker).
+io_uring provided buffer rings let the kernel pick a
+buffer from a pre-registered pool at completion time,
+avoiding per-recv buffer allocation. Hyper-DERP sizes
+these to match the expected DERP frame size and recycles
+them after forwarding.
 
-## Detailed Reference
+## kTLS Offload
 
-The full architecture document with source file references is
-in the repository at
-[docs/architecture.md](https://github.com/hyper-derp/hyper-derp/blob/main/docs/architecture.md).
+When the kernel supports it, Hyper-DERP hands the TLS
+session keys to the kernel via `setsockopt(SOL_TLS)`.
+This lets the kernel handle encryption/decryption in
+`sendfile`-style zero-copy paths, keeping crypto off the
+user-space CPU budget.
+
+## Backpressure
+
+If a destination client's send buffer is full, Hyper-DERP
+applies backpressure by:
+
+1. Pausing reads on the source connection (removing it from
+   the io_uring poll set)
+2. Queuing a bounded number of frames in the SPSC ring
+3. Dropping frames beyond the queue limit with a counter
+   bump (visible in metrics)
+
+This prevents a slow client from consuming unbounded
+memory.
+
+<!-- TODO: add architecture diagram from static/img/ -->

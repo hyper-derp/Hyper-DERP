@@ -1,49 +1,84 @@
 ---
 title: "Configuration"
-description: "CLI flags, systemd setup, and tuning."
+description: >-
+  CLI flags, config file format, worker tuning, socket
+  buffer sizing, SQPOLL mode.
 weight: 3
+draft: true
 ---
-
-All configuration is via command-line flags. The systemd unit
-passes flags through an `EnvironmentFile`.
 
 ## CLI Flags
 
-| Flag | Default | Description |
-|------|--------:|-------------|
-| `--port` | 3340 | Listen port |
-| `--workers` | 0 (auto) | Worker count (0 = auto) |
-| `--pin-workers` | none | Pin to cores (e.g. `0,2,4`) |
-| `--sockbuf` | 0 (OS) | Socket buffer size (bytes) |
-| `--max-accept-rate` | 0 | Max accepts/sec (0 = off) |
-| `--tls-cert` | none | PEM cert (enables kTLS) |
-| `--tls-key` | none | PEM key (with `--tls-cert`) |
-| `--metrics-port` | 0 | Prometheus HTTP port (0 = off) |
-| `--debug-endpoints` | off | Enable `/debug/*` endpoints |
-| `--sqpoll` | off | io_uring SQPOLL mode |
-| `--log-level` | info | debug, info, warn, error |
-
-## Worker Count Guidance
-
-- **With kTLS (production):** use default (vCPU / 2). More
-  workers means more parallel crypto throughput.
-- **Without TLS (testing only):** cap at 4 workers.
-
-## Systemd Configuration
-
-The installed unit reads options from:
-
 ```
-/etc/hyper-derp/hyper-derp.conf
+hyper-derp [OPTIONS]
+
+  -c, --config <path>     Config file path
+  -l, --listen <addr>     Listen address (default: :443)
+  -w, --workers <N>       Worker count (default: auto)
+  --mesh-key <key>        Mesh key for multi-server setup
+  --certdir <path>        TLS certificate directory
+  --hostname <name>       Server hostname for TLS SNI
+  --stun-port <port>      STUN port (default: 3478)
+  --metrics-addr <addr>   Metrics endpoint (default: :9090)
+  --no-ktls               Disable kernel TLS offload
+  --sqpoll                Enable SQPOLL mode
+  --verbose               Verbose logging
 ```
 
-See
-[OPERATIONS.md](https://github.com/hyper-derp/hyper-derp/blob/main/OPERATIONS.md)
-for sysctl settings, CPU pinning, memory footprint, and
-Prometheus alerting.
+## Config File
 
-## Detailed Reference
+TOML format. CLI flags override config file values.
 
-The full configuration reference with flag details and
-source file pointers is in the repository at
-[docs/configuration.md](https://github.com/hyper-derp/hyper-derp/blob/main/docs/configuration.md).
+```toml
+listen = ":443"
+workers = 4
+hostname = "derp1.example.com"
+certdir = "/etc/hyper-derp/certs"
+mesh_key = "tskey-..."
+
+[tls]
+ktls = true
+
+[uring]
+sqpoll = false
+sq_entries = 4096
+cq_entries = 16384
+buf_ring_size = 1024
+buf_size = 65536
+
+[socket]
+rcvbuf = 2097152
+sndbuf = 2097152
+tcp_nodelay = true
+
+[metrics]
+addr = ":9090"
+```
+
+## Worker Count Tuning
+
+Default: one worker per available CPU. For kTLS workloads,
+the optimal count usually matches the physical core count.
+Hyperthreads add little benefit since the bottleneck is
+memory bandwidth and kernel TLS.
+
+## Socket Buffer Sizing
+
+The `rcvbuf` / `sndbuf` values set `SO_RCVBUF` /
+`SO_SNDBUF` on each client socket. Larger buffers help
+with bursty traffic but increase per-connection memory.
+
+For high-throughput deployments, also set the system max:
+
+```bash
+sysctl -w net.core.rmem_max=4194304
+sysctl -w net.core.wmem_max=4194304
+```
+
+## SQPOLL Mode
+
+With `--sqpoll`, io_uring runs a kernel thread that polls
+the submission queue, eliminating syscall overhead for
+submits. Requires `CAP_SYS_NICE` or running as root.
+Reduces latency at the cost of one busy-spinning kernel
+thread per worker.

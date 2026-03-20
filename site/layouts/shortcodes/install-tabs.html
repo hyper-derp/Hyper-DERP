@@ -1,0 +1,47 @@
+{{- /* install-tabs: tabbed APT vs source instructions */ -}}
+<div class="install-tabs">
+  <div class="tab-buttons">
+    <button class="tab-btn active"
+            onclick="switchTab(this, 'apt')">
+      APT Repository
+    </button>
+    <button class="tab-btn"
+            onclick="switchTab(this, 'source')">
+      Build from Source
+    </button>
+  </div>
+  <div id="apt" class="tab-content active">
+    <pre><code>curl -fsSL https://hyper-derp.dev/repo/key.gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/hyper-derp.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/hyper-derp.gpg] \
+  https://hyper-derp.dev/repo stable main" | \
+  sudo tee /etc/apt/sources.list.d/hyper-derp.list
+
+sudo apt update && sudo apt install hyper-derp</code></pre>
+  </div>
+  <div id="source" class="tab-content">
+    <pre><code>sudo apt install cmake ninja-build clang \
+  liburing-dev libsodium-dev libspdlog-dev libssl-dev
+
+git clone https://github.com/hyper-derp/hyper-derp.git
+cd hyper-derp
+
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+sudo cmake --install build</code></pre>
+  </div>
+</div>
+<script>
+function switchTab(btn, id) {
+  var tabs = btn.closest('.install-tabs');
+  tabs.querySelectorAll('.tab-btn').forEach(function(b) {
+    b.classList.remove('active');
+  });
+  tabs.querySelectorAll('.tab-content').forEach(function(c) {
+    c.classList.remove('active');
+  });
+  btn.classList.add('active');
+  tabs.querySelector('#' + id).classList.add('active');
+}
+</script>

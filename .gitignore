@@ -50,3 +50,7 @@ test-design/
 bare-metal/
 test-infra/
 scripts/
+
+# Hugo site build output
+site/public/
+site/.hugo_build.lock

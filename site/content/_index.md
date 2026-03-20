@@ -1,45 +1,55 @@
 ---
 title: "Hyper-DERP"
+description: >-
+  A high-performance DERP relay server written in C++23
+  using io_uring. Drop-in replacement for Tailscale's
+  derper with 1.6--2.2x the throughput.
+draft: true
 ---
 
-## What Is This?
+<div class="stats-grid">
+  <div class="stat-card">
+    <span class="number">2.2x</span>
+    <span class="label">throughput at 4 vCPU (kTLS)</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">12 Gbps</span>
+    <span class="label">peak at 16 vCPU</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">2%</span>
+    <span class="label">user-space CPU at 5 Gbps</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">3K</span>
+    <span class="label">context switches (vs 963K)</span>
+  </div>
+</div>
 
-[DERP](https://tailscale.com/blog/how-tailscale-works/)
-(Designated Encrypted Relay for Packets) is the relay protocol
-Tailscale clients fall back to when direct WireGuard connections
-fail. Hyper-DERP is a drop-in replacement for Tailscale's
-Go-based [derper](https://pkg.go.dev/tailscale.com/derp) that
-delivers dramatically higher throughput, fewer TCP retransmits,
-and lower tail latency under load.
+## Performance (GCP c4-highcpu, kTLS)
 
-It is compatible with Tailscale, Headscale, and any standard
-DERP client.
+| vCPU | HD kTLS (Mbps) | TS TLS (Mbps) | HD/TS |
+|-----:|---------------:|--------------:|------:|
+|    2 |          2,962 |         1,448 |  2.1x |
+|    4 |          5,106 |         2,395 |  2.2x |
+|    8 |          7,621 |         4,033 |  1.9x |
+|   16 |         12,068 |         7,743 |  1.6x |
+
+[Full benchmark results &rarr;](/benchmarks/)
+
+## Quick Install
+
+{{< install-tabs >}}
+
+[Detailed installation guide &rarr;](/install/)
 
 ## Architecture
 
-Three isolated layers with no shared locks on the forwarding
-path:
+Hyper-DERP uses a shard-per-core design with io_uring
+for all I/O, kernel TLS offload, provided buffer rings
+for zero-copy receives, and SPSC rings for cross-worker
+communication.
 
-- **Accept thread** -- TCP accept, kTLS handshake, HTTP
-  upgrade, NaCl box authentication, shard assignment.
-- **Data plane** -- sharded io_uring workers with multishot
-  recv, SPSC cross-shard rings, batched sends, and
-  backpressure.
-- **Control plane** -- single-threaded epoll for ping/pong,
-  watcher notifications, and peer presence.
-
-Read the [architecture docs](/docs/architecture/) for details.
-
-## Quick Start
-
-```sh
-cmake --preset default
-cmake --build build -j
-sudo modprobe tls
-./build/hyper-derp --port 443 \
-  --cert /path/to/cert.pem --key /path/to/key.pem
-```
-
-See the [install page](/install/) for APT repository setup and
-the [build docs](/docs/building/) for dependencies and
-cross-compilation.
+[Architecture docs &rarr;](/docs/architecture/)
+&middot;
+[Source on GitHub &rarr;](https://github.com/hyper-derp/hyper-derp)

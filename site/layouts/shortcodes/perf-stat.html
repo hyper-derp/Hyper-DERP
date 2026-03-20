@@ -1,0 +1,21 @@
+{{- /* perf-stat: side-by-side perf stat output */ -}}
+{{ $hd := .Get "hd" }}
+{{ $ts := .Get "ts" }}
+<div class="perf-compare">
+  <div class="perf-col">
+    <h4>Hyper-DERP</h4>
+    {{ with os.ReadFile $hd }}
+      <pre><code>{{ . }}</code></pre>
+    {{ else }}
+      <p><em>File not found: {{ $hd }}</em></p>
+    {{ end }}
+  </div>
+  <div class="perf-col">
+    <h4>Tailscale DERP</h4>
+    {{ with os.ReadFile $ts }}
+      <pre><code>{{ . }}</code></pre>
+    {{ else }}
+      <p><em>File not found: {{ $ts }}</em></p>
+    {{ end }}
+  </div>
+</div>

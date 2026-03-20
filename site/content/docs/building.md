@@ -1,76 +1,65 @@
 ---
 title: "Building"
-description: "Build instructions, dependencies, and packaging."
+description: >-
+  Build from source, dependencies, CMake presets,
+  cross-compile for ARM64.
 weight: 2
+draft: true
 ---
 
-## System Requirements
+## Dependencies
 
-- **Linux kernel 5.19+** -- io_uring with provided buffers.
-  Kernel 6.1+ recommended for production.
-- **C++23 compiler** -- Clang 17+ or GCC 13+.
-- **CMake 3.20+** with Ninja (preferred) or Make.
+| Package | Min Version | Purpose |
+|---------|-------------|---------|
+| CMake | 3.25 | Build system |
+| Ninja | 1.11 | Build backend |
+| Clang | 17 | C++23 compiler |
+| liburing | 2.4 | io_uring API |
+| libsodium | 1.0.18 | Curve25519, XSalsa20 |
+| libspdlog | 1.12 | Logging |
+| OpenSSL | 3.0 | TLS, kTLS support |
 
-## Dependencies (Debian/Ubuntu)
+On Debian/Ubuntu:
 
-```sh
-sudo apt install \
-  clang cmake ninja-build \
-  liburing-dev libsodium-dev libspdlog-dev \
-  libssl-dev libasio-dev \
-  libgtest-dev libgmock-dev libcli11-dev
+```bash
+sudo apt install cmake ninja-build clang \
+  liburing-dev libsodium-dev libspdlog-dev libssl-dev
 ```
 
-| Library | Minimum | Purpose |
-|---------|--------:|---------|
-| liburing | 2.3+ | io_uring API |
-| libsodium | 1.0.18+ | NaCl box, Curve25519 |
-| spdlog | 1.15+ | Structured logging |
-| OpenSSL | 3.0+ | kTLS handshake |
-| Asio | -- | Crow HTTP dependency |
+## CMake Presets
 
-Crow v1.3.0.0 is fetched automatically via CMake
-`FetchContent`.
+```bash
+# Release (default)
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 
-## Build from Source
-
-```sh
-# Release
-cmake --preset default
-cmake --build build -j
-
-# Debug
-cmake --preset debug
-cmake --build build-debug -j
+# Debug (ASAN + assertions)
+cmake -B build-debug -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug -j$(nproc)
 ```
 
-## ARM64 Cross-Compile
+## Cross-Compile for ARM64
 
-```sh
-sudo apt install \
-  gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-cmake \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
-  -B build-arm64
-cmake --build build-arm64 -j
+```bash
+sudo apt install gcc-aarch64-linux-gnu \
+  g++-aarch64-linux-gnu
+
+cmake -B build-arm64 -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_SYSTEM_NAME=Linux \
+  -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+  -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+  -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
+
+cmake --build build-arm64 -j$(nproc)
 ```
 
-Targets AWS Graviton and Ampere (Oracle/Azure) instances.
-io_uring is architecture-independent on kernel 6.1+.
+## Running Tests
 
-## Packaging
-
-```sh
-cmake --build build --target package
-sudo dpkg -i build/hyper-derp_*.deb
+```bash
+cd build && ctest --output-on-failure
 ```
 
-Installs the systemd unit (`hyper-derp.service`), example
-config (`/etc/hyper-derp/hyper-derp.conf.example`), and
-binaries to `/usr/bin/`.
-
-## Detailed Reference
-
-The full build guide with version tables and runtime
-dependencies is in the repository at
-[docs/building.md](https://github.com/hyper-derp/hyper-derp/blob/main/docs/building.md).
+Tests require a kernel with io_uring support (5.11+).
+Some kTLS tests require 5.19+.
