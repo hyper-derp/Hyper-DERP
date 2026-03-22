@@ -27,7 +27,26 @@
 #include "hyper_derp/handshake.h"
 #include "hyper_derp/protocol.h"
 
-using namespace hyper_derp;
+using hyper_derp::BenchResult;
+using hyper_derp::ClientClose;
+using hyper_derp::ClientConnect;
+using hyper_derp::ClientHandshake;
+using hyper_derp::ClientInit;
+using hyper_derp::ClientRecvFrame;
+using hyper_derp::ClientSendPacket;
+using hyper_derp::ClientSetTimeout;
+using hyper_derp::ClientTlsConnect;
+using hyper_derp::ClientUpgrade;
+using hyper_derp::DerpClient;
+using hyper_derp::FrameType;
+using hyper_derp::Key;
+using hyper_derp::KeyToHex;
+using hyper_derp::kKeySize;
+using hyper_derp::kMaxFramePayload;
+using hyper_derp::LatencyRecorder;
+using hyper_derp::NowNs;
+using hyper_derp::ToKey;
+using hyper_derp::WriteBenchJson;
 
 static void Usage() {
   fprintf(stderr,

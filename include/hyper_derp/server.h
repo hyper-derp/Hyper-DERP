@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdint>
 #include <expected>
+#include <string>
 #include <string_view>
 #include <thread>
 

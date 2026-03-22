@@ -25,7 +25,7 @@ namespace {
 class E2ETest : public ::testing::Test {
  protected:
   void SetUp() override {
-    ASSERT_TRUE(sodium_init() >= 0);
+    ASSERT_GE(sodium_init(), 0);
     port_ = test::FindFreePort();
     ASSERT_NE(port_, 0) << "Could not find a free port";
     relay_pid_ = test::StartRelay(port_, 1);
@@ -529,7 +529,7 @@ TEST_F(E2ETest, BidirectionalRelay) {
 class E2EMultiPeerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    ASSERT_TRUE(sodium_init() >= 0);
+    ASSERT_GE(sodium_init(), 0);
     port_ = test::FindFreePort();
     ASSERT_NE(port_, 0);
     relay_pid_ = test::StartRelay(port_, 2);
@@ -811,7 +811,7 @@ TEST_F(E2ETest, SenderDisconnectMidBurst) {
 class E2EKtlsTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    ASSERT_TRUE(sodium_init() >= 0);
+    ASSERT_GE(sodium_init(), 0);
 
     auto probe = ProbeKtls();
     if (!probe) {

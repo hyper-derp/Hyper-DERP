@@ -26,7 +26,24 @@
 #include "hyper_derp/protocol.h"
 #include "hyper_derp/tun.h"
 
-using namespace hyper_derp;
+using hyper_derp::ClientClose;
+using hyper_derp::ClientConnect;
+using hyper_derp::ClientHandshake;
+using hyper_derp::ClientInit;
+using hyper_derp::ClientRecvFrame;
+using hyper_derp::ClientSendPacket;
+using hyper_derp::ClientUpgrade;
+using hyper_derp::DerpClient;
+using hyper_derp::FrameType;
+using hyper_derp::Key;
+using hyper_derp::kKeySize;
+using hyper_derp::kMaxFramePayload;
+using hyper_derp::ParseCidr;
+using hyper_derp::TunBringUp;
+using hyper_derp::TunClose;
+using hyper_derp::TunDevice;
+using hyper_derp::TunOpen;
+using hyper_derp::TunSetAddr;
 
 // -- Globals -------------------------------------------------
 

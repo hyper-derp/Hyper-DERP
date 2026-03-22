@@ -126,7 +126,7 @@ static void SendAndClose(int fd, const uint8_t* data,
   close(fd);
 }
 
-using namespace std::string_view_literals;
+using std::string_view_literals::operator""sv;
 
 // Handle a single accepted connection.
 static void HandleConnection(Server* server, int fd) {

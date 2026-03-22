@@ -87,7 +87,7 @@ static bool ParseInt(const char* str, int* out,
 }
 
 int main(int argc, char* argv[]) {
-  using namespace std::string_view_literals;
+  using std::string_view_literals::operator""sv;
 
   int port = 3340;
   int num_workers = 0;

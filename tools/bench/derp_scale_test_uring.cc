@@ -32,7 +32,24 @@
 #include "hyper_derp/handshake.h"
 #include "hyper_derp/protocol.h"
 
-using namespace hyper_derp;
+using hyper_derp::ClientClose;
+using hyper_derp::ClientConnect;
+using hyper_derp::ClientHandshake;
+using hyper_derp::ClientInit;
+using hyper_derp::ClientTlsConnect;
+using hyper_derp::ClientUpgrade;
+using hyper_derp::DerpClient;
+using hyper_derp::FrameType;
+using hyper_derp::IsValidPayloadLen;
+using hyper_derp::kFrameHeaderSize;
+using hyper_derp::Key;
+using hyper_derp::kKeySize;
+using hyper_derp::kMaxFramePayload;
+using hyper_derp::NowIso8601;
+using hyper_derp::NowNs;
+using hyper_derp::ReadFrameType;
+using hyper_derp::ReadPayloadLen;
+using hyper_derp::WriteFrameHeader;
 
 // -- Config -----------------------------------------------------------
 
