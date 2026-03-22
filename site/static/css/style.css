@@ -497,11 +497,8 @@ th:nth-child(n+2) {
 
 /* Footer */
 .site-footer {
-  border-top: 1px solid var(--border);
-  padding: 1.5rem;
-  text-align: center;
-  font-size: 0.85rem;
-  color: var(--fg-muted);
+  border-top: none;
+  padding: 0;
 }
 
 .site-footer a {

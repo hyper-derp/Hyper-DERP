@@ -7,6 +7,16 @@ description: >-
 draft: true
 ---
 
+Hyper-DERP is a drop-in replacement for Tailscale's DERP
+relay server, built in C++23 with io_uring. It delivers
+2x the throughput at half the hardware, with near-zero
+packet loss where Tailscale's derper shreds up to 93% of
+traffic. In real end-to-end tunnel tests through
+WireGuard, Hyper-DERP produces 48x fewer TCP retransmits.
+
+Compatible with Tailscale, Headscale, and any standard
+DERP client. MIT licensed.
+
 <div class="stats-grid">
   <div class="stat-card">
     <span class="number">2.2x</span>

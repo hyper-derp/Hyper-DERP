@@ -21,22 +21,5 @@
   <main>
     {{ block "main" . }}{{ end }}
   </main>
-  {{ partial "footer.html" . }}
-  <script>
-    // Theme toggle
-    (function() {
-      var btn = document.getElementById('theme-toggle');
-      if (!btn) return;
-      var html = document.documentElement;
-      var stored = localStorage.getItem('theme');
-      if (stored) html.setAttribute('data-theme', stored);
-      btn.addEventListener('click', function() {
-        var current = html.getAttribute('data-theme');
-        var next = current === 'dark' ? 'light' : 'dark';
-        html.setAttribute('data-theme', next);
-        localStorage.setItem('theme', next);
-      });
-    })();
-  </script>
 </body>
 </html>
