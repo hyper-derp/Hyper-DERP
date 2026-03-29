@@ -8,7 +8,7 @@ title = 'Hyper-DERP'
 
 [markup]
   [markup.highlight]
-    style = 'monokai'
+    noClasses = false
     lineNos = false
     guessSyntax = true
   [markup.goldmark]
