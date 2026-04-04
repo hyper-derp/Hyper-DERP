@@ -85,31 +85,21 @@ The senders TCP stack respects this pause. But there is a timing gap — all pac
 
 ## Latency Under Load
 
-At idle both relays return pings in about 110-115 μs on GCP — the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
+At idle both relays return pings in about the same time. The median stays close even under load. The story is in the tail.
 
-480 runs, 2.16M latency samples. [Full methodology](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
+{{< plot src="latency_load.png" alt="p50 and p99 latency on GCP 8 and 16 vCPU at increasing background load. 480 runs, 2.16M total samples." >}}
 
-On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
+HD's p99 is flat from idle through 150% of TS's ceiling. TS degrades monotonically — the Go scheduler fights relay traffic for CPU time, goroutines get preempted, and the unlucky ones wait. At 16 vCPU under full load, HD's p99 is 1.69x better than TS. The gap widens further at p999.
 
-{{< plot src="latency.png" alt="p50 and p99 latency on GCP 8 vCPU at increasing background load (% of TS ceiling). Ping/echo through the relay, 5000 pings per run, 10 runs per load level." >}}
-
-At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% — the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
-
-Full latency tables across all configs (2/4/8/16 vCPU, 6 load levels each) are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#2-relay-latency).
+Full latency tables in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#2-relay-latency). [Methodology](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
 
 ## Peer Scaling
 
-Twenty peers with ten pairs is a clean benchmark, but a production relay might have hundreds of peers with unpredictable traffic patterns. So I tested 20 through 100 peers at 8 vCPU with 10 Gbps offered.
+Twenty peers is a clean benchmark, but production relays might have hundreds. I tested 20 through 100 peers at 8 vCPU with 10 Gbps offered.
 
-| Peers | HD (Mbps) | HD Loss | TS (Mbps) | TS Loss | HD/TS |
-|------:|----------:|--------:|----------:|--------:|------:|
-| 20 | 8,371 | 0.1% | 4,495 | 44% | 1.9x |
-| 40 | 8,006 | 0.5% | 3,538 | 57% | 2.3x |
-| 60 | 6,880 | 0.7% | 3,146 | 63% | 2.2x |
-| 80 | 7,827 | 0.4% | 2,905 | 66% | 2.7x |
-| 100 | 7,665 | 0.5% | 2,775 | 68% | **2.8x** |
+{{< plot src="peer_scaling.png" alt="Peer scaling: throughput at 20-100 peers, 8 vCPU, 10 Gbps offered." >}}
 
-TS loses 38% throughput going from 20 to 100 peers. HD stays flat. The ratio amplifies from 1.9x to 2.8x.
+TS loses 38% throughput going from 20 to 100 peers. HD stays flat.
 
 ## The kTLS Cache Cliff
 
@@ -125,13 +115,11 @@ Everything above is synthetic — a custom bench tool pushing DERP frames at con
 
 I set up Headscale with 4 Tailscale clients on GCP, blocked direct UDP between them to force all traffic through the DERP relay, and ran iperf3 UDP + TCP + ICMP ping concurrently. 20 runs per data point, 720 total runs. Full methodology in the [tunnel test design doc](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/TUNNEL_TEST_V2.md).
 
-Both relays deliver identical UDP throughput (~2 Gbps). The relay isn't the bottleneck — Tailscale's userspace WireGuard (wireguard-go, ChaCha20-Poly1305) is. Loss is negligible for both (<0.04%). TCP retransmits: HD produces 7-8% fewer at max load on 4 and 16 vCPU. Tied at 8 vCPU. Tunnel latency: both ~0.5-1.0 ms, dominated by WireGuard crypto and network RTT.
+Both relays deliver identical throughput (~2 Gbps) — WireGuard's userspace crypto is the ceiling, not the relay. Retransmits, loss, latency: all within noise of each other.
 
-This is the expected result. The synthetic benchmarks show what happens when you push the relay directly at 10-25 Gbps. Through a real tunnel, WireGuard crypto on the client caps everything at ~2 Gbps regardless of relay. The relay has headroom either way.
+{{< plot src="tunnel_scaling.png" alt="TCP throughput through WireGuard tunnel at increasing offered rates. Both relays track together." >}}
 
-The tunnel tests matter for a different reason: they confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. The relay is transparent — the architectural differences only show up when you outrun WireGuard's own crypto.
-
-Full tunnel results across all configs and rates are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#3-tunnel-quality-wireguard-through-derp).
+The tunnel tests confirm that HD doesn't *break* anything. The relay is transparent — the architectural differences only show up when you outrun WireGuard's own crypto. Full results in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#3-tunnel-quality-wireguard-through-derp).
 
 ## Where HD Loses
 
@@ -159,7 +147,7 @@ The relay happens to be the unlucky 5% where those tradeoffs get punished — a 
 
 For most deployments that's fine — DERP is a fallback, not the main path, and derper handles it well enough.
 
-But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic — not a fallback you hope never gets used — you need the relay itself to be fast. That's what HD is for.
+But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic, you need the relay itself to be fast. That's what HD is for.
 
 None of this takes away from what Tailscale built. They made mesh networking accessible to millions of people who never would have touched WireGuard on their own, and that matters more than any benchmark. HD just picks up where their architecture has to stop.
 
