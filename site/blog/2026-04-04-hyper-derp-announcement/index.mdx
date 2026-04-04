@@ -56,7 +56,7 @@ Getting this benchmark suite right took [three rounds of failures](https://githu
 
 ## Throughput
 
-Each goroutine in derper sits in the scheduler's run queue between syscalls doing nothing -- but it still has a stack, it still needs to be scheduled, and when it wakes back up it might be on a different core with cold caches. Multiply by thousands of connections and the scheduler spends most of its time juggling goroutines that are waiting for I/O, not doing work.
+Derper spawns a goroutine per connection -- read, rewrite, write, repeat. Each one sits in the scheduler's run queue between syscalls doing nothing -- but it still has a stack, it still needs to be scheduled, and when it wakes back up it might be on a different core with cold caches. Multiply by thousands of connections and the scheduler spends most of its time juggling goroutines that are waiting for I/O, not doing work.
 
 <Plot src="throughput.png" alt="kTLS throughput across 2/4/8/16 vCPU on GCP c4-highcpu (Xeon 8581C). 4 client VMs, 20 peers, 10 pairs, 1400-byte messages, 20 runs per point. 95% CIs shown." />
 
