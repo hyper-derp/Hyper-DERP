@@ -29,7 +29,7 @@ It works like this: Both peers connect to the relay on port 443. Peer A sends a 
 
 ## Making It Go Brrrr
 
-I use OpenSSL in userspace to do the TLS handshake then install the key in kernel TLS and promptly forget about it. The kernel will not give the key back and we only handle the key for a few microseconds in userspace, instead of the entire connection life cycle where derper holds it. From here on out the kernel handles all decryption/encryption and we will only have to deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
+I use OpenSSL in userspace to do the TLS handshake then install the key in kernel TLS and promptly forget about it. The kernel will not give the key back and we only handle the key for a few μs in userspace, instead of the entire connection life cycle where derper holds it. From here on out the kernel handles all decryption/encryption and we will only have to deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
 
 If you go with `epoll` you will do the following for each arriving packet: wait for socket readiness, `read()`, rewrite the peer ID and `write()`. Two syscalls per packet, at scale this is millions of kernel transitions per second. Each one flushing the pipeline and trashing the cache.
 
@@ -73,15 +73,15 @@ The senders TCP stack respects this pause. But there is a timing gap — all pac
 
 ## Latency Under Load
 
-At idle both relays return pings in about 110-115 us on GCP — the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
+At idle both relays return pings in about 110-115 μs on GCP — the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
 
 480 runs, 2,160,000 total latency samples. Per-packet DERP relay RTT via ping/echo, 5,000 pings per run, 10 runs per load level. Background load from dedicated client VMs. Full methodology in the [latency test design doc](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
 
-On GCP 8 vCPU, HD p99 is load-invariant: 129-153 us from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 us (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
+On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
 
 {{< plot src="latency.png" alt="p50 and p99 latency on GCP 8 vCPU at increasing background load (% of TS ceiling). Ping/echo through the relay, 5000 pings per run, 10 runs per load level." >}}
 
-At 16 vCPU the gap widens: HD p99 = 127 us vs TS p99 = 214 us at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% — the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
+At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% — the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
 
 Full latency tables across all configs (2/4/8/16 vCPU, 6 load levels each) are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#2-relay-latency).
 
@@ -129,7 +129,7 @@ Full tunnel results across all configs and rates are in the [benchmark report](h
 
 HD doesn't win everywhere, and the losses are instructive.
 
-**Idle latency.** At idle, TS is slightly better. At 2 vCPU: TS p99 = 128 us vs HD p99 = 143 us. At 8 vCPU both match at 129 us. If latency is your only metric, idle traffic won't show a difference.
+**Idle latency.** At idle, TS is slightly better. At 2 vCPU: TS p99 = 128 μs vs HD p99 = 143 μs. At 8 vCPU both match at 129 μs. If latency is your only metric, idle traffic won't show a difference.
 
 **2 vCPU bare metal.** On Haswell with only two kTLS workers, TS actually wins on throughput: 4,100 Mbps vs HD's 3,833 Mbps. Two cores aren't enough to handle both relay work and AES-GCM encryption at this rate — the 48% kTLS overhead on just two workers eats the architectural advantage. Meanwhile TS spreads its work across all 6C/12T via goroutines. Four workers fix it — HD pulls ahead at 6,680 Mbps — but two workers lose.
 
