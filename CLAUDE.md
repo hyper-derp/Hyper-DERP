@@ -97,6 +97,22 @@ Adapted from tested C prototype. Each worker:
 - `CamelCase` functions, `kCamelCase` constants, `snake_case` members
 - Namespace: `hyper_derp`
 
+## Site (site/)
+
+Hugo static site for hyper-derp.dev.
+
+Do NOT rewrite these files — they contain tested logic
+that is easy to break:
+- `site/layouts/blog/single.html` — three-column blog
+  layout with author card sidebar. Uses data lookup from
+  `site/data/authors/`.
+- `site/data/authors/` — author metadata (name, email,
+  photo) referenced by blog frontmatter `author` field.
+- `site/layouts/shortcodes/plot.html` — theme-aware plot
+  with dark/light switching and lightbox zoom.
+- `site/layouts/_default/baseof.html` — base layout with
+  theme toggle, plot switching JS, and lightbox JS.
+
 ## Scripts
 
 - `./scripts/format.sh` — clang-format all sources

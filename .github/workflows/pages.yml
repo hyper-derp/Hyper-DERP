@@ -22,19 +22,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v3
+      - uses: actions/setup-node@v4
         with:
-          hugo-version: 'latest'
-          extended: true
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: site
 
       - name: Build
-        run: hugo --minify -s site
+        run: npm run build
+        working-directory: site
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./site/public
+          path: ./site/build
 
   deploy:
     environment:

@@ -1,0 +1,298 @@
+/* Hyper-DERP custom styles for Docusaurus */
+
+/* Font family overrides */
+:root {
+  --ifm-font-family-base: "Fira Sans", system-ui, sans-serif;
+  --ifm-font-family-monospace: "Fira Code", ui-monospace, monospace;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+/* Dark theme (default) */
+[data-theme="dark"] {
+  --ifm-background-color: #101010;
+  --ifm-background-surface-color: #1f1f1f;
+  --ifm-color-primary: #1c8bee;
+  --ifm-color-primary-dark: #1070cc;
+  --ifm-color-primary-darker: #0d62b5;
+  --ifm-color-primary-darkest: #0a4e91;
+  --ifm-color-primary-light: #3e9cf1;
+  --ifm-color-primary-lighter: #5eadf4;
+  --ifm-color-primary-lightest: #8ec5f7;
+  --ifm-font-color-base: #f2f2f2;
+  --ifm-font-color-secondary: #828282;
+  --ifm-navbar-background-color: #1f1f1f;
+  --ifm-footer-background-color: #1f1f1f;
+  --ifm-code-background: #1f1f1f;
+  --ifm-hr-border-color: #333333;
+  --ifm-table-stripe-background: #1f1f1f;
+  --ifm-table-border-color: #333333;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+
+  /* HD custom vars */
+  --bg: #101010;
+  --bg-secondary: #1f1f1f;
+  --fg: #f2f2f2;
+  --fg-muted: #828282;
+  --accent: #1c8bee;
+  --border: #333333;
+  --code-bg: #1f1f1f;
+  --primary-on: #f91bff;
+  --primary-off: #c700cd;
+  --secondary-on: #ffe346;
+  --secondary-off: #f4cf00;
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --ifm-background-color: #fafafa;
+  --ifm-background-surface-color: #f2f2f2;
+  --ifm-color-primary: #1c8bee;
+  --ifm-color-primary-dark: #1070cc;
+  --ifm-color-primary-darker: #0d62b5;
+  --ifm-color-primary-darkest: #0a4e91;
+  --ifm-color-primary-light: #3e9cf1;
+  --ifm-color-primary-lighter: #5eadf4;
+  --ifm-color-primary-lightest: #8ec5f7;
+  --ifm-font-color-base: #313131;
+  --ifm-font-color-secondary: #828282;
+  --ifm-navbar-background-color: #f2f2f2;
+  --ifm-footer-background-color: #f2f2f2;
+  --ifm-code-background: #f2f2f2;
+  --ifm-hr-border-color: #e6e6e6;
+  --ifm-table-stripe-background: #f6f8fa;
+  --ifm-table-border-color: #e6e6e6;
+
+  /* HD custom vars */
+  --bg: #fafafa;
+  --bg-secondary: #f2f2f2;
+  --fg: #313131;
+  --fg-muted: #828282;
+  --accent: #1c8bee;
+  --border: #e6e6e6;
+  --code-bg: #f2f2f2;
+  --primary-on: #f91bff;
+  --primary-off: #c700cd;
+  --secondary-on: #ffe346;
+  --secondary-off: #f4cf00;
+}
+
+/* Prism syntax highlighting overrides (HD palette) */
+.token.keyword,
+.token.builtin {
+  color: #3bdede;
+}
+
+.token.string,
+.token.char,
+.token.template-string {
+  color: #3bde8c;
+}
+
+.token.number {
+  color: #f91bff;
+}
+
+.token.operator {
+  color: #de3b3b;
+}
+
+.token.function,
+.token.class-name {
+  color: #ffe346;
+}
+
+.token.comment,
+.token.block-comment {
+  color: var(--fg-muted);
+}
+
+.token.regex,
+.token.important {
+  color: #f91bff;
+}
+
+.token.constant {
+  color: #3bdede;
+}
+
+.token.property {
+  color: #3bdede;
+}
+
+.token.punctuation {
+  color: var(--fg);
+}
+
+/* Navbar: monospace title, no big logo */
+.navbar__title {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.navbar__logo {
+  display: none;
+}
+
+/* Stats grid (landing page) */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin: 2rem 0;
+}
+
+.stat-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.stat-card .number {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.stat-card .label {
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+}
+
+/* Blog layout (3-column) */
+.blog-layout {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 720px) 1fr;
+  gap: 2rem;
+}
+
+.blog-gutter {
+  min-width: 0;
+}
+
+.blog-sidebar {
+  min-width: 0;
+}
+
+/* Author card */
+.author-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.author-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.author-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.author-initials {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.author-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.author-name {
+  font-weight: 600;
+}
+
+.author-email {
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+/* Plot link (zoom cursor) */
+.plot-link {
+  cursor: zoom-in;
+  display: block;
+  margin: 1.5rem 0;
+}
+
+.plot-link img {
+  width: 100%;
+  border-radius: 4px;
+}
+
+/* Lightbox overlay */
+.lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.9);
+  cursor: zoom-out;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.lightbox.open {
+  display: flex;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Table styling: numeric columns right-aligned */
+table td:nth-child(n+2),
+table th:nth-child(n+2) {
+  font-family: var(--ifm-font-family-monospace);
+  text-align: right;
+}
+
+/* Benchmark table ratio highlight */
+.benchmark-table .ratio {
+  color: var(--primary-on);
+}
+
+/* Visited links */
+a:visited {
+  color: var(--accent);
+}
+
+/* Hide Docusaurus default TOC on blog posts */
+.blog-post-page aside.col--3 {
+  display: none;
+}
+
+/* Responsive: collapse grids on mobile */
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .blog-layout {
+    grid-template-columns: 1fr;
+  }
+}

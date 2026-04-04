@@ -610,89 +610,6 @@ def plot_peer_scaling(out):
   _save(fig, "peer_scaling.png", out)
 
 
-TUNNEL_BASE = os.path.expanduser(
-  "~/dev/HD-bench/results/20260403/tunnel_v2"
-)
-TUNNEL_VCPUS = ["4vcpu", "8vcpu", "16vcpu"]
-TUNNEL_LABELS = {
-  "4vcpu": "4 vCPU (2w)",
-  "8vcpu": "8 vCPU (4w)",
-  "16vcpu": "16 vCPU (8w)",
-}
-
-
-def load_tunnel_v2():
-  """Load tunnel v2 rate sweep summaries."""
-  data = {}
-  for vcpu in TUNNEL_VCPUS:
-    for relay in ("hd", "ts"):
-      rdir = os.path.join(TUNNEL_BASE, vcpu, relay)
-      if not os.path.isdir(rdir):
-        continue
-      for run_dir in sorted(os.listdir(rdir)):
-        summary = os.path.join(rdir, run_dir, "summary.json")
-        if not os.path.isfile(summary):
-          continue
-        parts = run_dir.rsplit("_r", 1)
-        if len(parts) != 2:
-          continue
-        rate = int(parts[0].replace("M", ""))
-        with open(summary) as fh:
-          d = json.load(fh)
-        data.setdefault((vcpu, relay, rate), []).append(d)
-  return data
-
-
-def _tv2_series(data, vcpu, relay, extract_fn):
-  """Extract sorted (rates, means, cis) via extract_fn."""
-  rates = sorted(set(
-    r for (v, rl, r) in data
-    if v == vcpu and rl == relay
-  ))
-  means, cis = [], []
-  for r in rates:
-    runs = data.get((vcpu, relay, r), [])
-    s = stats([extract_fn(d) for d in runs])
-    means.append(s["mean"])
-    cis.append(s["ci"])
-  return rates, means, cis
-
-
-def plot_tunnel_scaling(out):
-  """UDP throughput through WireGuard tunnel."""
-  data = load_tunnel_v2()
-  fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-  fig.suptitle(
-    "Through the Tunnel: UDP Throughput",
-    fontsize=14, fontweight="bold",
-  )
-  for col, vcpu in enumerate(TUNNEL_VCPUS):
-    ax = axes[col]
-    for server, color, label in [
-      ("hd", HD_COLOR, "Hyper-DERP"),
-      ("ts", TS_COLOR, "Tailscale"),
-    ]:
-      rates, m, c = _tv2_series(
-        data, vcpu, server,
-        lambda d: d["udp"]["aggregate_throughput_mbps"],
-      )
-      if rates:
-        r_gbps = [r / 1000 for r in rates]
-        ax.errorbar(
-          r_gbps, m, yerr=c, marker="o",
-          markersize=4, color=color, label=label,
-          capsize=3, linewidth=1.5,
-        )
-    ax.set_title(TUNNEL_LABELS[vcpu])
-    ax.set_xlabel("Offered Rate (Gbps)")
-    ax.set_ylabel("UDP Throughput (Mbps)")
-    ax.set_ylim(bottom=0)
-    ax.grid(True)
-    ax.legend(fontsize=8)
-  plt.tight_layout()
-  _save(fig, "tunnel_scaling.png", out)
-
-
 ALL_PLOTS = [
   plot_throughput_all,
   plot_loss_all,
@@ -701,7 +618,6 @@ ALL_PLOTS = [
   plot_cost_story,
   plot_latency,
   plot_peer_scaling,
-  plot_tunnel_scaling,
 ]
 
 

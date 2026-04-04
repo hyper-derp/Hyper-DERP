@@ -140,10 +140,6 @@ Full tunnel results across all configs and rates are in the [benchmark report](h
 
 ## Where HD Loses
 
-HD doesn't win everywhere, and the losses are instructive.
-
-**Idle latency.** At idle, TS is slightly better. At 2 vCPU: TS p99 = 128 us vs HD p99 = 143 us. At 8 vCPU both match at 129 us. If latency is your only metric, idle traffic won't show a difference.
-
 **2 vCPU bare metal.** On Haswell with only two kTLS workers, TS actually wins on throughput: 4,100 Mbps vs HD's 3,833 Mbps. Two cores aren't enough to handle both relay work and AES-GCM encryption at this rate -- the 48% kTLS overhead on just two workers eats the architectural advantage. Meanwhile TS spreads its work across all 6C/12T via goroutines. Four workers fix it -- HD pulls ahead at 6,680 Mbps -- but two workers lose.
 
 ## What's Next
