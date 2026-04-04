@@ -57,17 +57,15 @@ Once you starve TS of vCPUs the picture becomes devastating. TS needs 16 vCPUs t
 
 At 2 vCPU the ratio gets extreme. HD peaks at 3,730 ± 77 Mbps with one worker. TS delivers 1,870 Mbps at 3 Gbps offered, but push to 5 Gbps and it collapses to 324 Mbps with 92% loss — the Go runtime has consumed the entire CPU budget.
 
-### Half the Hardware
+## Half the Hardware
 
-The throughput gap means you can match TS on a smaller VM:
+This is the number that matters for production: HD on a smaller VM matches or exceeds TS on a VM twice its size.
 
-| TS deployment | TS throughput | HD equivalent | HD throughput | Savings |
-|---------------|-------------:|---------------|-------------:|--------:|
-| TS on 16 vCPU | 7,834 Mbps | HD on 8 vCPU | 8,371 ± 162 Mbps | **2x** |
-| TS on 8 vCPU | 4,670 Mbps | HD on 4 vCPU | 5,457 ± 114 Mbps | **2x** |
-| TS on 4 vCPU | 2,798 Mbps | HD on 2 vCPU | 3,536 ± 63 Mbps | **2x** |
+{{< plot src="cost_story.png" alt="HD at N vCPU vs TS at 2N vCPU. HD consistently matches or exceeds TS throughput on half the cores." >}}
 
-Across the board, HD delivers the same throughput on half the vCPUs — 50% compute cost reduction for a relay fleet. If you're running DERP relays at scale, you can cut your relay fleet in half or serve twice the traffic on the same hardware.
+TS needs 16 vCPUs to deliver 7,834 Mbps. HD clears that on 8 vCPUs (8,371 ± 162 Mbps) — and has headroom to spare. Drop to 4 vCPU and HD still outperforms TS on 8 (5,457 ± 114 vs 4,670 Mbps). At 2 vCPU HD delivers 3,536 ± 63 Mbps where TS on 4 manages 2,798. The pattern holds at every point on the curve: 2x fewer cores, same or better throughput.
+
+For a relay fleet this is a straightforward halving of compute cost. If you're running 10 DERP relays on 16 vCPU instances today, you can move to 8 vCPU instances and get the same throughput with room to absorb traffic spikes. Or keep the same hardware and serve twice the traffic. Either way, 50% less spend on relay infrastructure.
 
 ## Packet Loss
 
