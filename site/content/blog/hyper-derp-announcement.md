@@ -157,6 +157,8 @@ Tailscale made a reasonable bet, and honestly a good one: Go gives them memory s
 
 The relay happens to be the unlucky 5% where those tradeoffs get punished — a hot data plane that touches every byte, where the Go runtime's scheduling, garbage collection, and syscall overhead become the bottleneck rather than the network.
 
+For most deployments that's fine — DERP is a fallback, not the main path, and derper handles it well enough.
+
 But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic — not a fallback you hope never gets used — you need the relay itself to be fast. That's what HD is for.
 
 None of this takes away from what Tailscale built. They made mesh networking accessible to millions of people who never would have touched WireGuard on their own, and that matters more than any benchmark. HD just picks up where their architecture has to stop.
