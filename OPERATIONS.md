@@ -115,13 +115,21 @@ scrape_configs:
 |--------|------|-------------|
 | `hyper_derp_recv_bytes_total` | counter | Bytes received |
 | `hyper_derp_send_bytes_total` | counter | Bytes sent |
-| `hyper_derp_send_drops_total` | counter | Send failures |
+| `hyper_derp_send_drops_total` | counter | Send queue full drops |
 | `hyper_derp_xfer_drops_total` | counter | Cross-shard ring drops |
-| `hyper_derp_slab_exhausts_total` | counter | Slab pool exhaustions |
-| `hyper_derp_send_errors_total` | counter | By reason label |
-| `hyper_derp_recv_enobufs_total` | counter | Buffer pool exhaustions |
+| `hyper_derp_slab_exhausts_total` | counter | SendItem slab exhaustions |
+| `hyper_derp_send_errors_total` | counter | By reason: epipe, econnreset, eagain, other |
+| `hyper_derp_recv_enobufs_total` | counter | Provided buffer exhaustions |
+| `hyper_derp_frame_pool_hits_total` | counter | Frame pool allocs from pool |
+| `hyper_derp_frame_pool_misses_total` | counter | Frame pool allocs via malloc |
 | `hyper_derp_peers_active` | gauge | Connected peers |
 | `hyper_derp_workers` | gauge | Worker thread count |
+
+Also available: `/health` (JSON health check),
+`/debug/workers` and `/debug/peers` (require
+`--debug-endpoints`). See
+[docs/configuration.md](docs/configuration.md#endpoints)
+for response formats.
 
 ### Alerting Recommendations
 

@@ -158,19 +158,40 @@ fs.file-max = 1048576
 
 ### Enabling Metrics
 
-```sh
-hyper-derp --metrics-port 9090
+In the YAML config:
+
+```yaml
+metrics:
+  port: 9090
+  debug_endpoints: false
 ```
 
-The metrics endpoint serves Prometheus-format metrics on
-a plain HTTP port (no TLS). This is intentional -- the
-metrics port is for internal monitoring.
+Or via CLI: `hyper-derp --metrics-port 9090`
 
-Add `--debug-endpoints` to enable `/debug/*` endpoints.
-These expose per-peer keys and per-worker state. Do not
-enable in production without network-level access control.
+The metrics server is plain HTTP (no TLS). This is
+intentional — it's for internal monitoring behind a
+firewall.
 
-### Prometheus Scrape Config
+### Endpoints
+
+#### GET /health
+
+Health check. Returns JSON:
+
+```json
+{
+  "status": "ok",
+  "uptime_seconds": 3600,
+  "workers": 8,
+  "peers_active": 42,
+  "recv_bytes": 1234567890,
+  "send_bytes": 1234567890
+}
+```
+
+#### GET /metrics
+
+Prometheus text format. Scraped by Prometheus:
 
 ```yaml
 scrape_configs:
@@ -180,23 +201,66 @@ scrape_configs:
     scrape_interval: 15s
 ```
 
-### Available Metrics
+Available metrics:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `hyper_derp_recv_bytes_total` | counter | Total bytes received |
-| `hyper_derp_send_bytes_total` | counter | Total bytes sent |
-| `hyper_derp_send_drops_total` | counter | Send failures (queue full) |
+| `hyper_derp_recv_bytes_total` | counter | Bytes received |
+| `hyper_derp_send_bytes_total` | counter | Bytes sent |
+| `hyper_derp_send_drops_total` | counter | Send queue full drops |
 | `hyper_derp_xfer_drops_total` | counter | Cross-shard ring drops |
-| `hyper_derp_slab_exhausts_total` | counter | Slab pool exhaustions |
-| `hyper_derp_send_errors_total` | counter | Send errors (by reason label) |
+| `hyper_derp_slab_exhausts_total` | counter | SendItem slab exhaustions |
+| `hyper_derp_send_errors_total` | counter | By reason: epipe, econnreset, eagain, other |
 | `hyper_derp_recv_enobufs_total` | counter | Provided buffer exhaustions |
-| `hyper_derp_peers_active` | gauge | Currently connected peers |
+| `hyper_derp_frame_pool_hits_total` | counter | Frame pool allocs from pool |
+| `hyper_derp_frame_pool_misses_total` | counter | Frame pool allocs via malloc |
+| `hyper_derp_peers_active` | gauge | Connected peers |
 | `hyper_derp_workers` | gauge | Worker thread count |
 
-Per-worker stats are defined in `types.h:204`
-(`WorkerStats`) and aggregated by `DpGetStats`
-(`data_plane.h:60`).
+#### GET /debug/workers (requires --debug-endpoints)
+
+Per-worker stats breakdown. Returns JSON:
+
+```json
+{
+  "workers": [
+    {
+      "id": 0,
+      "peers": 5,
+      "recv_bytes": 123456,
+      "send_bytes": 123456,
+      "send_drops": 0,
+      "xfer_drops": 0,
+      "slab_exhausts": 0,
+      "send_epipe": 0,
+      "send_econnreset": 0,
+      "send_eagain": 0
+    }
+  ]
+}
+```
+
+#### GET /debug/peers (requires --debug-endpoints)
+
+Active peer list with connection details. Returns JSON:
+
+```json
+{
+  "count": 42,
+  "peers": [
+    {
+      "key": "a1fd9dc5...281d",
+      "fd": 15,
+      "worker": 3,
+      "send_inflight": 0,
+      "no_zc": 0
+    }
+  ]
+}
+```
+
+Do not enable debug endpoints in production without
+network-level access control — they expose peer keys.
 
 ### Alerting Recommendations
 
@@ -207,7 +271,7 @@ Per-worker stats are defined in `types.h:204`
   labels:
     severity: warning
 
-# Cross-shard drops (critical - messages lost)
+# Cross-shard drops (critical — messages lost)
 - alert: DerpXferDrops
   expr: rate(hyper_derp_xfer_drops_total[5m]) > 0
   labels:
@@ -216,6 +280,12 @@ Per-worker stats are defined in `types.h:204`
 # Elevated send errors
 - alert: DerpSendErrors
   expr: rate(hyper_derp_send_errors_total[5m]) > 10
+  labels:
+    severity: warning
+
+# Frame pool falling back to malloc
+- alert: DerpFramePoolMisses
+  expr: rate(hyper_derp_frame_pool_misses_total[5m]) > 0
   labels:
     severity: warning
 ```
