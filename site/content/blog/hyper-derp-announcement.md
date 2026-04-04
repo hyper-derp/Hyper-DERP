@@ -47,9 +47,7 @@ Ending up with a shard-per-core, share-nothing design. This is basically what Se
 
 4,903 benchmark runs on GCP c4-highcpu VMs. 4 client VMs, 20 runs per data point, 95% confidence intervals. Go derper v1.96.4, release build.
 
-Getting this benchmark suite right took three rounds. The first used a single client VM — which turned out to be measuring the client's CPU limits, not the relay's. The 8 vCPU result improved 62% when I switched to 4 clients. The "latency" suite measured throughput, not latency. The tunnel suite's SSH automation was broken on GCP's Debian VMs.
-
-[BENCHMARK_HISTORY.md](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/BENCHMARK_HISTORY.md)
+Getting this benchmark suite right took [three rounds of failures](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/BENCHMARK_HISTORY.md) before the methodology was solid.
 
 ## Throughput
 
@@ -89,7 +87,7 @@ The senders TCP stack respects this pause. But there is a timing gap — all pac
 
 At idle both relays return pings in about 110-115 μs on GCP — the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
 
-480 runs, 2,160,000 total latency samples. Per-packet DERP relay RTT via ping/echo, 5,000 pings per run, 10 runs per load level. Background load from dedicated client VMs. Full methodology in the [latency test design doc](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
+480 runs, 2.16M latency samples. [Full methodology](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
 
 On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
 
@@ -111,15 +109,11 @@ Twenty peers with ten pairs is a clean benchmark, but a production relay might h
 | 80 | 7,827 | 0.4% | 2,905 | 66% | 2.7x |
 | 100 | 7,665 | 0.5% | 2,775 | 68% | **2.8x** |
 
-TS loses 38% throughput and gains 24 percentage points of loss going from 20 to 100 peers. HD stays flat. The ratio amplifies from 1.9x to 2.8x.
-
-TS creates 2 goroutines per peer. At 100 peers that's 200 goroutines competing for CPU, plus scheduling overhead and cache pressure from goroutine stack switches. HD's sharded hash table is O(1) per peer regardless of count.
+TS loses 38% throughput going from 20 to 100 peers. HD stays flat. The ratio amplifies from 1.9x to 2.8x.
 
 ## The kTLS Cache Cliff
 
 The most interesting finding wasn't a win — it was a discontinuity. kTLS adds a roughly linear crypto tax at moderate load. Push harder and it stays linear. Then at saturation something breaks: LLC miss rate jumps from 2.6% to 40% in a single step. The AES-GCM working set — cipher state, IV buffers, scratch space for every active connection — overwhelms L3 and starts evicting everything else. Throughput doesn't degrade gradually. It hits a wall.
-
-This is also why HD's variance is higher under kTLS (CV 6-10% vs TS's rock-solid <1%). The system oscillates around the cliff edge — crypto pressure pushes the working set out of cache, throughput drops, fewer packets means less crypto pressure, the working set fits again, throughput recovers, and the cycle repeats. TS never sees this because its crypto runs in userspace with a more predictable memory footprint.
 
 {{< plot src="perf_stats.png" alt="perf stat on bare metal Haswell at 5 Gbps, 15-second capture. HD 2w kTLS vs TS userspace TLS." >}}
 
@@ -163,9 +157,7 @@ Tailscale made a reasonable bet, and honestly a good one: Go gives them memory s
 
 The relay happens to be the unlucky 5% where those tradeoffs get punished — a hot data plane that touches every byte, where the Go runtime's scheduling, garbage collection, and syscall overhead become the bottleneck rather than the network.
 
-Tailscale clearly knows this. Rather than rewriting derper, they built Peer Relay — a mechanism introduced in v1.86 that lets nodes in your tailnet relay traffic directly over WireGuard, bypassing DERP entirely. Their own docs now recommend it over custom DERP servers when performance is a concern.
-
-That works when relay performance isn't critical. But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic — not a fallback you hope never gets used — you need the relay itself to be fast. That's what HD is for.
+But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic — not a fallback you hope never gets used — you need the relay itself to be fast. That's what HD is for.
 
 None of this takes away from what Tailscale built. They made mesh networking accessible to millions of people who never would have touched WireGuard on their own, and that matters more than any benchmark. HD just picks up where their architecture has to stop.
 
