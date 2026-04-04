@@ -63,7 +63,7 @@ This is the number that matters for production: HD on a smaller VM matches or ex
 
 {{< plot src="cost_story.png" alt="HD at N vCPU vs TS at 2N vCPU. HD consistently matches or exceeds TS throughput on half the cores." >}}
 
-TS needs 16 vCPUs to deliver 7,834 Mbps. HD clears that on 8 vCPUs (8,371 ± 162 Mbps) — and has headroom to spare. Drop to 4 vCPU and HD still outperforms TS on 8 (5,457 ± 114 vs 4,670 Mbps). At 2 vCPU HD delivers 3,536 ± 63 Mbps where TS on 4 manages 2,798. The pattern holds at every point on the curve: 2x fewer cores, same or better throughput.
+HD on 8 vCPUs (8,371 ± 162 Mbps) clears what TS needs 16 for. Drop to 4 vCPU and HD still outperforms TS on 8 (5,457 ± 114 vs 4,670 Mbps). At 2 vCPU HD delivers 3,536 ± 63 Mbps where TS on 4 manages 2,798. The pattern holds at every point on the curve: 2x fewer cores, same or better throughput.
 
 For a relay fleet this is a straightforward halving of compute cost. If you're running 10 DERP relays on 16 vCPU instances today, you can move to 8 vCPU instances and get the same throughput with room to absorb traffic spikes. Or keep the same hardware and serve twice the traffic. Either way, 50% less spend on relay infrastructure.
 
