@@ -105,17 +105,11 @@ Full latency tables across all configs (2/4/8/16 vCPU, 6 load levels each) are i
 
 Twenty peers with ten pairs is a clean benchmark, but a production relay might have hundreds of peers with unpredictable traffic patterns. So I tested 20 through 100 peers at 8 vCPU with 10 Gbps offered.
 
-| Peers | HD (Mbps) | HD Loss | TS (Mbps) | TS Loss | HD/TS |
-|------:|----------:|--------:|----------:|--------:|------:|
-| 20 | 8,371 | 0.1% | 4,495 | 44% | 1.9x |
-| 40 | 8,006 | 0.5% | 3,538 | 57% | 2.3x |
-| 60 | 6,880 | 0.7% | 3,146 | 63% | 2.2x |
-| 80 | 7,827 | 0.4% | 2,905 | 66% | 2.7x |
-| 100 | 7,665 | 0.5% | 2,775 | 68% | **2.8x** |
+<Plot src="peer_scaling.png" alt="Throughput vs peer count at 8 vCPU, 10 Gbps offered. HD stays flat, TS degrades." />
 
-TS loses 38% throughput going from 20 to 100 peers. HD stays flat. The ratio amplifies from 1.9x to 2.8x.
+TS loses 38% throughput going from 20 to 100 peers. HD stays flat.
 
-<Plot src="peer_loss.png" alt="Packet loss vs peer count at 8 vCPU, 10 Gbps offered. TS climbs from 44% to 68%, HD stays near zero." />
+<Plot src="peer_loss.png" alt="Packet loss vs peer count at 8 and 16 vCPU, 10 Gbps offered." />
 
 ## The kTLS Cache Cliff
 
