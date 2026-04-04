@@ -117,7 +117,6 @@ I set up Headscale with 4 Tailscale clients on GCP, blocked direct UDP between t
 
 Both relays deliver identical throughput (~2 Gbps) — WireGuard's userspace crypto is the ceiling, not the relay. Retransmits, loss, latency: all within noise of each other.
 
-{{< plot src="tunnel_scaling.png" alt="TCP throughput through WireGuard tunnel at increasing offered rates. Both relays track together." >}}
 
 The tunnel tests confirm that HD doesn't *break* anything. The relay is transparent — the architectural differences only show up when you outrun WireGuard's own crypto. Full results in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#3-tunnel-quality-wireguard-through-derp).
 
