@@ -226,7 +226,10 @@ static bool LoadPairFile(const char* path) {
 
     int id;
     const char* colon = strchr(cursor, ':');
-    if (!colon) { delete[] buf; return false; }
+    if (!colon) {
+      delete[] buf;
+      return false;
+    }
     id = atoi(colon + 1);
 
     char hex[65];
@@ -280,13 +283,22 @@ static bool LoadPairFile(const char* path) {
       return false;
     }
     const char* sc = strchr(cursor, ':');
-    if (!sc) { delete[] buf; return false; }
+    if (!sc) {
+      delete[] buf;
+      return false;
+    }
     g_pf.pairs[i].sender = atoi(sc + 1);
 
     const char* rc = FindKey(cursor, "receiver");
-    if (!rc) { delete[] buf; return false; }
+    if (!rc) {
+      delete[] buf;
+      return false;
+    }
     const char* rc2 = strchr(rc, ':');
-    if (!rc2) { delete[] buf; return false; }
+    if (!rc2) {
+      delete[] buf;
+      return false;
+    }
     g_pf.pairs[i].receiver = atoi(rc2 + 1);
     cursor = rc;
   }

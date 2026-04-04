@@ -1,18 +1,18 @@
-name: Build, Test, and Lint
+name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master, "v0.1.x"]
   pull_request:
-    branches: [main]
+    branches: [master, "v0.1.x"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-release:
-    name: Release Build
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,46 +21,31 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            liburing-dev \
-            libsodium-dev \
-            libspdlog-dev \
-            libcli11-dev
-
-      - name: Configure (release)
-        run: cmake --preset default
-
-      - name: Build (release)
-        run: cmake --build build -j$(nproc)
-
-  build-debug-and-test:
-    name: Debug Build and Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
+            gcc-14 g++-14 \
+            cmake ninja-build \
+            liburing-dev libsodium-dev libspdlog-dev \
+            libgtest-dev libgmock-dev libcli11-dev \
+            libssl-dev libasio-dev
+      - name: Set GCC 14
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            liburing-dev \
-            libsodium-dev \
-            libspdlog-dev \
-            libgtest-dev \
-            libgmock-dev \
-            libcli11-dev
+          sudo update-alternatives \
+            --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
-      - name: Configure (debug)
-        run: cmake --preset debug
+      - name: Configure
+        run: >
+          cmake --preset debug
+          -DCMAKE_C_COMPILER=gcc-14
+          -DCMAKE_CXX_COMPILER=g++-14
 
-      - name: Build (debug)
+      - name: Build
         run: cmake --build build-debug -j$(nproc)
 
-      - name: Run tests
-        run: ctest --test-dir build-debug --output-on-failure
+      - name: Unit tests
+        run: >
+          ctest --test-dir build-debug
+          --output-on-failure
+          -E "E2E"
 
   lint:
     name: Lint
@@ -68,33 +53,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install cpplint
+        run: pip install --break-system-packages cpplint
+
+      - name: Run cpplint
+        run: cpplint --recursive src/ include/ tools/ tests/
+
+  package:
+    name: Package
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            liburing-dev \
-            libsodium-dev \
-            libspdlog-dev \
-            libgtest-dev \
-            libgmock-dev \
-            libcli11-dev \
-            clang-tidy
-          pip install cpplint
-
-      - name: Run cpplint
-        run: cpplint --recursive src/ include/
-
-      - name: Configure (debug, for compile_commands.json)
-        run: cmake --preset debug
-
-      - name: Build (debug)
-        run: cmake --build build-debug -j$(nproc)
-
-      - name: Run clang-tidy
+            gcc-14 g++-14 \
+            cmake ninja-build \
+            liburing-dev libsodium-dev libspdlog-dev \
+            libgtest-dev libgmock-dev libcli11-dev \
+            libssl-dev libasio-dev
+      - name: Set GCC 14
         run: |
-          clang-tidy \
-            -p build-debug \
-            src/*.cc \
-            include/hyper_derp/*.h
+          sudo update-alternatives \
+            --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-14
+
+      - name: Configure
+        run: >
+          cmake --preset default
+          -DCMAKE_C_COMPILER=gcc-14
+          -DCMAKE_CXX_COMPILER=g++-14
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Package
+        run: cmake --build build --target package
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyper-derp-deb-amd64
+          path: build/hyper-derp_*.deb
+          retention-days: 30

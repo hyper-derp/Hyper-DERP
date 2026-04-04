@@ -119,10 +119,11 @@ target_link_libraries(hyper-derp PRIVATE libderp)
 add_subdirectory(tools/bench)
 
 # Tests.
-enable_testing()
-add_subdirectory(tests)
-
-include(CTest)
+if(BUILD_TESTING OR NOT DEFINED BUILD_TESTING)
+  enable_testing()
+  add_subdirectory(tests)
+  include(CTest)
+endif()
 
 # Fuzz targets (only with Clang + libFuzzer).
 option(ENABLE_FUZZING "Build fuzz targets" OFF)

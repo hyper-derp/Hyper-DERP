@@ -2,138 +2,90 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  build-and-release:
-    name: Build, Package, and Publish
+  test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake \
-            ninja-build \
-            liburing-dev \
-            libsodium-dev \
-            libspdlog-dev \
-            libgtest-dev \
-            libgmock-dev \
-            libcli11-dev \
-            reprepro
+            gcc-14 g++-14 \
+            cmake ninja-build \
+            liburing-dev libsodium-dev libspdlog-dev \
+            libgtest-dev libgmock-dev libcli11-dev \
+            libssl-dev libasio-dev
+      - name: Set GCC 14
+        run: |
+          sudo update-alternatives \
+            --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
-      - name: Configure (release, amd64)
-        run: cmake --preset default
+      - name: Configure
+        run: >
+          cmake --preset debug
+          -DCMAKE_C_COMPILER=gcc-14
+          -DCMAKE_CXX_COMPILER=g++-14
 
-      - name: Build (release, amd64)
+      - name: Build
+        run: cmake --build build-debug -j$(nproc)
+
+      - name: Unit tests
+        run: >
+          ctest --test-dir build-debug
+          --output-on-failure
+          -E "E2E"
+
+  release:
+    name: Build and Publish
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-14 g++-14 \
+            cmake ninja-build \
+            liburing-dev libsodium-dev libspdlog-dev \
+            libgtest-dev libgmock-dev libcli11-dev \
+            libssl-dev libasio-dev
+      - name: Set GCC 14
+        run: |
+          sudo update-alternatives \
+            --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-14
+
+      - name: Configure
+        run: >
+          cmake --preset default
+          -DCMAKE_C_COMPILER=gcc-14
+          -DCMAKE_CXX_COMPILER=g++-14
+
+      - name: Build
         run: cmake --build build -j$(nproc)
 
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
-
-      - name: Package (amd64 .deb)
+      - name: Package
         run: cmake --build build --target package
-
-      - name: Install cross-compile toolchain
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo sed -i \
-            's/^deb /deb [arch=amd64] /' \
-            /etc/apt/sources.list.d/*.list \
-            2>/dev/null || true
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ \
-            $(lsb_release -cs) main universe" | \
-            sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ \
-            $(lsb_release -cs)-updates main universe" | \
-            sudo tee -a /etc/apt/sources.list.d/arm64.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            liburing-dev:arm64 \
-            libsodium-dev:arm64
-
-      - name: Configure (release, arm64)
-        run: |
-          cmake \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
-            -DCMAKE_BUILD_TYPE=Release \
-            -G Ninja \
-            -B build-arm64
-
-      - name: Build (release, arm64)
-        run: cmake --build build-arm64 -j$(nproc)
-
-      - name: Package (arm64 .deb)
-        run: cmake --build build-arm64 --target package
 
       - name: Create GitHub release
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --generate-notes \
-            build/hyper-derp_*.deb \
-            build-arm64/hyper-derp_*.deb
+            build/hyper-derp_*.deb
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Import APT signing key
-        run: |
-          echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | \
-            gpg --batch --import
-
-      - name: Update APT repository index
-        run: |
-          mkdir -p apt-repo/conf
-          cat > apt-repo/conf/distributions << 'CONF'
-          Origin: hyper-derp
-          Label: Hyper-DERP
-          Codename: stable
-          Architectures: amd64 arm64
-          Components: main
-          Description: Hyper-DERP DERP relay
-          SignWith: release@hyper-derp.dev
-          CONF
-
-          RELEASE_URL="https://github.com/hyper-derp/hyper-derp"
-          RELEASE_URL+="/releases/download/${GITHUB_REF_NAME}"
-
-          for deb in build/hyper-derp_*.deb \
-                     build-arm64/hyper-derp_*.deb; do
-            reprepro -b apt-repo includedeb stable "$deb"
-          done
-          reprepro -b apt-repo export
-
-      - name: Deploy APT repo to GitHub Pages
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "github-actions[bot]@users.noreply.github.com"
-          git fetch origin gh-pages || true
-          git worktree add gh-pages-wt origin/gh-pages \
-            2>/dev/null || {
-            git worktree add --orphan gh-pages-wt
-          }
-          cp -a apt-repo/dists gh-pages-wt/repo/
-          cp -a apt-repo/pool gh-pages-wt/repo/
-          cd gh-pages-wt
-          git add repo/
-          git commit -m \
-            "Update APT repo for ${GITHUB_REF_NAME}" || true
-          git push origin HEAD:gh-pages

@@ -6,7 +6,9 @@
 #   libssl-dev libasio-dev
 
 find_package(spdlog REQUIRED)
-find_package(GTest REQUIRED)
+if(BUILD_TESTING OR NOT DEFINED BUILD_TESTING)
+  find_package(GTest REQUIRED)
+endif()
 find_package(CLI11 REQUIRED)
 
 # ---- FetchContent dependencies ----------------------------------------------

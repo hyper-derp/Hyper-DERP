@@ -314,11 +314,11 @@ struct Worker {
   int recv_defer_tail;
 
   // Send-pressure-based recv pause.
-  int send_pressure;        // Total queued sends across all peers.
-  int recv_paused;          // 1 = recv paused due to send pressure.
-  int recv_pause_countdown; // Batches remaining before Low check.
-  int peer_count;           // Active peers on this worker.
-  int busy_spins;           // Busy-spin limit (config-dependent).
+  int send_pressure;         // Total queued sends.
+  int recv_paused;           // 1 = paused due to pressure.
+  int recv_pause_countdown;  // Batches before Low check.
+  int peer_count;            // Active peers on this worker.
+  int busy_spins;            // Busy-spin limit.
 
   // Deferred send flush (batch coalescing).
   int pending_fds[kMaxCqeBatch];
