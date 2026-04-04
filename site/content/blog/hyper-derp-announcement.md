@@ -1,6 +1,5 @@
 ---
-title: >-
-  Hyper-DERP: C++/io_uring DERP relay — 2-10x throughput, 40% lower tail latency than Tailscale's derper
+title: "Hyper-DERP: C++/io_uring DERP relay - Same throughput as Tailscale's derper, half the cores"
 date: 2026-04-04
 author: "Karl"
 tags: ["announcement", "release", "benchmarks"]
@@ -50,9 +49,7 @@ Getting this benchmark suite right took three rounds. The first used a single cl
 
 ## Throughput
 
-Go's network model is built on `epoll`. Each goroutine parks itself on a socket and waits for the kernel to signal readiness. The goroutine wakes up, calls `read()`, copies the packet into userspace, rewrites the header, calls `write()` to send it back out, and parks again. That's two syscalls, two kernel transitions, one packet.
-
-And in between those calls the goroutine sits in the scheduler's run queue doing nothing — but it still has a stack, it still needs to be scheduled, and when it wakes back up it might be on a different core with cold caches. Multiply by thousands of connections and the scheduler spends most of its time juggling goroutines that are waiting for I/O, not doing work.
+Each goroutine in derper sits in the scheduler's run queue between syscalls doing nothing — but it still has a stack, it still needs to be scheduled, and when it wakes back up it might be on a different core with cold caches. Multiply by thousands of connections and the scheduler spends most of its time juggling goroutines that are waiting for I/O, not doing work.
 
 {{< plot src="throughput.png" alt="kTLS throughput across 2/4/8/16 vCPU on GCP c4-highcpu (Xeon 8581C). 4 client VMs, 20 peers, 10 pairs, 1400-byte messages, 20 runs per point. 95% CIs shown." >}}
 
@@ -122,10 +119,6 @@ I set up Headscale with 4 Tailscale clients on GCP, blocked direct UDP between t
 
 Both relays deliver identical UDP throughput (~2 Gbps). The relay isn't the bottleneck — Tailscale's userspace WireGuard (wireguard-go, ChaCha20-Poly1305) is. Loss is negligible for both (<0.04%). TCP retransmits: HD produces 7-8% fewer at max load on 4 and 16 vCPU. Tied at 8 vCPU. Tunnel latency: both ~0.5-1.0 ms, dominated by WireGuard crypto and network RTT.
 
-{{< plot src="tunnel_scaling.png" alt="TCP throughput through WireGuard tunnel at increasing offered UDP rates." >}}
-
-{{< plot src="tunnel_retransmits.png" alt="TCP retransmits through the tunnel. Both relays climb together as the tunnel saturates." >}}
-
 This is the expected result. The synthetic benchmarks show what happens when you push the relay directly at 10-25 Gbps. Through a real tunnel, WireGuard crypto on the client caps everything at ~2 Gbps regardless of relay. The relay has headroom either way.
 
 The tunnel tests matter for a different reason: they confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. The relay is transparent — the architectural differences only show up when you outrun WireGuard's own crypto.
@@ -138,15 +131,11 @@ HD doesn't win everywhere, and the losses are instructive.
 
 **Idle latency.** At idle, TS is slightly better. At 2 vCPU: TS p99 = 128 us vs HD p99 = 143 us. At 8 vCPU both match at 129 us. If latency is your only metric, idle traffic won't show a difference.
 
-**4 vCPU backpressure stall.** HD at 4 vCPU (2 workers) has intermittent multi-millisecond latency stalls at >=50% load. Three consecutive runs at 100% load hit p99 of 593, 2,579, and 3,923 us. The backpressure mechanism oscillates — when the send queue fills, recv pauses; the queue drains, recv resumes, a burst floods in, the queue fills again. The cycle is ~42ms with 2 workers, fast enough to trap ping packets in the kernel TCP buffer for tens of milliseconds. TS at 4 vCPU has steady ~172 us p99 (aside from one 12ms GC pause at 50% load). The fix (wider hysteresis, minimum pause duration, reduced busy-spin) brings p99 from 825 us to 151 us at 100% load. Details in the [4 vCPU stall analysis](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/4VCPU_STALL_FIX.md).
-
-**Tunnel throughput parity.** Both relays deliver identical ~2 Gbps through WireGuard tunnels. The relay benchmarks show 2-10x advantages, but real applications running through Tailscale won't see it until the WireGuard crypto ceiling moves. With kernel WireGuard (wg.ko) replacing wireguard-go, the tunnel ceiling would move from ~2 Gbps to 10+ Gbps, and HD's relay advantage would become directly visible.
-
 **2 vCPU bare metal.** On Haswell with only two kTLS workers, TS actually wins on throughput: 4,100 Mbps vs HD's 3,833 Mbps. Two cores aren't enough to handle both relay work and AES-GCM encryption at this rate — the 48% kTLS overhead on just two workers eats the architectural advantage. Meanwhile TS spreads its work across all 6C/12T via goroutines. Four workers fix it — HD pulls ahead at 6,680 Mbps — but two workers lose.
 
 ## What's Next
 
-**Kernel WireGuard client.** The tunnel benchmark proved the relay isn't the bottleneck — wireguard-go is. A kernel WireGuard integration (wg.ko) would move the tunnel ceiling from ~2 Gbps to 10+ Gbps, where HD's relay advantage becomes directly visible to applications.
+**Kernel WireGuard client.** Kernel WireGuard (wg.ko) would move the tunnel ceiling from ~2 Gbps to 10+ Gbps, where HD's relay advantage becomes directly visible to applications.
 
 **Custom protocol.** The whole reason I built a relay was to stream IR camera feeds between industrial networks. Right now HD speaks DERP and nothing else. A client SDK that lets you relay arbitrary protocols through it would turn HD from a Tailscale component into a general-purpose secure relay — which is what I actually need.
 
