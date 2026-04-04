@@ -13,6 +13,14 @@ find_package(CLI11 REQUIRED)
 
 include(FetchContent)
 
+# rapidyaml — fast YAML parser.
+FetchContent_Declare(ryml
+  GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git
+  GIT_TAG v0.8.0
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(ryml)
+
 # Crow — lightweight C++ HTTP framework.
 set(CROW_ENABLE_SSL ON CACHE BOOL "" FORCE)
 set(CROW_FEATURES "ssl" CACHE STRING "" FORCE)

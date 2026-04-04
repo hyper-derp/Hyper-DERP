@@ -5,8 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/hyper-derp/hyper-derp.conf
-ExecStart=/usr/bin/hyper-derp $HYPER_DERP_OPTS
+ExecStart=/usr/bin/hyper-derp --config /etc/hyper-derp/hyper-derp.yaml
 Restart=on-failure
 RestartSec=5
 

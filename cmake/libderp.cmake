@@ -18,6 +18,7 @@ add_library(libderp_obj OBJECT
   src/tun.cc
   src/metrics.cc
   src/ktls.cc
+  src/config.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
@@ -31,6 +32,7 @@ target_link_libraries(libderp_obj PUBLIC
   Crow::Crow
   OpenSSL::SSL
   OpenSSL::Crypto
+  ryml::ryml
   pthread
 )
 target_compile_definitions(libderp_obj PUBLIC
@@ -51,6 +53,7 @@ target_link_libraries(libderp PUBLIC
   Crow::Crow
   OpenSSL::SSL
   OpenSSL::Crypto
+  ryml::ryml
   pthread
 )
 target_compile_definitions(libderp PUBLIC

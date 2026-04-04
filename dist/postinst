@@ -3,10 +3,13 @@ set -e
 
 if [ "$1" = "configure" ]; then
   # Install default config if none exists.
-  if [ ! -f /etc/hyper-derp/hyper-derp.conf ]; then
-    cp /etc/hyper-derp/hyper-derp.conf.example \
-       /etc/hyper-derp/hyper-derp.conf
+  if [ ! -f /etc/hyper-derp/hyper-derp.yaml ]; then
+    cp /etc/hyper-derp/hyper-derp.yaml.example \
+       /etc/hyper-derp/hyper-derp.yaml
   fi
+
+  # Load kTLS kernel module if available.
+  modprobe tls 2>/dev/null || true
 
   systemctl daemon-reload
   systemctl enable hyper-derp.service

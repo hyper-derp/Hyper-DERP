@@ -1,0 +1,36 @@
+# Hyper-DERP relay server configuration.
+# CLI flags override values set here.
+
+# DERP listen port.
+port: 3340
+
+# Worker threads. 0 = auto (one per available core).
+workers: 0
+
+# Pin workers to specific CPU cores.
+# pin_cores: [0, 2, 4, 6]
+
+# Per-socket send/recv buffer size in bytes.
+# 0 = OS default. Capped by net.core.wmem_max/rmem_max.
+# sockbuf: 0
+
+# Maximum accepted connections per second. 0 = unlimited.
+# max_accept_rate: 0
+
+# Use io_uring SQPOLL mode (needs CAP_SYS_NICE).
+sqpoll: false
+
+# TLS certificate and key for kTLS data plane connections.
+# Both must be set to enable kTLS.
+# tls_cert: /etc/hyper-derp/cert.pem
+# tls_key: /etc/hyper-derp/key.pem
+
+# Log level: debug, info, warn, error.
+log_level: info
+
+# Metrics HTTP server.
+metrics:
+  # port: 9100
+  # tls_cert: /etc/hyper-derp/metrics-cert.pem
+  # tls_key: /etc/hyper-derp/metrics-key.pem
+  debug_endpoints: false

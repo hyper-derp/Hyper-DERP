@@ -30,6 +30,7 @@ ctest --output-on-failure -j --test-dir build/tests
 - `include/hyper_derp/http.h` — HTTP upgrade request/response codec
 - `include/hyper_derp/handshake.h` — DERP handshake (ServerKey/ClientInfo/ServerInfo)
 - `include/hyper_derp/server.h` — Server lifecycle (accept loop, data plane integration)
+- `include/hyper_derp/config.h` — YAML config file loader (rapidyaml)
 - `src/protocol.cc` — Frame building functions
 - `src/data_plane.cc` — io_uring sharded worker implementation
 - `src/http.cc` — HTTP parser/builder

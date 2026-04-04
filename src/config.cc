@@ -1,0 +1,243 @@
+/// @file config.cc
+/// @brief YAML configuration file loader using rapidyaml.
+
+#include "hyper_derp/config.h"
+
+#include <ryml.hpp>
+#include <ryml_std.hpp>
+
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
+namespace hyper_derp {
+
+static auto ReadFile(const char* path, std::string* out)
+    -> std::expected<void, Error<ConfigError>> {
+  FILE* f = fopen(path, "r");
+  if (!f) {
+    return MakeError(ConfigError::FileNotFound,
+                     std::string("cannot open ") + path +
+                         ": " + strerror(errno));
+  }
+  fseek(f, 0, SEEK_END);
+  long len = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (len < 0) {
+    fclose(f);
+    return MakeError(ConfigError::ReadFailed,
+                     "ftell failed");
+  }
+  out->resize(static_cast<size_t>(len));
+  size_t n = fread(out->data(), 1, out->size(), f);
+  fclose(f);
+  if (n != out->size()) {
+    return MakeError(ConfigError::ReadFailed,
+                     "short read");
+  }
+  return {};
+}
+
+/// Read an integer from a YAML node into *out.
+/// Returns false and sets err on invalid values.
+static bool ReadInt(ryml::ConstNodeRef node,
+                    const char* name, int* out,
+                    int lo, int hi,
+                    Error<ConfigError>* err) {
+  if (!node.has_val()) return true;
+  auto val = node.val();
+  char* end;
+  errno = 0;
+  long v = strtol(val.data(), &end, 10);
+  if (end == val.data() || errno == ERANGE ||
+      v < lo || v > hi) {
+    *err = {ConfigError::InvalidValue,
+            std::string(name) + ": expected integer [" +
+                std::to_string(lo) + ".." +
+                std::to_string(hi) + "]"};
+    return false;
+  }
+  *out = static_cast<int>(v);
+  return true;
+}
+
+/// Read a boolean from a YAML node.
+static bool ReadBool(ryml::ConstNodeRef node,
+                     const char* name, bool* out,
+                     Error<ConfigError>* err) {
+  if (!node.has_val()) return true;
+  auto val = node.val();
+  if (val == "true" || val == "yes" || val == "on" ||
+      val == "1") {
+    *out = true;
+  } else if (val == "false" || val == "no" ||
+             val == "off" || val == "0") {
+    *out = false;
+  } else {
+    *err = {ConfigError::InvalidValue,
+            std::string(name) + ": expected boolean"};
+    return false;
+  }
+  return true;
+}
+
+/// Read a string from a YAML node.
+static void ReadStr(ryml::ConstNodeRef node,
+                    std::string* out) {
+  if (node.has_val()) {
+    auto val = node.val();
+    out->assign(val.data(), val.len);
+  }
+}
+
+/// Parse a pin_cores list: [0, 2, 4, 6] or "0,2,4,6".
+static bool ReadPinCores(ryml::ConstNodeRef node,
+                         std::array<int, kMaxWorkers>* out,
+                         Error<ConfigError>* err) {
+  if (node.is_seq()) {
+    int i = 0;
+    for (auto child : node.children()) {
+      if (i >= kMaxWorkers) break;
+      int core = -1;
+      if (!ReadInt(child, "pin_cores[]", &core,
+                   0, 1023, err)) {
+        return false;
+      }
+      (*out)[i++] = core;
+    }
+  } else if (node.has_val()) {
+    auto val = node.val();
+    std::string s(val.data(), val.len);
+    const char* p = s.c_str();
+    int i = 0;
+    while (*p && i < kMaxWorkers) {
+      char* end;
+      errno = 0;
+      long v = strtol(p, &end, 10);
+      if (end == p || errno == ERANGE ||
+          v < 0 || v > 1023) {
+        *err = {ConfigError::InvalidValue,
+                "pin_cores: invalid core number"};
+        return false;
+      }
+      (*out)[i++] = static_cast<int>(v);
+      if (*end == ',') {
+        p = end + 1;
+      } else {
+        break;
+      }
+    }
+  }
+  return true;
+}
+
+auto LoadConfig(const char* path, ServerConfig* config)
+    -> std::expected<void, Error<ConfigError>> {
+  std::string buf;
+  auto rd = ReadFile(path, &buf);
+  if (!rd) return std::unexpected(rd.error());
+
+  ryml::Tree tree;
+  try {
+    tree = ryml::parse_in_arena(
+        ryml::to_csubstr(path),
+        ryml::to_csubstr(buf));
+  } catch (const std::exception& e) {
+    return MakeError(ConfigError::ParseFailed,
+                     std::string("YAML parse: ") +
+                         e.what());
+  }
+
+  ryml::ConstNodeRef root = tree.rootref();
+  if (!root.is_map()) {
+    return MakeError(ConfigError::ParseFailed,
+                     "root must be a mapping");
+  }
+
+  Error<ConfigError> err{};
+
+#define TRY_INT(key, field, lo, hi)             \
+  if (root.has_child(#key)) {                   \
+    int v = 0;                                  \
+    if (!ReadInt(root[#key], #key, &v, lo, hi,  \
+                 &err))                         \
+      return std::unexpected(err);              \
+    config->field = v;                          \
+  }
+
+#define TRY_BOOL(key, field)                    \
+  if (root.has_child(#key)) {                   \
+    bool v = false;                             \
+    if (!ReadBool(root[#key], #key, &v, &err))  \
+      return std::unexpected(err);              \
+    config->field = v;                          \
+  }
+
+#define TRY_STR(key, field)                     \
+  if (root.has_child(#key))                     \
+    ReadStr(root[#key], &config->field);
+
+  TRY_INT(port, port, 1, 65535)
+  TRY_INT(workers, num_workers, 0, kMaxWorkers)
+  TRY_INT(sockbuf, sockbuf_size, 0, 256 * 1024 * 1024)
+  TRY_INT(max_accept_rate, max_accept_per_sec,
+          0, 1000000)
+  TRY_BOOL(sqpoll, sqpoll)
+  TRY_STR(tls_cert, tls_cert)
+  TRY_STR(tls_key, tls_key)
+
+  if (root.has_child("pin_cores")) {
+    if (!ReadPinCores(root["pin_cores"],
+                      &config->pin_cores, &err)) {
+      return std::unexpected(err);
+    }
+  }
+
+  // Metrics sub-section.
+  if (root.has_child("metrics")) {
+    auto m = root["metrics"];
+    if (m.is_map()) {
+      if (m.has_child("port")) {
+        int v = 0;
+        if (!ReadInt(m["port"], "metrics.port", &v,
+                     0, 65535, &err))
+          return std::unexpected(err);
+        config->metrics.port = static_cast<uint16_t>(v);
+      }
+      if (m.has_child("tls_cert"))
+        ReadStr(m["tls_cert"], &config->metrics.tls_cert);
+      if (m.has_child("tls_key"))
+        ReadStr(m["tls_key"], &config->metrics.tls_key);
+      if (m.has_child("debug_endpoints")) {
+        bool v = false;
+        if (!ReadBool(m["debug_endpoints"],
+                      "metrics.debug_endpoints", &v,
+                      &err))
+          return std::unexpected(err);
+        config->metrics.enable_debug = v;
+      }
+    }
+  }
+
+  // Log level (returned in config for main.cc to apply).
+  if (root.has_child("log_level")) {
+    auto val = root["log_level"].val();
+    std::string_view lv(val.data(), val.len);
+    if (lv != "debug" && lv != "info" &&
+        lv != "warn" && lv != "error") {
+      return MakeError(
+          ConfigError::InvalidValue,
+          "log_level: expected debug|info|warn|error");
+    }
+  }
+
+#undef TRY_INT
+#undef TRY_BOOL
+#undef TRY_STR
+
+  return {};
+}
+
+}  // namespace hyper_derp

@@ -11,6 +11,7 @@
 #include <print>
 #include <string_view>
 
+#include "hyper_derp/config.h"
 #include "hyper_derp/server.h"
 
 static std::atomic<int> g_stop_flag{0};
@@ -24,6 +25,7 @@ static void PrintUsage(const char* prog) {
       "Usage: {} [options]\n"
       "\n"
       "Options:\n"
+      "  --config <path>       YAML config file\n"
       "  --port <port>         Listen port (default: 3340)\n"
       "  --workers <n>         Worker threads (0=auto)\n"
       "  --pin-workers <list>  Pin workers to cores "
@@ -89,17 +91,20 @@ static bool ParseInt(const char* str, int* out,
 int main(int argc, char* argv[]) {
   using std::string_view_literals::operator""sv;
 
-  int port = 3340;
-  int num_workers = 0;
-  int sockbuf_size = 0;
-  int max_accept_rate = 0;
-  int metrics_port = 0;
+  const char* config_path = nullptr;
+  int port = -1;
+  int num_workers = -1;
+  int sockbuf_size = -1;
+  int max_accept_rate = -1;
+  int metrics_port = -1;
   const char* tls_cert = nullptr;
   const char* tls_key = nullptr;
   const char* pin_spec = nullptr;
   const char* log_level = nullptr;
   bool debug_endpoints = false;
   bool sqpoll = false;
+  bool debug_set = false;
+  bool sqpoll_set = false;
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -111,7 +116,9 @@ int main(int argc, char* argv[]) {
       std::println("hyper-derp 0.1.0");
       return EXIT_SUCCESS;
     }
-    if (arg == "--port"sv && i + 1 < argc) {
+    if (arg == "--config"sv && i + 1 < argc) {
+      config_path = argv[++i];
+    } else if (arg == "--port"sv && i + 1 < argc) {
       if (!ParseInt(argv[++i], &port, 1, 65535)) {
         std::println(stderr, "error: invalid --port");
         return EXIT_FAILURE;
@@ -156,8 +163,10 @@ int main(int argc, char* argv[]) {
       tls_key = argv[++i];
     } else if (arg == "--debug-endpoints"sv) {
       debug_endpoints = true;
+      debug_set = true;
     } else if (arg == "--sqpoll"sv) {
       sqpoll = true;
+      sqpoll_set = true;
     } else if (arg == "--log-level"sv && i + 1 < argc) {
       log_level = argv[++i];
     } else {
@@ -195,33 +204,55 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
-  spdlog::info("hyper-derp starting on port {}", port);
-
+  // Load config: YAML file first, CLI flags override.
   hyper_derp::ServerConfig config;
-  config.port = static_cast<uint16_t>(port);
-  config.num_workers = num_workers;
-  config.sockbuf_size = sockbuf_size;
-  config.max_accept_per_sec = max_accept_rate;
-  config.metrics.port = static_cast<uint16_t>(
-      metrics_port);
+
+  if (config_path) {
+    auto cfg = hyper_derp::LoadConfig(config_path,
+                                      &config);
+    if (!cfg) {
+      std::println(stderr, "error: config: {} ({})",
+                   cfg.error().message,
+                   hyper_derp::ConfigErrorName(
+                       cfg.error().code));
+      return EXIT_FAILURE;
+    }
+    spdlog::info("loaded config from {}", config_path);
+  }
+
+  // CLI flags override config file values.
+  if (port >= 0)
+    config.port = static_cast<uint16_t>(port);
+  if (num_workers >= 0)
+    config.num_workers = num_workers;
+  if (sockbuf_size >= 0)
+    config.sockbuf_size = sockbuf_size;
+  if (max_accept_rate >= 0)
+    config.max_accept_per_sec = max_accept_rate;
+  if (metrics_port >= 0)
+    config.metrics.port =
+        static_cast<uint16_t>(metrics_port);
   if (tls_cert) {
     config.tls_cert = tls_cert;
     config.tls_key = tls_key;
-    // Metrics endpoint stays on plain HTTP — it's for
-    // internal monitoring and shouldn't require TLS.
   }
-  config.metrics.enable_debug = debug_endpoints;
-  config.sqpoll = sqpoll;
+  if (debug_set)
+    config.metrics.enable_debug = debug_endpoints;
+  if (sqpoll_set)
+    config.sqpoll = sqpoll;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,
                           config.pin_cores.data(),
                           hyper_derp::kMaxWorkers);
-    if (num_workers == 0) {
+    if (config.num_workers == 0) {
       config.num_workers = n;
     }
     spdlog::info("pin-workers: {} cores specified", n);
   }
+
+  spdlog::info("hyper-derp starting on port {}",
+               config.port);
 
   hyper_derp::Server server;
   auto init = hyper_derp::ServerInit(&server, &config);

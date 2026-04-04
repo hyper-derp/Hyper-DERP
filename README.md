@@ -20,20 +20,21 @@ with Tailscale, Headscale, and any standard DERP client.
 ## Performance
 
 Measured on GCP c4-highcpu VMs (Intel Xeon Platinum 8581C),
-DERP over kTLS, 25 runs per data point.
-Go derper v1.96.1 release build.
+4 client VMs, 20 peers, 10 pairs, 1400-byte messages.
+20 runs per data point, 95% CIs.
+Go derper v1.96.4 release build.
 
 ### Throughput (HD kTLS vs TS TLS)
 
 | vCPU | HD Peak | TS Ceiling | Ratio | HD Loss | TS Loss |
 |-----:|--------:|-----------:|------:|--------:|--------:|
-| 2 | 2,977 Mbps | 1,448 Mbps | **11.8x** at 5G | 2.8% | 93.0% |
-| 4 | 5,106 Mbps | 2,395 Mbps | **3.7x** at 7.5G | 0.8% | 74.2% |
-| 8 | 7,366 Mbps | 3,802 Mbps | **1.9x** at 10G | 0.4% | 46.1% |
-| 16 | 12,068 Mbps | 7,743 Mbps | **1.6x** at 20G | 1.7% | 18.9% |
+| 2 | 3,730 Mbps | 1,870 Mbps | **10.8x** at 5G | 1.7% | 92% |
+| 4 | 6,091 Mbps | 2,798 Mbps | **3.5x** at 7.5G | 2.0% | 74% |
+| 8 | 12,316 Mbps | 4,670 Mbps | **2.7x** at 15G | 0.7% | 44% |
+| 16 | 16,545 Mbps | 7,834 Mbps | **2.1x** at 25G | 1.5% | 16% |
 
 The advantage grows as resources shrink. At 2 vCPU, TS drops
-93% of offered traffic at 5 Gbps while HD delivers 3 Gbps.
+92% of offered traffic at 5 Gbps while HD delivers 3.7 Gbps.
 
 ### Tail Latency (p99, at TS TLS ceiling)
 
@@ -107,44 +108,64 @@ details.
 cmake --preset default
 cmake --build build -j
 sudo modprobe tls
-./build/hyper-derp --port 443 \
-  --cert /path/to/cert.pem --key /path/to/key.pem
+./build/hyper-derp --config dist/hyper-derp.yaml
 ```
 
-## Install from APT
+## Install (Debian)
 
 ```sh
-# Add GPG key
-curl -fsSL https://hyper-derp.dev/repo/key.gpg | \
-  sudo gpg --dearmor -o /usr/share/keyrings/hyper-derp.gpg
-
-# Add repository
-echo "deb [signed-by=/usr/share/keyrings/hyper-derp.gpg] \
-  https://hyper-derp.dev/repo stable main" | \
-  sudo tee /etc/apt/sources.list.d/hyper-derp.list
-
-# Install
-sudo apt update && sudo apt install hyper-derp
+cmake --build build --target package
+sudo dpkg -i build/hyper-derp_*.deb
 ```
 
-## Usage
+This installs the binary to `/usr/bin/`, an example config
+to `/etc/hyper-derp/hyper-derp.yaml`, and a systemd unit.
+The postinst enables the service and loads the `tls` kernel
+module.
 
 ```sh
-# Show all options
-./build/hyper-derp --help
+# Edit config
+sudo vi /etc/hyper-derp/hyper-derp.yaml
 
-# Auto-detect worker count and kTLS
-./build/hyper-derp --port 443 \
-  --cert /path/to/cert.pem --key /path/to/key.pem
+# Start
+sudo systemctl start hyper-derp
 
-# Explicit worker count and CPU pinning
-./build/hyper-derp --port 443 --workers 4 --pin-workers 0-3 \
-  --cert cert.pem --key key.pem
+# Check status
+sudo systemctl status hyper-derp
+journalctl -u hyper-derp -f
+```
 
-# With metrics endpoint
-./build/hyper-derp --port 443 --workers 4 \
-  --cert cert.pem --key key.pem \
-  --metrics-port 9090 --debug-endpoints
+## Configuration
+
+Hyper-DERP reads a YAML config file and accepts CLI flag
+overrides. CLI flags take precedence over file values.
+
+```sh
+# Config file only
+hyper-derp --config /etc/hyper-derp/hyper-derp.yaml
+
+# Config file + CLI override
+hyper-derp --config /etc/hyper-derp/hyper-derp.yaml \
+  --port 443 --workers 4
+```
+
+Example config (`/etc/hyper-derp/hyper-derp.yaml`):
+
+```yaml
+port: 3340
+workers: 0              # 0 = auto (one per core)
+# pin_cores: [0, 2, 4, 6]
+sqpoll: false
+
+# kTLS — both required to enable
+# tls_cert: /etc/hyper-derp/cert.pem
+# tls_key: /etc/hyper-derp/key.pem
+
+log_level: info
+
+metrics:
+  # port: 9100
+  debug_endpoints: false
 ```
 
 ### kTLS Prerequisites
@@ -156,7 +177,11 @@ lsmod | grep tls
 
 HD auto-detects kTLS support via OpenSSL. Without the `tls`
 kernel module loaded, OpenSSL falls back to userspace TLS
-silently.
+silently. To persist across reboots:
+
+```sh
+echo tls | sudo tee /etc/modules-load.d/tls.conf
+```
 
 ### Worker Count Guidance
 
@@ -164,7 +189,18 @@ silently.
   workers means more parallel crypto throughput.
 - **Without TLS (testing only):** cap at 4 workers.
 
-## Configuration
+### systemd
+
+The packaged service unit runs as:
+
+```
+ExecStart=/usr/bin/hyper-derp --config /etc/hyper-derp/hyper-derp.yaml
+```
+
+Hardened with `DynamicUser`, `ProtectSystem=strict`,
+`NoNewPrivileges`, and a restricted syscall filter.
+`CAP_SYS_NICE` is granted for SQPOLL mode and
+`LimitMEMLOCK=infinity` for io_uring buffer rings.
 
 See [OPERATIONS.md](OPERATIONS.md) for production tuning:
 sysctl settings, CPU pinning, memory footprint, and Prometheus
@@ -228,7 +264,7 @@ sudo dpkg -i build/hyper-derp_*.deb
 ```
 
 Installs systemd unit (`hyper-derp.service`), example config
-(`/etc/hyper-derp/hyper-derp.conf.example`), and binaries to
+(`/etc/hyper-derp/hyper-derp.yaml`), and binaries to
 `/usr/bin/`.
 
 ## Testing

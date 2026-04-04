@@ -142,6 +142,10 @@ install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.conf
   DESTINATION /etc/hyper-derp
   RENAME hyper-derp.conf.example)
+install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/hyper-derp.yaml
+  DESTINATION /etc/hyper-derp
+  RENAME hyper-derp.yaml.example)
 
 # ============================================================================
 # CPack — Debian package
