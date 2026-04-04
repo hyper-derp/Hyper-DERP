@@ -27,32 +27,24 @@ hyper-derp [OPTIONS]
 
 ## Config File
 
-TOML format. CLI flags override config file values.
+YAML format (rapidyaml). CLI flags override config file
+values.
 
-```toml
-listen = ":443"
-workers = 4
-hostname = "derp1.example.com"
-certdir = "/etc/hyper-derp/certs"
-mesh_key = "tskey-..."
+```yaml
+port: 3340
+workers: 4
+# pin_cores: [0, 2, 4, 6]
+sqpoll: false
 
-[tls]
-ktls = true
+# kTLS -- both required to enable
+# tls_cert: /etc/hyper-derp/cert.pem
+# tls_key: /etc/hyper-derp/key.pem
 
-[uring]
-sqpoll = false
-sq_entries = 4096
-cq_entries = 16384
-buf_ring_size = 1024
-buf_size = 65536
+log_level: info
 
-[socket]
-rcvbuf = 2097152
-sndbuf = 2097152
-tcp_nodelay = true
-
-[metrics]
-addr = ":9090"
+metrics:
+  # port: 9100
+  debug_endpoints: false
 ```
 
 ## Worker Count Tuning

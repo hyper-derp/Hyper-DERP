@@ -47,4 +47,8 @@ Go-based derper.
 - 8 vCPU: 12,316 Mbps vs 4,670 Mbps, 2.7x at 15G
 - 16 vCPU: 16,545 Mbps vs 7,834 Mbps, 2.1x at 25G
 - HD sub-2% loss at all configs; TS 16-92% at saturation
-- 16-48x fewer TCP retransmits through WireGuard tunnels
+- 40% lower p99 latency at 8-16 vCPU under load
+  (HD 127-153 us vs TS 214-218 us at 150% of TS ceiling)
+- Peer-count invariant: HD flat at 100 peers, TS -38%
+- Tunnel quality: identical ~2 Gbps WireGuard throughput,
+  7-8% fewer TCP retransmits at max load

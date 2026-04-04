@@ -59,21 +59,24 @@ Prometheus-format metrics are exposed on the metrics
 address (default `:9090`):
 
 ```
-# Connection counts
-hyper_derp_connections_active
-hyper_derp_connections_total
-
 # Throughput
-hyper_derp_bytes_relayed_total
-hyper_derp_frames_relayed_total
+hyper_derp_recv_bytes_total
+hyper_derp_send_bytes_total
 
-# Errors
-hyper_derp_frames_dropped_total
-hyper_derp_errors_total{type="..."}
+# Drops and errors
+hyper_derp_send_drops_total
+hyper_derp_xfer_drops_total
+hyper_derp_slab_exhausts_total
+hyper_derp_send_errors_total
+hyper_derp_recv_enobufs_total
 
-# io_uring stats
-hyper_derp_uring_sq_utilization
-hyper_derp_uring_cq_overflow_total
+# Allocation
+hyper_derp_frame_pool_hits_total
+hyper_derp_frame_pool_misses_total
+
+# Gauges
+hyper_derp_peers_active
+hyper_derp_workers
 ```
 
 ## Kernel Tuning
@@ -106,8 +109,8 @@ sysctl -w net.ipv4.tcp_fin_timeout=15
 Pair the metrics endpoint with Prometheus and Grafana.
 Key dashboards to set up:
 
-- **Throughput**: `rate(hyper_derp_bytes_relayed_total[5m])`
-- **Active connections**: `hyper_derp_connections_active`
-- **Drop rate**: `rate(hyper_derp_frames_dropped_total[5m])`
-- **io_uring saturation**:
-  `hyper_derp_uring_sq_utilization`
+- **Throughput**: `rate(hyper_derp_send_bytes_total[5m])`
+- **Active peers**: `hyper_derp_peers_active`
+- **Send drops**: `rate(hyper_derp_send_drops_total[5m])`
+- **Cross-shard drops**:
+  `rate(hyper_derp_xfer_drops_total[5m])`
