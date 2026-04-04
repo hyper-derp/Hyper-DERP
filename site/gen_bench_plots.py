@@ -611,51 +611,66 @@ def plot_peer_scaling(out):
 
 
 def plot_peer_loss(out):
-  """Packet loss vs peer count at 8 vCPU, 10G."""
+  """Packet loss vs peer count at 8 and 16 vCPU, 10G."""
   peer_counts = [20, 40, 60, 80, 100]
-  dirs = {
-    20: os.path.join(BENCH, "8vcpu_4w"),
-    40: os.path.join(BENCH, "peer_scaling", "8vcpu_4w_40p"),
-    60: os.path.join(BENCH, "peer_scaling", "8vcpu_4w_60p"),
-    80: os.path.join(PEER_DIR, "8vcpu_4w_80p"),
-    100: os.path.join(PEER_DIR, "8vcpu_4w_100p"),
-  }
-  fig, ax = plt.subplots(figsize=(10, 6))
-  for server, color, label in [
-    ("hd", HD_COLOR, LABELS["hd"]),
-    ("ts", TS_COLOR, LABELS["ts"]),
-  ]:
-    x, y, err = [], [], []
-    for peers in peer_counts:
-      pattern = os.path.join(
-        dirs[peers], f"agg_{server}_10000_r*.json")
-      losses = []
-      for f in glob.glob(pattern):
-        try:
-          with open(f) as fh:
-            d = json.load(fh)
-          losses.append(d.get("message_loss_pct", 0))
-        except (json.JSONDecodeError, OSError):
+  configs = [
+    ("8 vCPU", {
+      20: os.path.join(BENCH, "8vcpu_4w"),
+      40: os.path.join(BENCH, "peer_scaling", "8vcpu_4w_40p"),
+      60: os.path.join(BENCH, "peer_scaling", "8vcpu_4w_60p"),
+      80: os.path.join(PEER_DIR, "8vcpu_4w_80p"),
+      100: os.path.join(PEER_DIR, "8vcpu_4w_100p"),
+    }),
+    ("16 vCPU", {
+      20: os.path.join(BENCH, "16vcpu_8w"),
+      40: os.path.join(BENCH, "peer_scaling", "16vcpu_8w_40p"),
+      60: os.path.join(BENCH, "peer_scaling", "16vcpu_8w_60p"),
+      80: os.path.join(PEER_DIR, "16vcpu_8w_80p"),
+      100: os.path.join(PEER_DIR, "16vcpu_8w_100p"),
+    }),
+  ]
+  fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+  fig.suptitle(
+    "Packet Loss vs Peer Count (10 Gbps Offered)",
+    fontsize=14, fontweight="bold",
+  )
+  for ax, (title, dirs) in zip(axes, configs):
+    for server, color, label in [
+      ("hd", HD_COLOR, LABELS["hd"]),
+      ("ts", TS_COLOR, LABELS["ts"]),
+    ]:
+      x, y, err = [], [], []
+      for peers in peer_counts:
+        if peers not in dirs:
           continue
-      s = stats(losses)
-      if s and s["n"] > 0:
-        x.append(peers)
-        y.append(s["mean"])
-        err.append(s["ci"])
-    if y:
-      ax.errorbar(
-        x, y, yerr=err, marker="o", markersize=6,
-        color=color, label=label, capsize=3, linewidth=2,
-      )
-  ax.set_xlabel("Peer Count")
-  ax.set_ylabel("Packet Loss (%)")
-  ax.set_title(
-    "Packet Loss vs Peer Count (8 vCPU, 10 Gbps Offered)")
-  ax.set_xticks(peer_counts)
-  ax.legend()
-  ax.grid(True)
-  ax.set_xlim(left=10)
-  ax.set_ylim(bottom=-2, top=100)
+        pattern = os.path.join(
+          dirs[peers], f"agg_{server}_10000_r*.json")
+        losses = []
+        for f in glob.glob(pattern):
+          try:
+            with open(f) as fh:
+              d = json.load(fh)
+            losses.append(d.get("message_loss_pct", 0))
+          except (json.JSONDecodeError, OSError):
+            continue
+        s = stats(losses)
+        if s and s["n"] > 0:
+          x.append(peers)
+          y.append(s["mean"])
+          err.append(s["ci"])
+      if y:
+        ax.errorbar(
+          x, y, yerr=err, marker="o", markersize=6,
+          color=color, label=label, capsize=3, linewidth=2,
+        )
+    ax.set_title(title)
+    ax.set_xlabel("Peer Count")
+    ax.set_ylabel("Packet Loss (%)")
+    ax.set_xticks(peer_counts)
+    ax.legend()
+    ax.grid(True)
+    ax.set_xlim(left=10)
+    ax.set_ylim(bottom=-2, top=100)
   plt.tight_layout()
   _save(fig, "peer_loss.png", out)
 
