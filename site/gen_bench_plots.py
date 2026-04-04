@@ -551,61 +551,66 @@ def plot_latency(out):
 
 
 def plot_peer_scaling(out):
-  """Throughput at different peer counts (8 vCPU, 10G)."""
+  """Throughput at different peer counts (8 + 16 vCPU, 10G)."""
   peer_counts = [20, 40, 60, 80, 100]
-  config_map = {
-    20: "8vcpu_4w",
-    40: "8vcpu_4w_40p",
-    60: "8vcpu_4w_60p",
-    80: "8vcpu_4w_80p",
-    100: "8vcpu_4w_100p",
-  }
-  fig, ax = plt.subplots(figsize=(10, 6))
-  for server, color, label in [
-    ("hd", HD_COLOR, LABELS["hd"]),
-    ("ts", TS_COLOR, LABELS["ts"]),
-  ]:
-    x, y, err = [], [], []
-    for peers in peer_counts:
-      cfg = config_map[peers]
-      if peers == 20:
-        cfg_dir = os.path.join(BENCH, cfg)
-      else:
-        cfg_dir = os.path.join(PEER_DIR, cfg)
-      pattern = os.path.join(cfg_dir, f"agg_{server}_10000_r*.json")
-      tps = []
-      for f in glob.glob(pattern):
-        try:
-          with open(f) as fh:
-            d = json.load(fh)
-          tps.append(d.get("throughput_mbps", 0))
-        except (json.JSONDecodeError, OSError):
+  configs = [
+    ("8 vCPU", {
+      20: os.path.join(BENCH, "8vcpu_4w"),
+      40: os.path.join(BENCH, "peer_scaling", "8vcpu_4w_40p"),
+      60: os.path.join(BENCH, "peer_scaling", "8vcpu_4w_60p"),
+      80: os.path.join(PEER_DIR, "8vcpu_4w_80p"),
+      100: os.path.join(PEER_DIR, "8vcpu_4w_100p"),
+    }),
+    ("16 vCPU", {
+      20: os.path.join(BENCH, "16vcpu_8w"),
+      40: os.path.join(BENCH, "peer_scaling", "16vcpu_8w_40p"),
+      60: os.path.join(BENCH, "peer_scaling", "16vcpu_8w_60p"),
+      80: os.path.join(PEER_DIR, "16vcpu_8w_80p"),
+      100: os.path.join(PEER_DIR, "16vcpu_8w_100p"),
+    }),
+  ]
+  fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+  fig.suptitle(
+    "Throughput vs Peer Count (10 Gbps Offered)",
+    fontsize=14, fontweight="bold",
+  )
+  for ax, (title, dirs) in zip(axes, configs):
+    for server, color, label in [
+      ("hd", HD_COLOR, LABELS["hd"]),
+      ("ts", TS_COLOR, LABELS["ts"]),
+    ]:
+      x, y, err = [], [], []
+      for peers in peer_counts:
+        if peers not in dirs:
           continue
-      s = stats(tps)
-      if s and s["n"] > 0:
-        x.append(peers)
-        y.append(s["mean"])
-        err.append(s["ci"])
-    if y:
-      ax.errorbar(
-        x, y, yerr=err, marker="o", markersize=6,
-        color=color, label=label, capsize=3, linewidth=2,
-      )
-      for xi, yi in zip(x, y):
-        ax.annotate(
-          f"{yi:.0f}", (xi, yi),
-          textcoords="offset points", xytext=(0, 10),
-          ha="center", fontsize=8, color=color,
+        pattern = os.path.join(
+          dirs[peers], f"agg_{server}_10000_r*.json")
+        tps = []
+        for f in glob.glob(pattern):
+          try:
+            with open(f) as fh:
+              d = json.load(fh)
+            tps.append(d.get("throughput_mbps", 0))
+          except (json.JSONDecodeError, OSError):
+            continue
+        s = stats(tps)
+        if s and s["n"] > 0:
+          x.append(peers)
+          y.append(s["mean"])
+          err.append(s["ci"])
+      if y:
+        ax.errorbar(
+          x, y, yerr=err, marker="o", markersize=6,
+          color=color, label=label, capsize=3, linewidth=2,
         )
-  ax.set_xlabel("Peer Count")
-  ax.set_ylabel("Throughput (Mbps)")
-  ax.set_title(
-    "Peer Scaling: 8 vCPU at 10 Gbps Offered (n=10-20)")
-  ax.set_xticks(peer_counts)
-  ax.legend()
-  ax.grid(True)
-  ax.set_xlim(left=10)
-  ax.set_ylim(bottom=0)
+    ax.set_title(title)
+    ax.set_xlabel("Peer Count")
+    ax.set_ylabel("Throughput (Mbps)")
+    ax.set_xticks(peer_counts)
+    ax.legend()
+    ax.grid(True)
+    ax.set_xlim(left=10)
+    ax.set_ylim(bottom=0)
   plt.tight_layout()
   _save(fig, "peer_scaling.png", out)
 
