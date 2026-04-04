@@ -29,7 +29,9 @@ It works like this: Both peers connect to the relay on port 443. Peer A sends a 
 
 ## Making It Go Brrrr
 
-I use OpenSSL in userspace to do the TLS handshake then install the key in kernel TLS and promptly forget about it. The kernel will not give the key back and we only handle the key for a few μs in userspace, instead of the entire connection life cycle where derper holds it. From here on out the kernel handles all decryption/encryption and we will only have to deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
+I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel TLS and promptly forget about them. The kernel will not give them back — we only hold the keys for a few μs, instead of the entire connection lifecycle where derper keeps them in userspace.
+
+From here on out the kernel handles all encryption and decryption. We just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
 
 If you go with `epoll` you will do the following for each arriving packet: wait for socket readiness, `read()`, rewrite the peer ID and `write()`. Two syscalls per packet, at scale this is millions of kernel transitions per second. Each one flushing the pipeline and trashing the cache.
 
