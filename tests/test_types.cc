@@ -42,10 +42,20 @@ TEST(TypesTest, PressureLowIsFractionOfHigh) {
   for (int peers : {1, 5, 10, 25, 50, 100, 500}) {
     int high = SendPressureHigh(peers);
     int low = SendPressureLow(peers);
-    EXPECT_EQ(low, high / kPressureResumeDiv)
+    EXPECT_EQ(low, high / PressureResumeDiv(peers))
         << "at peers=" << peers;
     EXPECT_LT(low, high) << "at peers=" << peers;
   }
+}
+
+TEST(TypesTest, PressureResumeDivScalesWithPeers) {
+  EXPECT_EQ(PressureResumeDiv(1), 8);
+  EXPECT_EQ(PressureResumeDiv(10), 8);
+  EXPECT_EQ(PressureResumeDiv(12), 8);
+  EXPECT_EQ(PressureResumeDiv(13), 6);
+  EXPECT_EQ(PressureResumeDiv(24), 6);
+  EXPECT_EQ(PressureResumeDiv(25), 4);
+  EXPECT_EQ(PressureResumeDiv(100), 4);
 }
 
 TEST(TypesTest, PressureHighBelowSlabSize) {

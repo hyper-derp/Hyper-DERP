@@ -206,6 +206,7 @@ static void HtRemove(Worker* w, const Key& key) {
 
   // Resume recv if removing this peer relieved pressure.
   if (w->recv_paused &&
+      w->recv_pause_countdown <= 0 &&
       w->send_pressure <= SendPressureLow(w->peer_count)) {
     w->recv_paused = 0;
     DrainDeferredRecvs(w);
@@ -883,6 +884,7 @@ static void EnqueueSend(Worker* w, Peer* peer,
   if (!w->recv_paused &&
       w->send_pressure >= SendPressureHigh(w->peer_count)) {
     w->recv_paused = 1;
+    w->recv_pause_countdown = kRecvPauseMinBatches;
     w->stats.recv_pauses++;
   }
 }
@@ -906,11 +908,16 @@ static void DrainSendQueue(Worker* w, Peer* peer,
     if (peer->send_queued > 0) peer->send_queued--;
     if (w->send_pressure > 0) w->send_pressure--;
 
-    // Resume recv when send pressure drops.
-    if (w->recv_paused &&
-        w->send_pressure <= SendPressureLow(w->peer_count)) {
-      w->recv_paused = 0;
-      DrainDeferredRecvs(w);
+    // Resume recv when send pressure drops and minimum
+    // pause duration has elapsed.
+    if (w->recv_paused) {
+      if (w->recv_pause_countdown > 0) {
+        w->recv_pause_countdown--;
+      } else if (w->send_pressure <=
+                 SendPressureLow(w->peer_count)) {
+        w->recv_paused = 0;
+        DrainDeferredRecvs(w);
+      }
     }
   }
 
@@ -1715,11 +1722,6 @@ static void* WorkerRun(void* arg) {
   ts.tv_sec = 0;
   ts.tv_nsec = 1000000;  // 1ms
 
-  /// Maximum idle spins before falling back to a blocking
-  /// wait. Keeps latency low under load (no blocking
-  /// syscall needed when CQEs are ready) while avoiding
-  /// 100% CPU burn when idle.
-  static constexpr int kBusySpins = 256;
   int idle_spins = 0;
 
   while (__atomic_load_n(&w->running, __ATOMIC_ACQUIRE)) {
@@ -1735,7 +1737,7 @@ static void* WorkerRun(void* arg) {
       if (io_uring_sq_ready(&w->ring) > 0) {
         io_uring_submit(&w->ring);
       }
-      if (idle_spins++ < kBusySpins) {
+      if (idle_spins++ < w->busy_spins) {
         continue;
       }
       // Idle too long — block until an event arrives.
@@ -1861,6 +1863,9 @@ static int WorkerInit(Worker* w, int id, Ctx* ctx) {
   w->id = id;
   w->ctx = ctx;
   w->running = 1;
+  w->busy_spins = ctx->num_workers <= 2
+                      ? kBusySpinLowWorker
+                      : kBusySpinDefault;
   w->pipe_wr = -1;
   w->event_fd = -1;
   w->xfer_efd = -1;

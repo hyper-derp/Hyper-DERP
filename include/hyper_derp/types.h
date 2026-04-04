@@ -72,10 +72,6 @@ inline constexpr int kSendPressureMax = 32768;
 /// peer_count * kPressurePerPeer).
 inline constexpr int kPressurePerPeer = 512;
 
-/// Resume ratio: recv resumes when pressure drops to 1/4
-/// of the effective high threshold.
-inline constexpr int kPressureResumeDiv = 4;
-
 /// Compute the adaptive recv-pause threshold for a given
 /// peer count. Scales linearly so low peer counts get a
 /// tight threshold (preventing per-peer drops) while high
@@ -87,11 +83,35 @@ inline constexpr int SendPressureHigh(int peer_count) {
   return h;
 }
 
-/// Compute the recv-resume threshold (1/kPressureResumeDiv
-/// of the high threshold).
-inline constexpr int SendPressureLow(int peer_count) {
-  return SendPressureHigh(peer_count) / kPressureResumeDiv;
+/// Resume divisor scaled by peer count. Low worker configs
+/// (1-2 workers, ≤12 peers) need wider hysteresis to
+/// prevent backpressure oscillation that causes latency
+/// stalls.
+inline constexpr int PressureResumeDiv(int peer_count) {
+  if (peer_count <= 12) return 8;
+  if (peer_count <= 24) return 6;
+  return 4;
 }
+
+/// Compute the recv-resume threshold.
+inline constexpr int SendPressureLow(int peer_count) {
+  return SendPressureHigh(peer_count) /
+         PressureResumeDiv(peer_count);
+}
+
+/// Minimum CQE batch iterations that recv stays paused
+/// after triggering. Prevents rapid toggle when drain
+/// rate is high.
+inline constexpr int kRecvPauseMinBatches = 8;
+
+/// Busy-spin iterations before blocking wait.
+inline constexpr int kBusySpinDefault = 256;
+
+/// Reduced busy-spin for 1-2 worker configs. Gives kTLS
+/// more CPU time to drain send queues on constrained
+/// configs where each worker shares a core with the
+/// kernel kTLS thread.
+inline constexpr int kBusySpinLowWorker = 64;
 
 /// Maximum concurrent recv SQEs per worker.
 inline constexpr int kRecvBudget = 512;
@@ -294,9 +314,11 @@ struct Worker {
   int recv_defer_tail;
 
   // Send-pressure-based recv pause.
-  int send_pressure;  // Total queued sends across all peers.
-  int recv_paused;    // 1 = recv paused due to send pressure.
-  int peer_count;     // Active peers on this worker.
+  int send_pressure;        // Total queued sends across all peers.
+  int recv_paused;          // 1 = recv paused due to send pressure.
+  int recv_pause_countdown; // Batches remaining before Low check.
+  int peer_count;           // Active peers on this worker.
+  int busy_spins;           // Busy-spin limit (config-dependent).
 
   // Deferred send flush (batch coalescing).
   int pending_fds[kMaxCqeBatch];
