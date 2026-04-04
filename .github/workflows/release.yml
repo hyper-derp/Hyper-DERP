@@ -12,8 +12,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-branch:
+    name: Verify release branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check tag is on a release branch
+        run: |
+          branches=$(git branch -r --contains "$GITHUB_SHA" \
+            | grep -E 'origin/v[0-9]+\.[0-9]+\.x$' || true)
+          if [ -z "$branches" ]; then
+            echo "::error::Tag must be on a release branch (v*.x)"
+            exit 1
+          fi
+          echo "Tag on: $branches"
+
   test:
     name: Test
+    needs: [verify-branch]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
