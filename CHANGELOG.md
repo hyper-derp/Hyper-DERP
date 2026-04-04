@@ -42,10 +42,10 @@ Go-based derper.
 - libFuzzer targets for HTTP parser and protocol codec
 
 ### Performance (GCP c4-highcpu, kTLS vs TS TLS)
-- 2 vCPU: 3,730 Mbps (HD) vs 1,870 Mbps (TS), 10.8x at 5G
-- 4 vCPU: 6,091 Mbps vs 2,798 Mbps, 3.5x at 7.5G
-- 8 vCPU: 12,316 Mbps vs 4,670 Mbps, 2.7x at 15G
-- 16 vCPU: 16,545 Mbps vs 7,834 Mbps, 2.1x at 25G
+- 2 vCPU: 3,730 Mbps (HD) vs 1,870 Mbps (TS), 10.8x
+- 4 vCPU: 6,091 Mbps vs 2,798 Mbps, 3.5x
+- 8 vCPU: 12,316 Mbps vs 4,670 Mbps, 2.7x
+- 16 vCPU: 16,545 Mbps vs 7,834 Mbps, 2.1x
 - HD sub-2% loss at all configs; TS 16-92% at saturation
 - 40% lower p99 latency at 8-16 vCPU under load
   (HD 127-153 us vs TS 214-218 us at 150% of TS ceiling)

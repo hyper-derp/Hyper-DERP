@@ -27,10 +27,10 @@ Go derper v1.96.4 release build.
 
 | vCPU | HD Peak | TS Ceiling | Ratio | HD Loss | TS Loss |
 |-----:|--------:|-----------:|------:|--------:|--------:|
-| 2 | 3,730 Mbps | 1,870 Mbps | **10.8x** at 5G | 1.7% | 92% |
-| 4 | 6,091 Mbps | 2,798 Mbps | **3.5x** at 7.5G | 2.0% | 74% |
-| 8 | 12,316 Mbps | 4,670 Mbps | **2.7x** at 15G | 0.7% | 44% |
-| 16 | 16,545 Mbps | 7,834 Mbps | **2.1x** at 25G | 1.5% | 16% |
+| 2 | 3,730 Mbps | 1,870 Mbps | **10.8x** | 1.65% | 92% |
+| 4 | 6,091 Mbps | 2,798 Mbps | **3.5x** | 1.97% | 74% |
+| 8 | 12,316 Mbps | 4,670 Mbps | **2.7x** | 0.68% | 44% |
+| 16 | 16,545 Mbps | 7,834 Mbps | **2.1x** | 1.51% | 17% |
 
 The advantage grows as resources shrink. At 2 vCPU, TS drops
 92% of offered traffic at 5 Gbps while HD delivers 3.7 Gbps.
