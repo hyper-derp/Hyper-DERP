@@ -86,7 +86,6 @@ The story of packet loss is different for HD. When HD's send queues fill up it p
 
 The senders TCP stack respects this pause. But there is a timing gap -- all packets that are in flight when the window hits zero get dropped by the kernel. In the tested ranges this stays below 2% loss.
 
-<Plot src="peer_loss.png" />
 
 ## Latency Under Load
 
@@ -115,6 +114,8 @@ Twenty peers with ten pairs is a clean benchmark, but a production relay might h
 | 100 | 7,665 | 0.5% | 2,775 | 68% | **2.8x** |
 
 TS loses 38% throughput going from 20 to 100 peers. HD stays flat. The ratio amplifies from 1.9x to 2.8x.
+
+<Plot src="peer_loss.png" alt="Packet loss vs peer count at 8 vCPU, 10 Gbps offered. TS climbs from 44% to 68%, HD stays near zero." />
 
 ## The kTLS Cache Cliff
 
