@@ -15,35 +15,32 @@
     {{ .Content }}
   </article>
   <aside class="blog-sidebar">
-    {{ with .Params.author }}
-      {{ $author := . }}
-      {{ $meta := index $.Site.Data.authors $author }}
-      {{ if $meta }}
-        <div class="author-card">
-          <div class="author-photo">
-            {{ with $meta.photo }}
-              <img src="{{ . }}"
-                   alt="{{ $meta.name }}">
-            {{ else }}
-              <span class="author-initials">
-                {{- substr $meta.name 0 1 -}}
-              </span>
-            {{ end }}
-          </div>
-          <div class="author-info">
-            <span class="author-name">
-              {{- $meta.name -}}
+    {{ $author := .Params.author }}
+    {{ with index $.Site.Data.authors $author }}
+      <div class="author-card">
+        <div class="author-photo">
+          {{ with .photo }}
+            <img src="{{ . }}"
+                 alt="{{ $.Params.author }}">
+          {{ else }}
+            <span class="author-initials">
+              {{- substr $.Params.author 0 1 -}}
             </span>
-            {{ with $meta.email }}
-              <a href="mailto:{{ . }}"
-                 class="author-email">{{ . }}</a>
-            {{ end }}
-            <time datetime="{{ $.Date.Format "2006-01-02" }}">
-              {{ $.Date.Format "January 2, 2006" }}
-            </time>
-          </div>
+          {{ end }}
         </div>
-      {{ end }}
+        <div class="author-info">
+          <span class="author-name">
+            {{- .name -}}
+          </span>
+          {{ with .email }}
+            <a href="mailto:{{ . }}"
+               class="author-email">{{ . }}</a>
+          {{ end }}
+          <time datetime="{{ $.Date.Format "2006-01-02" }}">
+            {{ $.Date.Format "January 2, 2006" }}
+          </time>
+        </div>
+      </div>
     {{ end }}
   </aside>
 </div>
