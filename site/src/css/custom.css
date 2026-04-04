@@ -11,7 +11,7 @@
 /* Dark theme (default) */
 [data-theme="dark"] {
   --ifm-background-color: #101010;
-  --ifm-background-surface-color: #1f1f1f;
+  --ifm-background-surface-color: #101010;
   --ifm-color-primary: #1c8bee;
   --ifm-color-primary-dark: #1070cc;
   --ifm-color-primary-darker: #0d62b5;
@@ -75,6 +75,29 @@
   --primary-off: #c700cd;
   --secondary-on: #ffe346;
   --secondary-off: #f4cf00;
+}
+
+/* Force page background to HD palette */
+html[data-theme="dark"] {
+  background-color: #101010;
+}
+
+html[data-theme="dark"] body {
+  background-color: #101010;
+}
+
+html[data-theme="dark"] .main-wrapper {
+  background-color: #101010;
+}
+
+/* Force code block background to HD palette */
+[data-theme="dark"] pre,
+[data-theme="dark"] code {
+  background-color: #1f1f1f !important;
+}
+
+[data-theme="dark"] .prism-code {
+  background-color: #1f1f1f !important;
 }
 
 /* Prism syntax highlighting overrides (HD palette) */
