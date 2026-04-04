@@ -463,6 +463,7 @@ def plot_cost_story(out):
   ax.set_title(
     "Same Throughput, Half the Cores")
   ax.legend(fontsize=10)
+  ax.set_axisbelow(True)
   ax.grid(True)
   ax.set_ylim(bottom=0)
   plt.tight_layout()
