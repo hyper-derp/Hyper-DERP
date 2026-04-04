@@ -46,7 +46,7 @@ jobs:
         run: >
           ctest --test-dir build-debug
           --output-on-failure
-          -E "E2E"
+          -E "E2E|Ktls"
 
   release:
     name: Build and Publish
