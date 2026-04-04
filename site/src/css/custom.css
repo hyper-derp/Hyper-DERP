@@ -77,6 +77,20 @@
   --secondary-off: #f4cf00;
 }
 
+/* Footer */
+.footer {
+  background-color: var(--bg-secondary) !important;
+  border-top: 1px solid var(--border);
+}
+
+.footer .footer__copyright {
+  color: var(--fg-muted);
+}
+
+.footer a {
+  color: var(--accent);
+}
+
 /* Force page background to HD palette */
 html[data-theme="dark"] {
   background-color: #101010;
@@ -147,15 +161,63 @@ html[data-theme="dark"] .main-wrapper {
   color: var(--fg);
 }
 
-/* Navbar: monospace title, no big logo */
+/* Navbar */
+.navbar {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  height: 70px;
+  align-items: center;
+}
+
+.navbar__brand {
+  display: flex;
+  align-items: center;
+}
+
+.navbar__inner {
+  display: flex;
+  align-items: center;
+}
+
 .navbar__title {
-  font-family: var(--ifm-font-family-monospace);
-  font-weight: 600;
-  letter-spacing: -0.5px;
+  display: none;
 }
 
 .navbar__logo {
-  display: none;
+  display: flex !important;
+  align-items: center;
+}
+
+.navbar__logo img {
+  height: 50px;
+  vertical-align: middle;
+}
+
+.navbar__link {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg-muted) !important;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
+  color: var(--fg) !important;
+  background-color: var(--bg-secondary);
+}
+
+.navbar__link--active {
+  color: var(--accent) !important;
+}
+
+/* GitHub link in navbar */
+.navbar__items--right .navbar__link {
+  text-transform: none;
 }
 
 /* Stats grid (landing page) */

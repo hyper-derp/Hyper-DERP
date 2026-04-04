@@ -67,7 +67,12 @@ const config: Config = {
       respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'Hyper-DERP',
+      title: '',
+      logo: {
+        alt: 'Hyper-DERP',
+        src: 'img/logo.svg',
+        height: '50px',
+      },
       items: [
         {
           to: '/docs/install/',
@@ -97,7 +102,6 @@ const config: Config = {
       ],
     },
     footer: {
-      style: 'dark',
       copyright: 'Hyper-DERP is open-source software. Source on <a href="https://github.com/hyper-derp/Hyper-DERP">GitHub</a>.',
     },
     prism: {
