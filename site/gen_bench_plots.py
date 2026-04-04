@@ -391,10 +391,13 @@ def plot_cost_story(out):
     ("8vcpu_4w", "16vcpu_8w"),
   ]
   pair_labels, hd_vals, ts_vals = [], [], []
+  hd_vcpus, ts_vcpus = [], []
   for hd_cfg, ts_cfg in pairs:
     hd_v = CONFIG_VCPUS[hd_cfg]
     ts_v = CONFIG_VCPUS[ts_cfg]
-    pair_labels.append(f"HD {hd_v}v vs TS {ts_v}v")
+    hd_vcpus.append(hd_v)
+    ts_vcpus.append(ts_v)
+    pair_labels.append(f"{hd_v} vCPU vs {ts_v} vCPU")
     hd_vals.append(peaks[hd_cfg]["hd"])
     ts_vals.append(peaks[ts_cfg]["ts"])
   fig, ax = plt.subplots(figsize=(10, 6))
@@ -406,25 +409,27 @@ def plot_cost_story(out):
   )
   ax.bar(
     [xi + w / 2 for xi in x], ts_vals, w,
-    label="Tailscale derper (2x vCPU)",
+    label="Tailscale derper",
     color=TS_COLOR, alpha=0.85,
   )
   for i in x:
     ax.text(
       i - w / 2, hd_vals[i] + 30,
-      f"{hd_vals[i]:.0f}", ha="center", va="bottom",
+      f"{hd_vals[i]:.0f}\n({hd_vcpus[i]} vCPU)",
+      ha="center", va="bottom",
       fontsize=9, color=HD_COLOR, fontweight="bold",
     )
     ax.text(
       i + w / 2, ts_vals[i] + 30,
-      f"{ts_vals[i]:.0f}", ha="center", va="bottom",
+      f"{ts_vals[i]:.0f}\n({ts_vcpus[i]} vCPU)",
+      ha="center", va="bottom",
       fontsize=9, color=TS_COLOR, fontweight="bold",
     )
     if ts_vals[i] > 0:
       ratio = hd_vals[i] / ts_vals[i]
       y_top = max(hd_vals[i], ts_vals[i])
       ax.annotate(
-        f"{ratio:.2f}x", (i, y_top + 150),
+        f"{ratio:.2f}x", (i, y_top + 350),
         ha="center", fontsize=11, fontweight="bold",
         color=LINK,
       )
@@ -432,9 +437,9 @@ def plot_cost_story(out):
   ax.set_xticklabels(pair_labels, fontsize=10)
   ax.set_ylabel("Peak Throughput (Mbps)")
   ax.set_title(
-    "Cost Efficiency: HD at N vCPU vs TS at 2N vCPU")
+    "Same Throughput, Half the Cores")
   ax.legend(fontsize=10)
-  ax.grid(True, axis="y")
+  ax.grid(True)
   ax.set_ylim(bottom=0)
   plt.tight_layout()
   _save(fig, "cost_story.png", out)
