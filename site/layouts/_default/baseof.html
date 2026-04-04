@@ -29,6 +29,9 @@
     {{ block "main" . }}{{ end }}
   </main>
   {{ partial "footer.html" . }}
+  <div class="lightbox" id="lightbox">
+    <img src="" alt="">
+  </div>
   <script>
     (function() {
       var btn = document.getElementById('theme-toggle');
@@ -42,13 +45,53 @@
           ? '<i class="lni lni-night"></i>'
           : '<i class="lni lni-sun"></i>';
       }
+      function updatePlots() {
+        var t = html.getAttribute('data-theme');
+        document.querySelectorAll('img[data-dark]')
+          .forEach(function(img) {
+            img.src = t === 'dark'
+              ? img.getAttribute('data-dark')
+              : img.getAttribute('data-light');
+          });
+      }
+      function updateLinks() {
+        var t = html.getAttribute('data-theme');
+        document.querySelectorAll('a[data-dark]')
+          .forEach(function(a) {
+            a.href = t === 'dark'
+              ? a.getAttribute('data-dark')
+              : a.getAttribute('data-light');
+          });
+      }
       updateIcon();
+      updatePlots();
+      updateLinks();
       btn.addEventListener('click', function() {
         var current = html.getAttribute('data-theme');
         var next = current === 'dark' ? 'light' : 'dark';
         html.setAttribute('data-theme', next);
         localStorage.setItem('theme', next);
         updateIcon();
+        updatePlots();
+        updateLinks();
+      });
+      // Lightbox
+      var lb = document.getElementById('lightbox');
+      var lbImg = lb.querySelector('img');
+      document.querySelectorAll('.plot-link')
+        .forEach(function(a) {
+          a.addEventListener('click', function(e) {
+            e.preventDefault();
+            lbImg.src = a.href;
+            lbImg.alt = a.querySelector('img').alt;
+            lb.classList.add('open');
+          });
+        });
+      lb.addEventListener('click', function() {
+        lb.classList.remove('open');
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') lb.classList.remove('open');
       });
     })();
   </script>
