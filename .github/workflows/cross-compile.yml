@@ -2,7 +2,7 @@ name: ARM64 Cross-Compile
 
 on:
   push:
-    branches: [master, "v0.1.x"]
+    branches: ["v0.1.x"]
   pull_request:
     branches: [master, "v0.1.x"]
 
