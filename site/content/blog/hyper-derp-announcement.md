@@ -45,7 +45,7 @@ Ending up with a shard-per-core, share-nothing design. This is basically what Se
 
 ## Benchmarks
 
-4,903 benchmark runs across three test suites on GCP c4-highcpu VMs (Intel Xeon Platinum 8581C). 4 client VMs (c4-highcpu-8), 20 peers, 10 sender/receiver pairs, ~1400-byte messages at WireGuard MTU, token-bucket pacing. 20 runs per data point, 95% confidence intervals (Welch's t). Go derper v1.96.4, go1.26.1, release build.
+4,903 benchmark runs on GCP c4-highcpu VMs. 4 client VMs, 20 runs per data point, 95% confidence intervals. Go derper v1.96.4, release build.
 
 Getting this benchmark suite right took three rounds. The first used a single client VM — which turned out to be measuring the client's CPU limits, not the relay's. The 8 vCPU result improved 62% when I switched to 4 clients. The "latency" suite measured throughput, not latency. The tunnel suite's SSH automation was broken on GCP's Debian VMs.
 
