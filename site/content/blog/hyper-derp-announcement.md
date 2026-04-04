@@ -29,13 +29,13 @@ It works like this: Both peers connect to the relay on port 443. Peer A sends a 
 
 ## Making It Go Brrrr
 
-I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel TLS and promptly forget about them. The kernel will not give them back — we only hold the keys for a few μs, instead of the entire connection lifecycle where derper keeps them in userspace.
+I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel and promptly forget about them. The kernel will not give them back — I only hold the keys for a few microseconds, instead of the entire connection lifecycle where derper keeps them.
 
-From here on out the kernel handles all encryption and decryption. We just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
+From here on out the kernel handles all encryption and decryption. I just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
 
 If you go with `epoll` you will do the following for each arriving packet: wait for socket readiness, `read()`, rewrite the peer ID and `write()`. Two syscalls per packet, at scale this is millions of kernel transitions per second. Each one flushing the pipeline and trashing the cache.
 
-io_uring inverts this. Instead of asking the kernel 'Is this socket ready?' we tell the kernel 'I need these 50 reads and 30 writes done' then harvest the results. One syscall does what `epoll` needs hundreds for. Drain completions, rewrite headers, enqueue sends and submit - one pass.
+io_uring inverts this. Instead of asking the kernel 'Is this socket ready?' I tell the kernel 'I need these 50 reads and 30 writes done' then harvest the results. One syscall does what `epoll` needs hundreds for. Drain completions, rewrite headers, enqueue sends and submit - one pass.
 
 From here the rest of the architecture just flows. Having pinned one io_uring per core gives us a very clean separation. No shared state, no locks, pure speed.
 
@@ -47,7 +47,9 @@ Ending up with a shard-per-core, share-nothing design. This is basically what Se
 
 4,903 benchmark runs across three test suites on GCP c4-highcpu VMs (Intel Xeon Platinum 8581C). 4 client VMs (c4-highcpu-8), 20 peers, 10 sender/receiver pairs, ~1400-byte messages at WireGuard MTU, token-bucket pacing. 20 runs per data point, 95% confidence intervals (Welch's t). Go derper v1.96.4, go1.26.1, release build.
 
-Getting this benchmark suite right took three rounds. The first used a single client VM — which turned out to be measuring the client's CPU limits, not the relay's. The 8 vCPU result improved 62% when we switched to 4 clients. The "latency" suite measured throughput, not latency. The tunnel suite's SSH automation was broken on GCP's Debian VMs. Each failure taught something about what makes a relay benchmark credible. The full history of what failed and why is in [BENCHMARK_HISTORY.md](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/BENCHMARK_HISTORY.md).
+Getting this benchmark suite right took three rounds. The first used a single client VM — which turned out to be measuring the client's CPU limits, not the relay's. The 8 vCPU result improved 62% when I switched to 4 clients. The "latency" suite measured throughput, not latency. The tunnel suite's SSH automation was broken on GCP's Debian VMs.
+
+[BENCHMARK_HISTORY.md](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/BENCHMARK_HISTORY.md)
 
 ## Throughput
 
