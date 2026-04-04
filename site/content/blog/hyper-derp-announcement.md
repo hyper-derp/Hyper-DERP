@@ -57,6 +57,18 @@ Once you starve TS of vCPUs the picture becomes devastating. TS needs 16 vCPUs t
 
 At 2 vCPU the ratio gets extreme. HD peaks at 3,730 ± 77 Mbps with one worker. TS delivers 1,870 Mbps at 3 Gbps offered, but push to 5 Gbps and it collapses to 324 Mbps with 92% loss — the Go runtime has consumed the entire CPU budget.
 
+### Half the Hardware
+
+The throughput gap means you can match TS on a smaller VM:
+
+| TS deployment | TS throughput | HD equivalent | HD throughput | Savings |
+|---------------|-------------:|---------------|-------------:|--------:|
+| TS on 16 vCPU | 7,834 Mbps | HD on 8 vCPU | 8,371 ± 162 Mbps | **2x** |
+| TS on 8 vCPU | 4,670 Mbps | HD on 4 vCPU | 5,457 ± 114 Mbps | **2x** |
+| TS on 4 vCPU | 2,798 Mbps | HD on 2 vCPU | 3,536 ± 63 Mbps | **2x** |
+
+Across the board, HD delivers the same throughput on half the vCPUs — 50% compute cost reduction for a relay fleet. If you're running DERP relays at scale, you can cut your relay fleet in half or serve twice the traffic on the same hardware.
+
 ## Packet Loss
 
 Throughput is just a part of the whole. You need to examine what happens to the packets. With a 16 vCPU setup derper will *only* lose about 17% of your packets at 25 Gbps offered.
