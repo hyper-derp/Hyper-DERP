@@ -417,7 +417,7 @@ def plot_cost_story(out):
       i - w / 2, hd_vals[i] / 2,
       f"{hd_vcpus[i]}\nvCPU",
       ha="center", va="center",
-      fontsize=16, color=TEXT_COLOR, fontweight="bold",
+      fontsize=28, color=TEXT_COLOR, fontweight="bold",
     )
     ax.text(
       i - w / 2, hd_vals[i] + 30,
@@ -429,7 +429,7 @@ def plot_cost_story(out):
       i + w / 2, ts_vals[i] / 2,
       f"{ts_vcpus[i]}\nvCPU",
       ha="center", va="center",
-      fontsize=16, color=TEXT_COLOR, fontweight="bold",
+      fontsize=28, color=TEXT_COLOR, fontweight="bold",
     )
     ax.text(
       i + w / 2, ts_vals[i] + 30,
