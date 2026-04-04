@@ -18,68 +18,12 @@ with Tailscale, Headscale, and any standard DERP client.
 
 ## Performance
 
-Measured on GCP c4-highcpu VMs (Intel Xeon Platinum 8581C),
-4 client VMs, 20 peers, 10 pairs, 1400-byte messages.
-20 runs per data point, 95% CIs.
-Go derper v1.96.4 release build.
+2-10x throughput, 40% lower tail latency, half the
+hardware. 4,903 benchmark runs on GCP c4-highcpu VMs
+against Go derper v1.96.4.
 
-### Throughput (HD kTLS vs TS TLS)
-
-| vCPU | HD Peak | TS Ceiling | Ratio | HD Loss | TS Loss |
-|-----:|--------:|-----------:|------:|--------:|--------:|
-| 2 | 3,730 Mbps | 1,870 Mbps | **10.8x** | 1.65% | 92% |
-| 4 | 6,091 Mbps | 2,798 Mbps | **3.5x** | 1.97% | 74% |
-| 8 | 12,316 Mbps | 4,670 Mbps | **2.7x** | 0.68% | 44% |
-| 16 | 16,545 Mbps | 7,834 Mbps | **2.1x** | 1.51% | 17% |
-
-The advantage grows as resources shrink. At 2 vCPU, TS drops
-92% of offered traffic at 5 Gbps while HD delivers 3.7 Gbps.
-
-### Tail Latency (p99 at 150% of TS ceiling)
-
-Per-packet DERP relay RTT, 5,000 pings per run, 10 runs
-per load level. 2,160,000 total latency samples.
-
-| vCPU | HD p99 | TS p99 | HD advantage |
-|-----:|-------:|-------:|-------------:|
-| 8 | 153 us | 218 us | **1.42x** |
-| 16 | 127 us | 214 us | **1.69x** |
-
-HD p99 is load-invariant (129-153 us from idle through
-150% load at 8 vCPU). TS p99 rises from 129 to 218 us
-(+69%). At 4 vCPU, HD has a known backpressure stall --
-see the [full report](https://github.com/hyper-derp/HD.Benchmark).
-
-### Peer Scaling (8 vCPU, 10G offered)
-
-| Peers | HD (Mbps) | TS (Mbps) | HD/TS |
-|------:|----------:|----------:|------:|
-| 20 | 8,371 | 4,495 | 1.9x |
-| 100 | 7,665 | 2,775 | **2.8x** |
-
-HD throughput is peer-count invariant. TS loses 38% going
-from 20 to 100 peers (goroutine scheduling overhead). The
-ratio amplifies from 1.9x to 2.8x.
-
-### Tunnel Quality (WireGuard through DERP)
-
-End-to-end through WireGuard tunnels with Tailscale clients
-and Headscale control plane. iperf3 UDP + TCP + ping,
-20 runs per data point, 720 total runs.
-
-| Config | HD UDP @ 8G | TS UDP @ 8G | HD Retx | TS Retx |
-|--------|------------:|------------:|--------:|--------:|
-| 4 vCPU | 2,100 Mbps | 2,115 Mbps | 4,852 | 5,217 |
-| 8 vCPU | 2,053 Mbps | 2,060 Mbps | 4,552 | 4,484 |
-| 16 vCPU | 2,059 Mbps | 2,223 Mbps | 4,291 | 4,617 |
-
-Both relays deliver identical tunnel throughput (~2 Gbps),
-limited by WireGuard userspace crypto (wireguard-go,
-ChaCha20-Poly1305), not the relay. HD produces 7-8% fewer
-TCP retransmits at max load on 4 and 16 vCPU.
-
-Full benchmark reports are available at
-[hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/).
+Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark)
+| [hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/)
 
 ## Architecture
 
@@ -294,18 +238,6 @@ ctest --preset debug -R integration_tests
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions,
 code style requirements, and the PR process.
-
-## Benchmark Methodology
-
-4,903 total runs (3,703 throughput + 480 latency + 720 tunnel):
-- 20 runs per data point, 95% confidence intervals (Welch's t)
-- Strict isolation (one server at a time, cache drops between)
-- Go derper v1.96.4 release build (-trimpath, stripped)
-- Latency: 5,000 pings per run, 2.16M total samples
-- Tunnel: iperf3 UDP + TCP + ping through WireGuard/Headscale
-
-Full report and raw data at
-[HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark).
 
 ## License
 
