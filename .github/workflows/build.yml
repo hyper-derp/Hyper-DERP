@@ -11,8 +11,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cpplint
+        run: pip install --break-system-packages cpplint
+
+      - name: Run cpplint
+        run: cpplint --recursive src/ include/ tools/ tests/
+
   test:
     name: Test
+    if: >
+      github.event_name == 'pull_request' ||
+      startsWith(github.ref, 'refs/heads/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,20 +62,11 @@ jobs:
           --output-on-failure
           -E "E2E|Ktls"
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install cpplint
-        run: pip install --break-system-packages cpplint
-
-      - name: Run cpplint
-        run: cpplint --recursive src/ include/ tools/ tests/
-
   package:
     name: Package
+    if: >
+      github.event_name == 'pull_request' ||
+      startsWith(github.ref, 'refs/heads/v')
     needs: [test, lint]
     runs-on: ubuntu-latest
     steps:
