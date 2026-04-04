@@ -3,7 +3,7 @@ title: "Building"
 description: >-
   Build from source, dependencies, CMake presets,
   cross-compile for ARM64.
-sidebar_position: 2
+sidebar_position: 5
 ---
 
 ## Dependencies

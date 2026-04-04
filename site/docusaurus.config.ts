@@ -71,7 +71,7 @@ const config: Config = {
       title: 'Hyper-DERP',
       items: [
         {
-          to: '/docs/architecture/',
+          to: '/docs/install/',
           label: 'Docs',
           position: 'left',
         },

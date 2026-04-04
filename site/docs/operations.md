@@ -2,7 +2,7 @@
 title: "Operations"
 description: >-
   Deployment, systemd service, monitoring, kernel tuning.
-sidebar_position: 4
+sidebar_position: 3
 ---
 
 ## systemd Service

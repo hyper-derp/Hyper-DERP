@@ -3,7 +3,7 @@ title: "Architecture"
 description: >-
   Three-layer design, shard-per-core model, and io_uring
   internals.
-sidebar_position: 1
+sidebar_position: 4
 ---
 
 ## Overview
