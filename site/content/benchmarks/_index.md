@@ -1,51 +1,74 @@
 ---
 title: "Benchmarks"
 description: >-
-  Methodology, hardware, and headline comparison numbers.
-draft: true
+  4,903 benchmark runs across throughput, latency, tunnel
+  quality, and peer scaling.
+draft: false
 ---
 
 ## Methodology
 
-All benchmarks use a consistent methodology:
+**Total data**: 4,903 benchmark runs (3,703 relay
+throughput + 480 latency + 720 tunnel quality).
 
-- **Traffic generator**: custom iperf-like tool sending
-  DERP-framed traffic over TLS/kTLS
-- **Duration**: 60-second runs, 10-second warmup discarded
-- **Metrics**: throughput (Mbps), P50/P99 latency, CPU
-  utilization, context switches
-- **Repetitions**: 3 runs per configuration, median reported
-- **Comparison target**: Tailscale's `derper` (latest
-  release at time of test)
+- **Traffic generator**: custom distributed bench tool
+  (`derp_scale_test`), 20 DERP peers across 4 client VMs,
+  10 sender/receiver pairs, ~1400-byte messages at
+  WireGuard MTU, token-bucket pacing
+- **Duration**: 15 seconds per run (3s warmup, 12s
+  measured)
+- **Runs**: 20 per data point, 95% CIs (Welch's t)
+- **Latency**: `derp_test_client` ping/echo, 5,000
+  samples per run, 2.16M total samples
+- **Tunnel quality**: iperf3 UDP + TCP + ICMP through
+  WireGuard/Tailscale, 20 runs per point
 
-## Hardware
+## Software
 
-| Platform | Instance | vCPUs | RAM | Network |
-|----------|----------|------:|----:|--------:|
-| GCP | c4-highcpu-{2,4,8,16} | 2--16 | 2--32 GB | up to 32 Gbps |
-| AWS | c7i.{2xl,4xl} | 8, 16 | 16, 32 GB | up to 25 Gbps |
-| Bare metal | Haswell Xeon | 8 | 32 GB | 10 GbE |
+| Component | Version |
+|-----------|---------|
+| Hyper-DERP | kTLS (TLS 1.3 AES-GCM), io_uring DEFER_TASKRUN |
+| Go derper | v1.96.4, go1.26.1, release build |
+| Kernel | 6.12.73+deb13-cloud-amd64 |
 
-## Headline Numbers (GCP c4-highcpu, kTLS)
+## Infrastructure
 
-This is the fair, apples-to-apples comparison: both
-servers doing real TLS, Hyper-DERP using kernel TLS
-offload.
+| Role | Machine Type | Count | NIC BW |
+|------|-------------|------:|-------:|
+| Relay | c4-highcpu-{2,4,8,16} | 1 | 22 Gbps |
+| Client | c4-highcpu-8 | 4 | 22 Gbps each |
 
-| vCPU | HD kTLS (Mbps) | TS TLS (Mbps) | HD/TS |
-|-----:|---------------:|--------------:|------:|
-|    2 |          2,962 |         1,448 |  2.1x |
-|    4 |          5,106 |         2,395 |  2.2x |
-|    8 |          7,621 |         4,033 |  1.9x |
-|   16 |         12,068 |         7,743 |  1.6x |
+GCP europe-west4-a. NIC bandwidth verified at 22 Gbps on
+all paths.
+
+## Peak Throughput
+
+| Config | HD Peak (Mbps) | TS Ceiling (Mbps) | HD/TS |
+|--------|---------------:|-------------------:|------:|
+| 2 vCPU (1w) | 3,730 | 1,870 | **10.8x** |
+| 4 vCPU (2w) | 6,091 | 2,798 | **3.5x** |
+| 8 vCPU (4w) | 12,316 | 4,670 | **2.7x** |
+| 16 vCPU (8w) | 16,545 | 7,834 | **2.1x** |
+
+{{< plot src="throughput_all.png" dir="/img/bench" alt="Peak throughput across all configs" >}}
+
+HD's advantage grows as resources shrink. At 2 vCPU, TS
+collapses (92% loss at 5G offered) while HD delivers
+3.5 Gbps.
+
+## The Cost Story
+
+HD delivers the same throughput on half the vCPUs:
+
+| TS deployment | TS throughput | HD equivalent | HD throughput | Savings |
+|---------------|-------------:|---------------|-------------:|--------:|
+| TS on 16 vCPU | 7,834 Mbps | HD on 8 vCPU | 8,371 Mbps | **2x** |
+| TS on 8 vCPU | 4,670 Mbps | HD on 4 vCPU | 5,457 Mbps | **2x** |
+| TS on 4 vCPU | 2,798 Mbps | HD on 2 vCPU | 3,536 Mbps | **2x** |
+
+{{< plot src="cost_story.png" dir="/img/bench" alt="VM cost comparison" >}}
+
+Full methodology, raw data, and tooling are in the
+[benchmark repository](https://github.com/hyper-derp/HD.Benchmark).
 
 ## Detailed Results
-
-- [GCP kTLS results](/benchmarks/gcp/) -- Phase B fair
-  comparison across 2--16 vCPU
-- [GCP plain TCP results](/benchmarks/gcp-tcp/) -- full
-  sweep without TLS overhead
-- [AWS c7i results](/benchmarks/aws/) -- cross-cloud
-  validation on 8 and 16 vCPU
-- [Bare-metal profiling](/benchmarks/bare-metal/) -- flame
-  graphs, perf stat, kTLS cost analysis

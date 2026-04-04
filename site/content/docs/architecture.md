@@ -4,7 +4,7 @@ description: >-
   Three-layer design, shard-per-core model, and io_uring
   internals.
 weight: 1
-draft: true
+draft: false
 ---
 
 ## Overview

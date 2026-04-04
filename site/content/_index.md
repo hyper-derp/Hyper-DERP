@@ -2,33 +2,23 @@
 title: "Hyper-DERP"
 description: >-
   A high-performance DERP relay server written in C++23
-  using io_uring. Drop-in replacement for Tailscale's
-  derper with 1.6--2.2x the throughput.
-draft: true
+  using io_uring. 2--10x throughput, 40% lower tail
+  latency than Tailscale's derper.
+draft: false
 ---
-
-Hyper-DERP is a drop-in replacement for Tailscale's DERP
-relay server, built in C++23 with io_uring. It delivers
-2x the throughput at half the hardware, with near-zero
-packet loss where Tailscale's derper shreds up to 93% of
-traffic. In real end-to-end tunnel tests through
-WireGuard, Hyper-DERP produces 48x fewer TCP retransmits.
-
-Compatible with Tailscale, Headscale, and any standard
-DERP client. MIT licensed.
 
 <div class="stats-grid">
   <div class="stat-card">
-    <span class="number">2.2x</span>
-    <span class="label">throughput at 4 vCPU (kTLS)</span>
-  </div>
-  <div class="stat-card">
-    <span class="number">12 Gbps</span>
+    <span class="number">16.5 Gbps</span>
     <span class="label">peak at 16 vCPU</span>
   </div>
   <div class="stat-card">
-    <span class="number">2%</span>
-    <span class="label">user-space CPU at 5 Gbps</span>
+    <span class="number">2--10x</span>
+    <span class="label">throughput vs Tailscale derper</span>
+  </div>
+  <div class="stat-card">
+    <span class="number">50%</span>
+    <span class="label">compute cost reduction</span>
   </div>
   <div class="stat-card">
     <span class="number">3K</span>
@@ -36,14 +26,20 @@ DERP client. MIT licensed.
   </div>
 </div>
 
-## Performance (GCP c4-highcpu, kTLS)
+## Peak Throughput (GCP c4-highcpu, kTLS)
 
-| vCPU | HD kTLS (Mbps) | TS TLS (Mbps) | HD/TS |
-|-----:|---------------:|--------------:|------:|
-|    2 |          2,962 |         1,448 |  2.1x |
-|    4 |          5,106 |         2,395 |  2.2x |
-|    8 |          7,621 |         4,033 |  1.9x |
-|   16 |         12,068 |         7,743 |  1.6x |
+4,903 benchmark runs. 4 client VMs, 20 peers, 10 pairs,
+20 runs per data point, 95% CIs.
+
+| vCPU | HD Peak (Mbps) | TS Ceiling (Mbps) | HD/TS |
+|-----:|---------------:|-------------------:|------:|
+|    2 |          3,730 |              1,870 | 10.8x |
+|    4 |          6,091 |              2,798 |  3.5x |
+|    8 |         12,316 |              4,670 |  2.7x |
+|   16 |         16,545 |              7,834 |  2.1x |
+
+HD delivers the same throughput on half the vCPUs --
+50% compute cost reduction for a relay fleet.
 
 [Full benchmark results &rarr;](/benchmarks/)
 

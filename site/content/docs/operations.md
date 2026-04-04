@@ -3,7 +3,7 @@ title: "Operations"
 description: >-
   Deployment, systemd service, monitoring, kernel tuning.
 weight: 4
-draft: true
+draft: false
 ---
 
 ## systemd Service

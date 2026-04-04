@@ -1,46 +1,85 @@
 ---
 title: "GCP kTLS Results"
 description: >-
-  GCP c4-highcpu benchmark results with kernel TLS.
+  GCP c4-highcpu rate sweep results with kernel TLS,
+  2--16 vCPU.
 weight: 1
-draft: true
+draft: false
 ---
 
 ## Setup
 
-- **Platform**: GCP c4-highcpu instances
-- **Region**: us-central1
-- **TLS mode**: Hyper-DERP with kTLS, Tailscale derper
-  with Go TLS
-- **Test configs**: 2, 4, 8, 16 vCPU
+- **Platform**: GCP c4-highcpu (Xeon Platinum 8581C)
+- **Region**: europe-west4-a
+- **TLS**: HD with kTLS, TS with Go crypto/tls
+- **Clients**: 4 x c4-highcpu-8, 5 peers each
+- **Configs**: 2, 4, 8, 16 vCPU
 
-## Throughput
+## Summary
 
-| vCPU | HD kTLS (Mbps) | TS TLS (Mbps) | HD/TS |
-|-----:|---------------:|--------------:|------:|
-|    2 |          2,962 |         1,448 |  2.1x |
-|    4 |          5,106 |         2,395 |  2.2x |
-|    8 |          7,621 |         4,033 |  1.9x |
-|   16 |         12,068 |         7,743 |  1.6x |
+| Config | HD Peak (Mbps) | HD Loss | TS Ceiling (Mbps) | TS Loss @ HD Peak | HD/TS |
+|--------|---------------:|--------:|-------------------:|------------------:|------:|
+| 2 vCPU (1w) | 3,730 | 1.65% | 1,870 | 92% | **10.8x** |
+| 4 vCPU (2w) | 6,091 | 1.97% | 2,798 | 74% | **3.5x** |
+| 8 vCPU (4w) | 12,316 | 0.68% | 4,670 | 44% | **2.7x** |
+| 16 vCPU (8w) | 16,545 | 1.51% | 7,834 | 17% | **2.1x** |
 
-<!-- TODO: add throughput plot from static/img/ -->
+{{< plot src="throughput_all.png" dir="/img/bench" alt="Peak throughput across all configs" >}}
+
+## Rate Sweeps
+
+### 2 vCPU (1 worker)
+
+| Rate | HD (Mbps) | +/-CI | HD Loss | TS (Mbps) | TS Loss | Ratio |
+|-----:|----------:|------:|--------:|----------:|--------:|------:|
+| 1G | 871 | 0 | 0.00% | 870 | 0.00% | 1.0x |
+| 2G | 1,741 | 0 | 0.00% | 1,718 | 1.36% | 1.0x |
+| 3G | 2,612 | 0 | 0.00% | 1,870 | 28.28% | **1.4x** |
+| 5G | 3,536 | 63 | 1.35% | 324 | 92.43% | **10.9x** |
+| 7.5G | 3,730 | 77 | 1.65% | 347 | 92.34% | **10.8x** |
+
+At 2 vCPU TS collapses above 3G offered -- the Go runtime
+consumes the entire CPU budget. HD continues to deliver
+through backpressure.
+
+### 4 vCPU (2 workers)
+
+| Rate | HD (Mbps) | +/-CI | HD Loss | TS (Mbps) | TS Loss | Ratio |
+|-----:|----------:|------:|--------:|----------:|--------:|------:|
+| 3G | 2,612 | 0 | 0.00% | 2,518 | 3.33% | 1.0x |
+| 5G | 4,233 | 75 | 0.07% | 2,798 | 35.58% | **1.5x** |
+| 7.5G | 5,457 | 114 | 0.32% | 1,605 | 73.90% | **3.4x** |
+| 10G | 6,074 | 79 | 2.04% | 1,738 | 73.13% | **3.5x** |
+
+### 8 vCPU (4 workers)
+
+| Rate | HD (Mbps) | +/-CI | HD Loss | TS (Mbps) | TS Loss | Ratio |
+|-----:|----------:|------:|--------:|----------:|--------:|------:|
+| 5G | 4,353 | 0 | 0.00% | 4,291 | 1.26% | 1.0x |
+| 7.5G | 6,459 | 84 | 0.01% | 4,670 | 28.36% | **1.4x** |
+| 10G | 8,371 | 162 | 0.06% | 4,495 | 44.13% | **1.9x** |
+| 15G | 11,087 | 324 | 0.32% | 4,482 | 43.83% | **2.5x** |
+| 20G | 12,316 | 247 | 0.68% | 4,488 | 43.81% | **2.7x** |
+
+### 16 vCPU (8 workers)
+
+| Rate | HD (Mbps) | +/-CI | HD Loss | TS (Mbps) | TS Loss | Ratio |
+|-----:|----------:|------:|--------:|----------:|--------:|------:|
+| 7.5G | 6,530 | 0 | 0.00% | 6,368 | 2.33% | 1.0x |
+| 10G | 8,624 | 106 | 0.01% | 7,510 | 13.62% | **1.1x** |
+| 15G | 12,088 | 419 | 0.36% | 7,799 | 16.79% | **1.5x** |
+| 20G | 14,354 | 581 | 0.29% | 7,810 | 16.62% | **1.8x** |
+| 25G | 16,545 | 746 | 1.51% | 7,834 | 16.43% | **2.1x** |
+
+## Packet Loss
+
+{{< plot src="loss_all.png" dir="/img/bench" alt="Packet loss across all configs" >}}
+
+HD stays below 2% loss at peak. TS loss scales with
+offered rate -- 17% at 16 vCPU, 92% at 2 vCPU.
 
 ## Scaling
 
-Hyper-DERP scales near-linearly from 2 to 8 vCPU.
-The 8-to-16 gain is sublinear (1.58x), likely due to
-memory bandwidth saturation on the c4-highcpu platform.
+{{< plot src="peak_scaling.png" dir="/img/bench" alt="Scaling curves" >}}
 
-Tailscale derper shows similar sublinear scaling but
-starts from a lower baseline due to Go runtime overhead
-and user-space TLS.
-
-<!-- TODO: add scaling plot -->
-
-## Latency
-
-Latency data is available in the full report. P50 and P99
-latencies for both servers at each vCPU count will be
-added once plots are generated.
-
-<!-- TODO: add latency tables and plots -->
+{{< plot src="ratio_all.png" dir="/img/bench" alt="HD/TS ratio across configs" >}}

@@ -1,7 +1,7 @@
 ---
 title: "Install"
 description: "Install Hyper-DERP from APT or build from source."
-draft: true
+draft: false
 ---
 
 ## APT Repository (Debian/Ubuntu)

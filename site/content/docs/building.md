@@ -4,7 +4,7 @@ description: >-
   Build from source, dependencies, CMake presets,
   cross-compile for ARM64.
 weight: 2
-draft: true
+draft: false
 ---
 
 ## Dependencies
