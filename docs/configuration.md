@@ -1,14 +1,38 @@
 # Configuration
 
+## Config File
+
+Hyper-DERP reads a YAML config file via `--config` and
+accepts CLI flag overrides. CLI flags take precedence.
+
+```sh
+hyper-derp --config /etc/hyper-derp/hyper-derp.yaml
+hyper-derp --config /etc/hyper-derp/hyper-derp.yaml --port 443
+```
+
+Example config (`dist/hyper-derp.yaml`):
+
+```yaml
+port: 3340
+workers: 0
+# pin_cores: [0, 2, 4, 6]
+sqpoll: false
+# tls_cert: /etc/hyper-derp/cert.pem
+# tls_key: /etc/hyper-derp/key.pem
+log_level: info
+metrics:
+  # port: 9100
+  debug_endpoints: false
+```
+
 ## CLI Flags
 
-All configuration is via command-line flags. The systemd
-unit passes flags through an `EnvironmentFile`.
-
-Flag definitions: `src/main.cc:22` (`PrintUsage`).
+CLI flags override config file values. If no `--config` is
+given, defaults are used.
 
 | Flag | Default | Description |
 |------|--------:|-------------|
+| `--config` | none | YAML config file path |
 | `--port` | 3340 | Listen port |
 | `--workers` | 0 (auto) | Worker count. 0 = auto |
 | `--pin-workers` | none | Pin to cores (e.g. `0,2,4`) |
@@ -50,37 +74,13 @@ Flag definitions: `src/main.cc:22` (`PrintUsage`).
 ## Systemd Configuration
 
 The installed systemd unit (`dist/hyper-derp.service`)
-reads options from an environment file:
-
-```
-/etc/hyper-derp/hyper-derp.conf
-```
-
-### Config File Format
-
-The file is a shell-style environment file sourced by
-systemd's `EnvironmentFile` directive. It contains a
-single variable:
-
-```sh
-# /etc/hyper-derp/hyper-derp.conf
-HYPER_DERP_OPTS="--port 3340 --workers 8 \
-  --pin-workers 2,3,4,5,6,7,8,9 \
-  --sockbuf 4194304 \
-  --tls-cert /etc/hyper-derp/cert.pem \
-  --tls-key /etc/hyper-derp/key.pem \
-  --metrics-port 9090 \
-  --max-accept-rate 1000 \
-  --log-level info"
-```
-
-The unit's `ExecStart` expands this variable:
+uses a YAML config file:
 
 ```ini
-ExecStart=/usr/bin/hyper-derp $HYPER_DERP_OPTS
+ExecStart=/usr/bin/hyper-derp --config /etc/hyper-derp/hyper-derp.yaml
 ```
 
-After editing, reload and restart:
+Edit the config and restart:
 
 ```sh
 sudo systemctl daemon-reload
@@ -112,8 +112,6 @@ hardening:
   throughput. 8 workers on 16 vCPU outperforms 4 workers
   under kTLS.
 - **Without TLS (testing only):** cap at 4 workers.
-  Higher counts can cause cross-shard backpressure
-  oscillation under extreme load.
 
 ## kTLS Prerequisites
 

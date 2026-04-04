@@ -2,10 +2,9 @@
 
 ## System Requirements
 
-- Linux kernel 5.19+ (io_uring with provided buffers)
-- Kernel 6.0+ recommended (SINGLE_ISSUER, DEFER_TASKRUN,
-  multishot recv)
-- liburing 2.3+, libsodium 1.0.18+
+- Linux kernel 6.1+ (SINGLE_ISSUER, DEFER_TASKRUN,
+  multishot recv, provided buffer rings)
+- liburing 2.3+, libsodium 1.0.18+, OpenSSL 3.x
 
 ## System Tuning
 
@@ -80,18 +79,23 @@ buffer for frame reassembly.
 
 ### Systemd
 
-Edit `/etc/hyper-derp/hyper-derp.conf`:
+Edit `/etc/hyper-derp/hyper-derp.yaml`:
 
-```sh
-HYPER_DERP_OPTS="--port 3340 --workers 8 \
-  --pin-workers 2,3,4,5,6,7,8,9 \
-  --sockbuf 4194304 \
-  --metrics-port 9090 \
-  --max-accept-rate 1000 \
-  --log-level info"
+```yaml
+port: 3340
+workers: 8
+pin_cores: [2, 3, 4, 5, 6, 7, 8, 9]
+sockbuf: 4194304
+max_accept_rate: 1000
+log_level: info
+metrics:
+  port: 9090
 ```
 
 Then: `systemctl restart hyper-derp`
+
+See [docs/configuration.md](docs/configuration.md) for
+all options and the YAML config format.
 
 ### Metrics
 
@@ -161,7 +165,7 @@ reduce per-worker peer count by adding more workers.
 
 ### High xfer_drops
 
-The cross-shard MPSC ring (64K entries) is full. Causes:
+The cross-shard SPSC ring (16K entries) is full. Causes:
 - Burst of cross-shard traffic (many peers sending to peers
   on different workers)
 - Consumer worker is busy with local I/O

@@ -12,8 +12,8 @@
 
 ## Checklist
 
-- [ ] Builds cleanly (`cmake --preset default && cmake --build build`)
+- [ ] Builds cleanly (`cmake --preset default && cmake --build build -j`)
 - [ ] Tests pass (`ctest --test-dir build-debug --output-on-failure`)
-- [ ] `cpplint --recursive src/ include/` reports no errors
-- [ ] `clang-tidy -p build-debug` reports no errors
+- [ ] `cpplint --recursive src/ include/ tools/ tests/` clean
+- [ ] CI passes
 - [ ] Documentation updated (if applicable)

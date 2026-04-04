@@ -136,21 +136,32 @@ event to prevent a single peer from monopolizing the SQ
 
 ### Backpressure
 
-Adaptive send-pressure-based recv pausing (`types.h:79`,
-`SendPressureHigh`). When total queued sends across all
-peers on a worker exceed a threshold, recv is paused.
-The threshold scales linearly with peer count:
+Adaptive send-pressure-based recv pausing
+(`types.h`, `SendPressureHigh`). When total queued sends
+across all peers on a worker exceed a threshold, recv is
+paused. The threshold scales linearly with peer count:
 
 ```
 high = min(kSendPressureMax, peer_count * kPressurePerPeer)
-low  = high / kPressureResumeDiv
+low  = high / PressureResumeDiv(peer_count)
 ```
 
 With defaults: `kSendPressureMax` = 32768,
-`kPressurePerPeer` = 512, `kPressureResumeDiv` = 4.
+`kPressurePerPeer` = 512. The resume divisor adapts to
+worker count: 8 for ≤12 peers (1-2 workers), 6 for ≤24
+peers (3-4 workers), 4 for 25+ peers. This wider
+hysteresis prevents backpressure oscillation that caused
+latency stalls on 2-worker configs.
 
-Recv resumes when pressure drops to 1/4 of the high
-threshold (`types.h:93`, `SendPressureLow`).
+Once recv is paused, it stays paused for at least
+`kRecvPauseMinBatches` (8) CQE batch iterations before
+checking the Low threshold. This minimum pause duration
+prevents rapid toggling when drain rate is high.
+
+The busy-spin count is also reduced for 1-2 worker
+configs (`kBusySpinLowWorker` = 64 vs default 256),
+giving kTLS more CPU time to drain send queues on cores
+shared with the kernel crypto thread.
 
 ### Cross-Shard Forwarding
 

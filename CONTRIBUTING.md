@@ -5,42 +5,46 @@ the process for building, testing, and submitting changes.
 
 ## Building
 
-Hyper-DERP requires Linux with kernel 6.1+ (for io_uring), a
-C++23 compiler, and the following dependencies:
+Hyper-DERP requires Linux with kernel 6.1+ (for io_uring
+DEFER_TASKRUN + SINGLE_ISSUER), a C++23 compiler (Clang 19
+or GCC 14), and the following dependencies:
 
 ```bash
-sudo apt install cmake ninja-build liburing-dev libsodium-dev
+sudo apt install cmake ninja-build \
+  liburing-dev libsodium-dev libspdlog-dev \
+  libgtest-dev libgmock-dev libcli11-dev \
+  libssl-dev libasio-dev
 ```
 
 Build with CMake:
 
 ```bash
-cmake --preset release
-cmake --build --preset release
+cmake --preset default
+cmake --build build -j
 ```
 
 For a debug build:
 
 ```bash
 cmake --preset debug
-cmake --build --preset debug
+cmake --build build-debug -j
 ```
 
 For ARM64 cross-compilation:
 
 ```bash
-sudo apt install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-sudo apt install liburing-dev:arm64 libsodium-dev:arm64
+sudo apt install gcc-14-aarch64-linux-gnu \
+  g++-14-aarch64-linux-gnu \
+  liburing-dev:arm64 libsodium-dev:arm64
 cmake -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
-  -B build-arm64
-cmake --build build-arm64
+  -DBUILD_TESTING=OFF -B build-arm64
+cmake --build build-arm64 -j
 ```
 
 ## Running Tests
 
 ```bash
-cd build-release   # or build-debug
-ctest --output-on-failure
+ctest --test-dir build-debug --output-on-failure
 ```
 
 ## Code Style
@@ -64,17 +68,11 @@ Run all linters before submitting a PR:
 
 ```bash
 # C++ lint
-cpplint --recursive src/ include/ tests/ tools/bench/
-
-# clang-tidy (from the build directory)
-cd build-release
-run-clang-tidy -checks='-*,modernize-*,bugprone-*,performance-*'
-
-# Python lint
-flake8 tools/analysis/
+cpplint --recursive src/ include/ tools/ tests/
 ```
 
-Fix all warnings. CI will reject PRs with lint failures.
+Fix all warnings. CI runs test, lint, and package
+automatically on every push and PR.
 
 ## Submitting Changes
 
@@ -89,7 +87,7 @@ Fix all warnings. CI will reject PRs with lint failures.
 
 4. **Lint** your changes (see above).
 
-5. **Push** your branch and open a pull request against `main`.
+5. **Push** your branch and open a pull request against `master`.
 
 6. **Describe** your PR clearly: what it does, why, and how
    to verify it. Link any related issues.
