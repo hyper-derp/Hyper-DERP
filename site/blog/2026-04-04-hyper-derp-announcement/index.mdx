@@ -136,6 +136,8 @@ This is the expected result. The synthetic benchmarks show what happens when you
 
 The tunnel tests matter for a different reason: they confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. The relay is transparent -- the architectural differences only show up when you outrun WireGuard's own crypto.
 
+Worth noting: this test used 4 clients, each capped at ~2 Gbps by WireGuard. In production with 10+ clients, the aggregate traffic exceeds TS's ceiling and the relay throughput differences become directly visible as application packet loss.
+
 Full tunnel results across all configs and rates are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#3-tunnel-quality-wireguard-through-derp).
 
 ## Where HD Loses
