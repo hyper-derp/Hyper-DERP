@@ -65,4 +65,3 @@ applies backpressure by:
 This prevents a slow client from consuming unbounded
 memory.
 
-<!-- TODO: add architecture diagram from static/img/ -->
