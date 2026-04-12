@@ -41,6 +41,7 @@ jobs:
       - name: Build APT repo
         env:
           APT_GPG_KEY: ${{ secrets.APT_GPG_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -84,8 +85,6 @@ jobs:
           gpg --batch --yes --armor \
             --local-user "ci@hyper-derp.dev" \
             --clearsign -o InRelease Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
