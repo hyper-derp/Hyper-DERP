@@ -1,6 +1,10 @@
-# Hyper-DERP
+<p align="center">
+  <img src="graphics/hyper-derp.svg" alt="Hyper-DERP" height="200" />
+</p>
 
-High-performance DERP relay server in C++23 with `io_uring`.
+<h1 align="center">Hyper-DERP</h1>
+
+<p align="center">High-performance DERP relay server in C++23 with <code>io_uring</code>.</p>
 
 ![Build](https://github.com/hyper-derp/hyper-derp/actions/workflows/build.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
@@ -178,7 +182,7 @@ System packages (Debian/Ubuntu):
 ```sh
 sudo apt install \
   clang cmake ninja-build \
-  liburing-dev libsodium-dev libspdlog-dev \
+  liburing-dev libsodium-dev \
   libgtest-dev libgmock-dev libcli11-dev
 ```
 
