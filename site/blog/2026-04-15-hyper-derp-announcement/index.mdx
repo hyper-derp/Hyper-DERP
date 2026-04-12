@@ -36,13 +36,13 @@ Then I had a look at Tailscale's `derper`. Built by a proper engineering team, y
 
 DERP (Detoured Encrypted Routing Protocol) is Tailscale's fallback when peer-to-peer WireGuard connections cannot be negotiated. So if you are behind a symmetric NAT, a restrictive firewall or CGNAT this will become your permanent networking route.
 
-It works like this: Both peers connect to the relay on port 443. Peer A sends a `SendPacket` tagged with B's public key. The relay rewrites the header to `RecvPacket`, puts in A's public key and sends the packet on its way to B. Every packet gets decrypted, rewritten and encrypted in userspace.
+It works like this: Both peers connect to the relay on port 443. Peer A sends a `SendPacket` tagged with B's public key. The relay rewrites the header to `RecvPacket`, puts in A's public key and sends the packet on its way to B.
 
 ## Making It Go Brrrr
 
 I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel and promptly forget about them. The kernel will not give them back — I only hold the keys for a few microseconds, instead of the entire connection lifecycle where derper keeps them.
 
-From here on out the kernel handles all encryption and decryption. I just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
+Now the kernel handles all encryption and decryption. I just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
 
 If you go with `epoll` you will do the following for each arriving packet: wait for socket readiness, `read()`, rewrite the peer ID and `write()`. Two syscalls per packet, at scale this is millions of kernel transitions per second. Each one flushing the pipeline and trashing the cache.
 
@@ -84,7 +84,7 @@ For a relay fleet this is a straightforward halving of compute cost. If you're r
 
 Throughput is just a part of the whole. You need to examine what happens to the packets. With a 16 vCPU setup derper will *only* lose about 19% of your packets at 25 Gbps offered.
 
-Once you starve derper of vCPUs this issue compounds, with the Go runtime taking up more and more of the CPU budget, derper will become a packet shredder. With 8 vCPUs the loss becomes 47% at 20 Gbps offered, 4 vCPU 75% at 10 Gbps and with only 2 vCPUs the loss is at 93% at 5 Gbps.
+With fewer vCPUs derper becomes a packet shredder. With 8 vCPUs the loss becomes 47% at 20 Gbps offered, 4 vCPU 75% at 10 Gbps and with only 2 vCPUs the loss is at 93% at 5 Gbps.
 
 <Plot src="packet_loss.png" alt="Packet loss at same rates. HD stays near zero; TS collapses as vCPUs shrink." />
 
@@ -131,13 +131,9 @@ Everything above is synthetic — a custom bench tool pushing DERP frames at con
 
 I set up Headscale with 4 Tailscale clients on GCP, blocked direct UDP between them to force all traffic through the DERP relay, and ran iperf3 UDP + TCP + ICMP ping concurrently. 20 runs per data point, 720 total runs. Full methodology in the [tunnel test design doc](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/TUNNEL_TEST_V2.md).
 
-Both relays deliver identical UDP throughput (~2 Gbps). The relay isn't the bottleneck — Tailscale's userspace WireGuard (wireguard-go, ChaCha20-Poly1305) is. Loss is negligible for both (&lt;0.04%). TCP retransmits: HD produces 7-8% fewer at max load on 4 and 16 vCPU. Tied at 8 vCPU. Tunnel latency: both ~0.5-1.0 ms, dominated by WireGuard crypto and network RTT.
+Both relays deliver identical UDP throughput (~2 Gbps) — wireguard-go's ChaCha20-Poly1305 caps each client, not the relay. Loss is negligible for both (&lt;0.04%). TCP retransmits: HD produces 7-8% fewer at max load on 4 and 16 vCPU. Tied at 8 vCPU. Tunnel latency: both ~0.5-1.0 ms, dominated by WireGuard crypto and network RTT.
 
-This is the expected result. The synthetic benchmarks show what happens when you push the relay directly at 10-25 Gbps. Through a real tunnel, WireGuard crypto on the client caps everything at ~2 Gbps regardless of relay. The relay has headroom either way.
-
-The tunnel tests matter for a different reason: they confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. The relay is transparent — the architectural differences only show up when you outrun WireGuard's own crypto.
-
-Worth noting: this test used 4 clients, each capped at ~2 Gbps by WireGuard. In production with 10+ clients, the aggregate traffic exceeds TS's ceiling and the relay throughput differences become directly visible as application packet loss.
+The tunnel tests confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. With 4 clients each capped at ~2 Gbps, the relay has headroom either way. In production with 10+ clients the aggregate traffic exceeds TS's ceiling and the relay differences become directly visible as application packet loss.
 
 Full tunnel results across all configs and rates are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#3-tunnel-quality-wireguard-through-derp).
 
@@ -149,11 +145,11 @@ Full tunnel results across all configs and rates are in the [benchmark report](h
 
 **Dual-path relay** HD currently speaks DERP over TCP/443 — works through any corporate firewall. The next step adds a UDP fast path: raw WireGuard packets   forwarded by receiver index, zero crypto on the relay. The client probes at startup — UDP if the network allows it, DERP fallback if not. Same relay, both protocols, automatic negotiation.
 
-**Kernel WireGuard client** Tailscale's wireguard-go caps tunnel throughput at ~2 Gbps. Linux wg.ko and Windows wireguard.sys do 10+ Gbps with SIMDacceleration. A client using kernel WireGuard with HD's dual-path relay — raw UDP when the network allows it, kTLS-wrapped DERP over TCP/443 when it doesn't — would make the relay nearly transparent to applications. On the UDP path, the relay does zero crypto. On the TCP fallback, kTLS handles the transport encryption in the kernel. Either way, the per-packet overhead that dominates Tailscale's stack disappears.
+**Kernel WireGuard client** Tailscale's wireguard-go caps tunnel throughput at ~2 Gbps. Linux wg.ko and Windows wireguard.sys do 10+ Gbps with SIMD acceleration. Pairing kernel WireGuard with the dual-path relay would make it nearly transparent to applications — the per-packet overhead that dominates Tailscale's stack disappears on both paths.
 
 **Client SDK** HD was built to stream IR camera feeds between industrial networks. A client library extracted from the relay's protocol implementation would turn HD from a Tailscale component into a general-purpose secure relay for any application that needs NAT traversal.
 
-**NIC TLS offload** Bare metal profiling showed kTLS consumes 25% of CPU and costs 27-48% of throughput. ConnectX-5/6 with hardware TLS offload eliminates the crypto tax entirely — including the cache cliff and kTLS-driven variance that dominate the error bars in the benchmarks.
+**NIC TLS offload** ConnectX-5/6 with hardware TLS offload eliminates the kTLS crypto tax entirely — including the cache cliff and variance that dominate the error bars in the benchmarks.
 
 **eBPF steering** Currently all connections land on the accept thread and get assigned to workers via FNV-1a hash. An XDP program could steer incoming packets directly to the correct worker's io_uring, eliminating the accept thread as a serialization point. At scale, this matters.
 
@@ -167,7 +163,7 @@ For most deployments that's fine — DERP is a fallback, not the main path, and 
 
 But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic, you need the relay itself to be fast. That's what HD is for.
 
-None of this takes away from what Tailscale built. They made mesh networking accessible to millions of people who never would have touched WireGuard on their own, and that matters more than any benchmark. HD just picks up where their architecture has to stop.
+None of this takes away from what Tailscale built. They made mesh networking accessible to people who would never have touched WireGuard on their own, and that matters more than any benchmark. HD just picks up where their architecture has to stop.
 
 Comparing the two is inherently unfair. That's kind of the point.
 
