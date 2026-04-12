@@ -163,7 +163,7 @@ set(CPACK_PACKAGE_CONTACT
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-  "liburing2 (>= 2.9), libsodium23 (>= 1.0.18), libspdlog1.15 (>= 1:1.15)")
+  "liburing2 (>= 2.9), libsodium23 (>= 1.0.18)")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE
   "https://github.com/hyper-derp/hyper-derp")
 # Let dpkg-architecture determine the correct name.

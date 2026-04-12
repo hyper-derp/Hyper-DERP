@@ -42,7 +42,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-14 g++-14 \
             cmake ninja-build \
-            liburing-dev libsodium-dev libspdlog-dev \
+            liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
             libssl-dev libasio-dev
       - name: Set GCC 14
@@ -79,7 +79,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc-14 g++-14 \
             cmake ninja-build \
-            liburing-dev libsodium-dev libspdlog-dev \
+            liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
             libssl-dev libasio-dev
       - name: Set GCC 14

@@ -1,11 +1,7 @@
-# System packages — no FetchContent needed when running on
-# a properly provisioned build host.
-#
 # Required system packages:
-#   libspdlog-dev libgtest-dev libgmock-dev libcli11-dev
+#   libgtest-dev libgmock-dev libcli11-dev
 #   libssl-dev libasio-dev
 
-find_package(spdlog REQUIRED)
 if(BUILD_TESTING OR NOT DEFINED BUILD_TESTING)
   find_package(GTest REQUIRED)
 endif()
@@ -14,6 +10,17 @@ find_package(CLI11 REQUIRED)
 # ---- FetchContent dependencies ----------------------------------------------
 
 include(FetchContent)
+
+# spdlog — statically linked with bundled fmt to avoid
+# distro soname mismatches (Ubuntu vs Debian).
+set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(spdlog
+  GIT_REPOSITORY https://github.com/gabime/spdlog.git
+  GIT_TAG v1.15.2
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(spdlog)
 
 # rapidyaml — fast YAML parser.
 FetchContent_Declare(ryml
