@@ -75,7 +75,14 @@ jobs:
 
           # Generate Release file.
           cd dists/stable
-          apt-ftparchive release . > Release
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Architectures=amd64 \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Origin=hyper-derp \
+            -o APT::FTPArchive::Release::Label=Hyper-DERP \
+            release . > Release
 
           # Sign Release with the CI key.
           echo "$APT_GPG_KEY" | gpg --batch --import
