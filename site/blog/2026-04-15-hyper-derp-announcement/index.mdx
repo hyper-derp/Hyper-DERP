@@ -95,15 +95,15 @@ The senders TCP stack respects this pause. But there is a timing gap -- all pack
 
 ## Latency Under Load
 
-At idle both relays return pings in about 110-115 us on GCP -- the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
+At idle both relays return pings in about 110-115 μs on GCP -- the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
 
 480 runs, 2.16M latency samples. [Full methodology](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
 
-On GCP 8 vCPU, HD p99 is load-invariant: 129-153 us from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 us (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time -- goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
+On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time -- goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
 
 <Plot src="latency.png" alt="p50 and p99 latency on GCP 8 vCPU at increasing background load (% of TS ceiling). Ping/echo through the relay, 5000 pings per run, 10 runs per load level." />
 
-At 16 vCPU the gap widens: HD p99 = 127 us vs TS p99 = 214 us at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% -- the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
+At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% -- the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
 
 Full latency tables across all configs (2/4/8/16 vCPU, 6 load levels each) are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#2-relay-latency).
 
