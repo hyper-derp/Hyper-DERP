@@ -5,6 +5,8 @@ on:
     branches: [master]
     paths:
       - "site/**"
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -32,9 +34,58 @@ jobs:
         run: npm ci
         working-directory: site
 
-      - name: Build
+      - name: Build site
         run: npm run build
         working-directory: site
+
+      - name: Build APT repo
+        env:
+          APT_GPG_KEY: ${{ secrets.APT_GPG_KEY }}
+        run: |
+          set -euo pipefail
+
+          REPO="site/build/repo"
+          POOL="$REPO/pool/main"
+          DIST="$REPO/dists/stable/main/binary-amd64"
+          mkdir -p "$POOL" "$DIST"
+
+          # Copy the public key into the build output.
+          cp site/static/repo/key.gpg "$REPO/key.gpg"
+
+          # Download all .deb assets from every GitHub release.
+          gh release list --limit 100 --json tagName -q '.[].tagName' \
+            | while read -r tag; do
+                gh release download "$tag" \
+                  --pattern '*.deb' \
+                  --dir "$POOL" \
+                  --skip-existing
+              done
+
+          if ! ls "$POOL"/*.deb >/dev/null 2>&1; then
+            echo "::warning::No .deb packages found; skipping APT repo"
+            exit 0
+          fi
+
+          # Generate Packages index.
+          cd "$REPO"
+          dpkg-scanpackages --multiversion pool/main > \
+            dists/stable/main/binary-amd64/Packages
+          gzip -k dists/stable/main/binary-amd64/Packages
+
+          # Generate Release file.
+          cd dists/stable
+          apt-ftparchive release . > Release
+
+          # Sign Release with the CI key.
+          echo "$APT_GPG_KEY" | gpg --batch --import
+          gpg --batch --yes --armor \
+            --local-user "ci@hyper-derp.dev" \
+            --detach-sign -o Release.gpg Release
+          gpg --batch --yes --armor \
+            --local-user "ci@hyper-derp.dev" \
+            --clearsign -o InRelease Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
