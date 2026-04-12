@@ -82,15 +82,15 @@ For a relay fleet this is a straightforward halving of compute cost. If you're r
 
 ## Packet Loss
 
-Throughput is just a part of the whole. You need to examine what happens to the packets. With a 16 vCPU setup derper will *only* lose about 17% of your packets at 25 Gbps offered.
+Throughput is just a part of the whole. You need to examine what happens to the packets. With a 16 vCPU setup derper will *only* lose about 19% of your packets at 25 Gbps offered.
 
-Once you starve derper of vCPUs this issue compounds, with the Go runtime taking up more and more of the CPU budget, derper will become a packet shredder. With 8 vCPUs the loss becomes 44% at 20 Gbps offered, 4 vCPU 74% at 10 Gbps and with only 2 vCPUs the loss is at 92% at 5 Gbps.
+Once you starve derper of vCPUs this issue compounds, with the Go runtime taking up more and more of the CPU budget, derper will become a packet shredder. With 8 vCPUs the loss becomes 47% at 20 Gbps offered, 4 vCPU 75% at 10 Gbps and with only 2 vCPUs the loss is at 93% at 5 Gbps.
 
 <Plot src="packet_loss.png" alt="Packet loss at same rates. HD stays near zero; TS collapses as vCPUs shrink." />
 
 The story of packet loss is different for HD. When HD's send queues fill up it pauses recv, at high rates the kernel advertises a smaller window back to the sender. Eventually the window hits zero.
 
-The senders TCP stack respects this pause. But there is a timing gap — all packets that are in flight when the window hits zero get dropped by the kernel. In the tested ranges this stays below 2% loss.
+The sender's TCP stack respects this pause. But there is a timing gap — all packets that are in flight when the window hits zero get dropped by the kernel. At 2 vCPU and 5 Gbps offered HD loses just 0.2%. Push harder and loss climbs — 6% at 4 vCPU/10 Gbps, 12% at 8 vCPU/20 Gbps — but still a fraction of what TS shows at the same rates.
 
 
 ## Latency Under Load
@@ -99,11 +99,11 @@ At idle both relays return pings in about 110-115 μs on GCP — the kernel TCP 
 
 480 runs, 2.16M latency samples. [Full methodology](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
 
-On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
+On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69 μs). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
 
 <Plot src="latency.png" alt="p50 and p99 latency on GCP 8 vCPU at increasing background load (% of TS ceiling). Ping/echo through the relay, 5000 pings per run, 10 runs per load level." />
 
-At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% — the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
+At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency barely moves at 150% (+8 μs from idle) — the io_uring busy-spin loop keeps syscall overhead constant. TS degrades monotonically.
 
 Full latency tables across all configs (2/4/8/16 vCPU, 6 load levels each) are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#2-relay-latency).
 
