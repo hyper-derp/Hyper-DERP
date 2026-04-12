@@ -10,6 +10,12 @@ hide_table_of_contents: true
 
 import Plot from '@site/src/components/Plot';
 
+<div style={{textAlign: 'center', margin: '2rem 0'}}>
+  <img src="/img/logo.svg"
+       alt="Hyper-DERP"
+       style={{height: '240px'}} />
+</div>
+
 ## The Interview
 
 I work for a company that produces IR cameras for industrial applications. I created a Raspi edge device with the accompanying software. Among many things it will be able to forward data and control streams from one industrial net into another. I had some rough ideas how I wanted the relay to work but hadn't gotten serious about it.
@@ -42,11 +48,11 @@ If you go with `epoll` you will do the following for each arriving packet: wait 
 
 io_uring inverts this. Instead of asking the kernel 'Is this socket ready?' I tell the kernel 'I need these 50 reads and 30 writes done' then harvest the results. One syscall does what `epoll` needs hundreds for. Drain completions, rewrite headers, enqueue sends and submit - one pass.
 
-From here the rest of the architecture just flows. Having pinned one io_uring per core gives us a very clean separation. No shared state, no locks, pure speed.
+From here the rest of the architecture just flows. Having pinned one io_uring per core gives us a very clean separation. No shared state, no locks.
 
 I give each shard a list of client public key hashes. Same shard forwarding does a hash table lookup and directly enqueues; cross-shard uses a lock-free SPSC ring between the worker pairs. All sends are deferred and flushed with one `io_uring_submit()` per batch. Memory comes from slab allocators and frame pools - no malloc in the hot path.
 
-The result is a shard-per-core, share-nothing design. If you follow the path of removing all possible context switches from the forwarding path you end up at Seastar (ScyllaDB's framework) — and that's essentially what this is.
+The result is a shard-per-core, share-nothing design. If you follow the path of removing all possible context switches from the forwarding path you end up at Seastar (ScyllaDB's framework) — and that's essentially what this is, minus the kTLS.
 
 ## Benchmarks
 
@@ -141,13 +147,15 @@ Full tunnel results across all configs and rates are in the [benchmark report](h
 
 ## What's Next
 
-**Kernel WireGuard client.** Kernel WireGuard (wg.ko) would move the tunnel ceiling from ~2 Gbps to 10+ Gbps, where HD's relay advantage becomes directly visible to applications.
+**Dual-path relay** HD currently speaks DERP over TCP/443 — works through any corporate firewall. The next step adds a UDP fast path: raw WireGuard packets   forwarded by receiver index, zero crypto on the relay. The client probes at startup — UDP if the network allows it, DERP fallback if not. Same relay, both protocols, automatic negotiation.
 
-**Custom protocol.** The whole reason I built a relay was to stream IR camera feeds between industrial networks. Right now HD speaks DERP and nothing else. A client SDK that lets you relay arbitrary protocols through it would turn HD from a Tailscale component into a general-purpose secure relay -- which is what I actually need.
+**Kernel WireGuard client** Tailscale's wireguard-go caps tunnel throughput at ~2 Gbps. Linux wg.ko and Windows wireguard.sys do 10+ Gbps with SIMDacceleration. A client using kernel WireGuard with HD's dual-path relay — raw UDP when the network allows it, kTLS-wrapped DERP over TCP/443 when it doesn't — would make the relay nearly transparent to applications. On the UDP path, the relay does zero crypto. On the TCP fallback, kTLS handles the transport encryption in the kernel. Either way, the per-packet overhead that dominates Tailscale's stack disappears.
 
-**NIC TLS offload.** The bare metal profiling proved that kTLS consumes 25% of CPU cycles and costs 27-48% of throughput. ConnectX-5/6 with hardware kTLS offload would eliminate the crypto tax entirely, including the cache cliff and kTLS-driven variance. For the next hardware purchase: TLS offload capability over raw line rate.
+**Client SDK** HD was built to stream IR camera feeds between industrial networks. A client library extracted from the relay's protocol implementation would turn HD from a Tailscale component into a general-purpose secure relay for any application that needs NAT traversal.
 
-**eBPF steering.** Currently, all connections land on the accept thread and get assigned to workers via FNV-1a hash. An eBPF XDP program could steer incoming connections directly to the correct worker's io_uring, eliminating the accept thread as a serialization point.
+**NIC TLS offload** Bare metal profiling showed kTLS consumes 25% of CPU and costs 27-48% of throughput. ConnectX-5/6 with hardware TLS offload eliminates the crypto tax entirely — including the cache cliff and kTLS-driven variance that dominate the error bars in the benchmarks.
+
+**eBPF steering** Currently all connections land on the accept thread and get assigned to workers via FNV-1a hash. An XDP program could steer incoming packets directly to the correct worker's io_uring, eliminating the accept thread as a serialization point. At scale, this matters.
 
 ## Closing Thoughts
 

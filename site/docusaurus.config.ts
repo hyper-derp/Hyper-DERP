@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Hyper-DERP',
   tagline: 'High-performance DERP relay server',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.png',
 
   url: 'https://hyper-derp.dev',
   baseUrl: '/',

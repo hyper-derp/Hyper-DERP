@@ -215,9 +215,25 @@ html[data-theme="dark"] .main-wrapper {
   color: var(--accent) !important;
 }
 
+/* Install link highlight */
+.navbar__link[href="/install/"] {
+  color: var(--primary-on) !important;
+}
+
 /* GitHub link in navbar */
 .navbar__items--right .navbar__link {
   text-transform: none;
+}
+
+/* Hero (landing page) */
+.hero {
+  text-align: center;
+  padding: 1.5rem 0 1rem;
+}
+
+.hero__subtitle {
+  font-size: 1.5rem;
+  color: var(--fg-muted);
 }
 
 /* Stats grid (landing page) */
