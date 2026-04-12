@@ -40,7 +40,7 @@ It works like this: Both peers connect to the relay on port 443. Peer A sends a 
 
 ## Making It Go Brrrr
 
-I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel and promptly forget about them. The kernel will not give them back — I only hold the keys for a few microseconds, instead of the entire connection lifecycle where derper keeps them.
+I use OpenSSL in userspace to do the TLS handshake, then install the session keys in the kernel and promptly forget about them. The kernel will not give them back — I only hold the keys for a few microseconds.
 
 Now the kernel handles all encryption and decryption. I just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
 
