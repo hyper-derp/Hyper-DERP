@@ -79,7 +79,7 @@ The published benchmarks use 4 distributed client VMs on GCP. Common reasons for
 
 3. **kTLS not active.** Check `/proc/net/tls_stat`. Without kTLS, HD uses userspace TLS and loses a significant amount of throughput.
 
-4. **Wrong worker count.** Default is one per CPU, but the optimal count depends on your workload. See [Configuration: Worker Count Tuning](/docs/configuration/#worker-count-tuning).
+4. **Wrong worker count.** Default is one per CPU, but the optimal count depends on your workload. See [Configuration: workers](/docs/configuration/#workers).
 
 ### High latency spikes at 4 vCPU
 
