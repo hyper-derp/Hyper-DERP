@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.1] - 2026-04-12
+
+### Fixed
+- Statically link spdlog and fmt to fix shared library
+  mismatch across distros (Ubuntu vs Debian soname
+  incompatibility)
+- Remove libspdlog runtime dependency from .deb package
+
+### Changed
+- APT repository at https://hyper-derp.dev/repo/ with signed
+  Release metadata (Origin, Suite, Codename, Architectures)
+- Site deployed to https://hyper-derp.dev via GitHub Pages
+
 ## [0.1.0] - 2026-04-04
 
 Initial release. Drop-in replacement for Tailscale's
