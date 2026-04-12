@@ -21,7 +21,7 @@ endif()
 project(hyper-derp
   LANGUAGES C CXX
   DESCRIPTION "High-performance DERP relay server"
-  VERSION 0.1.1
+  VERSION 0.1.2
 )
 
 set(CMAKE_CXX_STANDARD 23)
@@ -114,6 +114,8 @@ include("cmake/libderp.cmake")
 # Main executable.
 add_executable(hyper-derp src/main.cc)
 target_link_libraries(hyper-derp PRIVATE libderp)
+target_compile_definitions(hyper-derp PRIVATE
+  HD_VERSION="${PROJECT_VERSION}")
 
 # Benchmark tools.
 add_subdirectory(tools/bench)

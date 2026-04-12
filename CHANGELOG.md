@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.2] - 2026-04-12
+
+### Fixed
+- Version string now derived from CMake PROJECT_VERSION
+  instead of hardcoded in main.cc
+
 ## [0.1.1] - 2026-04-12
 
 ### Fixed

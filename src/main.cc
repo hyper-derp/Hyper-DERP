@@ -113,7 +113,7 @@ int main(int argc, char* argv[]) {
       return EXIT_SUCCESS;
     }
     if (arg == "--version"sv) {
-      std::println("hyper-derp 0.1.0");
+      std::println("hyper-derp {}", HD_VERSION);
       return EXIT_SUCCESS;
     }
     if (arg == "--config"sv && i + 1 < argc) {
