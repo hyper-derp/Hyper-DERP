@@ -28,7 +28,7 @@ So naturally I did what every reasonable person would do: rip out the data plane
 
 I started with decoupling the NetBird relay data plane. Which worked out fine, I ran benchmarks on the loopback and I soon realized that NetBird's relay isn't much of a benchmark. It's a startup prototype - not serious systems engineering. Outrunning it was hardly sport.
 
-Then I had a look at Tailscale's `derper`. Built by a proper engineering team, years of production hardening, real effort and thought behind it -- I had found a worthy opponent.
+Then I had a look at Tailscale's `derper`. Built by a proper engineering team, years of production hardening, real effort and thought behind it — I had found a worthy opponent.
 
 {/* truncate */}
 
@@ -40,7 +40,7 @@ It works like this: Both peers connect to the relay on port 443. Peer A sends a 
 
 ## Making It Go Brrrr
 
-I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel and promptly forget about them. The kernel will not give them back -- I only hold the keys for a few microseconds, instead of the entire connection lifecycle where derper keeps them.
+I use OpenSSL in userspace to do the TLS handshake, then install the session keys in kernel and promptly forget about them. The kernel will not give them back — I only hold the keys for a few microseconds, instead of the entire connection lifecycle where derper keeps them.
 
 From here on out the kernel handles all encryption and decryption. I just deal with a plain socket. Which also turns out to be great because you can offload the TLS onto a smart NIC if you so choose, going from fast to stupid fast.
 
@@ -62,13 +62,13 @@ Getting this benchmark suite right took [three rounds of failures](https://githu
 
 ## Throughput
 
-Derper spawns a goroutine per connection -- read, rewrite, write, repeat. Each one sits in the scheduler's run queue between syscalls doing nothing -- but it still has a stack, it still needs to be scheduled, and when it wakes back up it might be on a different core with cold caches. Multiply by thousands of connections and the scheduler spends most of its time juggling goroutines that are waiting for I/O, not doing work.
+Derper spawns a goroutine per connection — read, rewrite, write, repeat. Each one sits in the scheduler's run queue between syscalls doing nothing — but it still has a stack, it still needs to be scheduled, and when it wakes back up it might be on a different core with cold caches. Multiply by thousands of connections and the scheduler spends most of its time juggling goroutines that are waiting for I/O, not doing work.
 
 <Plot src="throughput.png" alt="kTLS throughput across 2/4/8/16 vCPU on GCP c4-highcpu (Xeon 8581C). 4 client VMs, 20 peers, 10 pairs, 1400-byte messages, 20 runs per point. 95% CIs shown." />
 
 Once you starve TS of vCPUs the picture becomes devastating. TS needs 16 vCPUs to deliver 7,834 Mbps. HD delivers more than that on 8 (12,316 +/- 247 Mbps). Half the cores, more throughput.
 
-At 2 vCPU the ratio gets extreme. HD peaks at 3,730 +/- 77 Mbps with one worker. TS delivers 1,870 Mbps at 3 Gbps offered, but push to 5 Gbps and it collapses to 324 Mbps with 92% loss -- the Go runtime has consumed the entire CPU budget.
+At 2 vCPU the ratio gets extreme. HD peaks at 3,730 +/- 77 Mbps with one worker. TS delivers 1,870 Mbps at 3 Gbps offered, but push to 5 Gbps and it collapses to 324 Mbps with 92% loss — the Go runtime has consumed the entire CPU budget.
 
 ## Half the Hardware
 
@@ -90,20 +90,20 @@ Once you starve derper of vCPUs this issue compounds, with the Go runtime taking
 
 The story of packet loss is different for HD. When HD's send queues fill up it pauses recv, at high rates the kernel advertises a smaller window back to the sender. Eventually the window hits zero.
 
-The senders TCP stack respects this pause. But there is a timing gap -- all packets that are in flight when the window hits zero get dropped by the kernel. In the tested ranges this stays below 2% loss.
+The senders TCP stack respects this pause. But there is a timing gap — all packets that are in flight when the window hits zero get dropped by the kernel. In the tested ranges this stays below 2% loss.
 
 
 ## Latency Under Load
 
-At idle both relays return pings in about 110-115 μs on GCP -- the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
+At idle both relays return pings in about 110-115 μs on GCP — the kernel TCP stack dominates and neither relay adds anything you'd notice. The median stays close even under load. The story is in the tail.
 
 480 runs, 2.16M latency samples. [Full methodology](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/LATENCY_TEST_V2.md).
 
-On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time -- goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
+On GCP 8 vCPU, HD p99 is load-invariant: 129-153 μs from idle through 150% of TS's ceiling. TS p99 rises from 129 to 218 μs (+69%). At 150% load, HD is 1.42x better on p99 and 1.57x better on p999. That's the Go scheduler fighting relay traffic for CPU time — goroutines servicing connections get preempted by goroutines handling the background load, and the unlucky ones wait.
 
 <Plot src="latency.png" alt="p50 and p99 latency on GCP 8 vCPU at increasing background load (% of TS ceiling). Ping/echo through the relay, 5000 pings per run, 10 runs per load level." />
 
-At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% -- the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
+At 16 vCPU the gap widens: HD p99 = 127 μs vs TS p99 = 214 μs at 150% load. HD is 1.69x better on p99, 2.03x better on p999. HD's latency actually *decreases* slightly at 150% — the io_uring busy-spin loop is always active, reducing syscall overhead. TS degrades monotonically.
 
 Full latency tables across all configs (2/4/8/16 vCPU, 6 load levels each) are in the [benchmark report](https://github.com/hyper-derp/HD.Benchmark/blob/master/REPORT.md#2-relay-latency).
 
@@ -119,23 +119,23 @@ TS loses 38% throughput going from 20 to 100 peers. HD stays flat.
 
 ## The kTLS Cache Cliff
 
-The most interesting finding wasn't a win -- it was a discontinuity. kTLS adds a roughly linear crypto tax at moderate load. Push harder and it stays linear. Then at saturation something breaks: LLC miss rate jumps from 2.6% to 40% in a single step. The AES-GCM working set -- cipher state, IV buffers, scratch space for every active connection -- overwhelms L3 and starts evicting everything else. Throughput doesn't degrade gradually. It hits a wall.
+The most interesting finding wasn't a win — it was a discontinuity. kTLS adds a roughly linear crypto tax at moderate load. Push harder and it stays linear. Then at saturation something breaks: LLC miss rate jumps from 2.6% to 40% in a single step. The AES-GCM working set — cipher state, IV buffers, scratch space for every active connection — overwhelms L3 and starts evicting everything else. Throughput doesn't degrade gradually. It hits a wall.
 
 <Plot src="perf_stats.png" alt="perf stat on bare metal Haswell at 5 Gbps, 15-second capture. HD 2w kTLS vs TS userspace TLS." />
 
-One data point tells the whole story: HD's user-space relay code (ForwardMsg -- frame parsing, hash lookup, SPSC enqueue, frame construction) consumes 2% of CPU cycles. The kernel TLS stack consumes 25%. User-code optimization is closed. The next win is NIC TLS offload. Full profiling data in the [Haswell profiling report](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/HASWELL_PROFILING_REPORT.md).
+One data point tells the whole story: HD's user-space relay code (ForwardMsg — frame parsing, hash lookup, SPSC enqueue, frame construction) consumes 2% of CPU cycles. The kernel TLS stack consumes 25%. User-code optimization is closed. The next win is NIC TLS offload. Full profiling data in the [Haswell profiling report](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/HASWELL_PROFILING_REPORT.md).
 
 ## Through the Tunnel
 
-Everything above is synthetic -- a custom bench tool pushing DERP frames at controlled rates. The question is whether any of it survives contact with a real WireGuard tunnel.
+Everything above is synthetic — a custom bench tool pushing DERP frames at controlled rates. The question is whether any of it survives contact with a real WireGuard tunnel.
 
 I set up Headscale with 4 Tailscale clients on GCP, blocked direct UDP between them to force all traffic through the DERP relay, and ran iperf3 UDP + TCP + ICMP ping concurrently. 20 runs per data point, 720 total runs. Full methodology in the [tunnel test design doc](https://github.com/hyper-derp/HD.Benchmark/blob/master/docs/TUNNEL_TEST_V2.md).
 
-Both relays deliver identical UDP throughput (~2 Gbps). The relay isn't the bottleneck -- Tailscale's userspace WireGuard (wireguard-go, ChaCha20-Poly1305) is. Loss is negligible for both (&lt;0.04%). TCP retransmits: HD produces 7-8% fewer at max load on 4 and 16 vCPU. Tied at 8 vCPU. Tunnel latency: both ~0.5-1.0 ms, dominated by WireGuard crypto and network RTT.
+Both relays deliver identical UDP throughput (~2 Gbps). The relay isn't the bottleneck — Tailscale's userspace WireGuard (wireguard-go, ChaCha20-Poly1305) is. Loss is negligible for both (&lt;0.04%). TCP retransmits: HD produces 7-8% fewer at max load on 4 and 16 vCPU. Tied at 8 vCPU. Tunnel latency: both ~0.5-1.0 ms, dominated by WireGuard crypto and network RTT.
 
 This is the expected result. The synthetic benchmarks show what happens when you push the relay directly at 10-25 Gbps. Through a real tunnel, WireGuard crypto on the client caps everything at ~2 Gbps regardless of relay. The relay has headroom either way.
 
-The tunnel tests matter for a different reason: they confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. The relay is transparent -- the architectural differences only show up when you outrun WireGuard's own crypto.
+The tunnel tests matter for a different reason: they confirm that HD doesn't *break* anything. Same throughput, same retransmits, same latency. The relay is transparent — the architectural differences only show up when you outrun WireGuard's own crypto.
 
 Worth noting: this test used 4 clients, each capped at ~2 Gbps by WireGuard. In production with 10+ clients, the aggregate traffic exceeds TS's ceiling and the relay throughput differences become directly visible as application packet loss.
 
@@ -143,7 +143,7 @@ Full tunnel results across all configs and rates are in the [benchmark report](h
 
 ## Where HD Loses
 
-**2 vCPU bare metal.** On Haswell with only two kTLS workers, TS actually wins on throughput: 4,100 Mbps vs HD's 3,833 Mbps. Two cores aren't enough to handle both relay work and AES-GCM encryption at this rate -- the 48% kTLS overhead on just two workers eats the architectural advantage. Meanwhile TS spreads its work across all 6C/12T via goroutines. Four workers fix it -- HD pulls ahead at 6,680 Mbps -- but two workers lose.
+**2 vCPU bare metal.** On Haswell with only two kTLS workers, TS actually wins on throughput: 4,100 Mbps vs HD's 3,833 Mbps. Two cores aren't enough to handle both relay work and AES-GCM encryption at this rate — the 48% kTLS overhead on just two workers eats the architectural advantage. Meanwhile TS spreads its work across all 6C/12T via goroutines. Four workers fix it — HD pulls ahead at 6,680 Mbps — but two workers lose.
 
 ## What's Next
 
@@ -159,11 +159,11 @@ Full tunnel results across all configs and rates are in the [benchmark report](h
 
 ## Closing Thoughts
 
-Tailscale made a reasonable bet, and honestly a good one: Go gives them memory safety, trivial cross-compilation, goroutine concurrency that makes the control path simple, and a hiring pool of engineers that can contribute on day one. For 95% of what Tailscale does, that's absolutely the right call -- and that 95% is why millions of people have a VPN that just works.
+Tailscale made a reasonable bet, and honestly a good one: Go gives them memory safety, trivial cross-compilation, goroutine concurrency that makes the control path simple, and a hiring pool of engineers that can contribute on day one. For 95% of what Tailscale does, that's absolutely the right call — and that 95% is why millions of people have a VPN that just works.
 
-The relay happens to be the unlucky 5% where those tradeoffs get punished -- a hot data plane that touches every byte, where the Go runtime's scheduling, garbage collection, and syscall overhead become the bottleneck rather than the network.
+The relay happens to be the unlucky 5% where those tradeoffs get punished — a hot data plane that touches every byte, where the Go runtime's scheduling, garbage collection, and syscall overhead become the bottleneck rather than the network.
 
-For most deployments that's fine -- DERP is a fallback, not the main path, and derper handles it well enough.
+For most deployments that's fine — DERP is a fallback, not the main path, and derper handles it well enough.
 
 But if you're running industrial infrastructure, enterprise networks, or anything where the relay is a permanent path carrying real sustained traffic, you need the relay itself to be fast. That's what HD is for.
 
