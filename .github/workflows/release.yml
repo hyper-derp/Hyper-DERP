@@ -66,8 +66,8 @@ jobs:
           --output-on-failure
           -E "E2E|Ktls"
 
-  release:
-    name: Build and Publish
+  build-amd64:
+    name: Build (amd64)
     needs: [test]
     runs-on: ubuntu-latest
     steps:
@@ -100,10 +100,80 @@ jobs:
       - name: Package
         run: cmake --build build --target package
 
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-amd64
+          path: build/hyper-derp_*.deb
+
+  build-arm64:
+    name: Build (arm64)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compile toolchain
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i '/^Types:/a Architectures: amd64' \
+            /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          sudo sed -i '/^\s*deb \[/!s/^deb /deb [arch=amd64] /' \
+            /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          sudo sed -i '/^\s*deb \[/!s/^deb /deb [arch=amd64] /' \
+            /etc/apt/sources.list 2>/dev/null || true
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble main universe" \
+            | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble-updates main universe" \
+            | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build \
+            gcc-14-aarch64-linux-gnu \
+            g++-14-aarch64-linux-gnu \
+            liburing-dev:arm64 \
+            libsodium-dev:arm64 \
+            libssl-dev:arm64 \
+            libcli11-dev \
+            libasio-dev
+
+      - name: Configure
+        run: >
+          cmake
+          -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=OFF
+          -G Ninja
+          -B build-arm64
+
+      - name: Build
+        run: cmake --build build-arm64 -j$(nproc)
+
+      - name: Package
+        run: cmake --build build-arm64 --target package
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64
+          path: build-arm64/hyper-derp_*.deb
+
+  publish:
+    name: Publish Release
+    needs: [build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: deb-*
+          merge-multiple: true
+
       - name: Create GitHub release
         run: |
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --generate-notes \
-            build/hyper-derp_*.deb
+            hyper-derp_*.deb
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
