@@ -21,7 +21,7 @@ endif()
 project(hyper-derp
   LANGUAGES C CXX
   DESCRIPTION "High-performance DERP relay server"
-  VERSION 0.1.3
+  VERSION 0.1.4
 )
 
 set(CMAKE_CXX_STANDARD 23)

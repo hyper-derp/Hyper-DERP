@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.4] - 2026-04-13
+
+### Added
+- ARM64 .deb package in release pipeline (amd64 + arm64
+  built in parallel, both attached to GitHub release)
+
 ## [0.1.3] - 2026-04-13
 
 ### Fixed
