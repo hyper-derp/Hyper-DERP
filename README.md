@@ -29,37 +29,6 @@ against Go derper v1.96.4.
 Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark)
 | [hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/)
 
-## Architecture
-
-Three-layer design with complete isolation between planes:
-
-```
-Accept Thread
-  TCP accept -> kTLS handshake -> HTTP upgrade -> NaCl box
-  -> assign peer to data plane shard (FNV-1a hash)
-
-Data Plane (io_uring workers, one per shard)
-  Multishot recv with provided buffer rings
-  SPSC cross-shard transfer rings (lock-free)
-  Batched eventfd signaling
-  SEND_ZC for large frames, MSG_MORE coalescing
-  Backpressure: pause recv when send queues full
-
-Control Plane (single-threaded, epoll)
-  Ping/pong, watcher notifications, peer presence
-  Fully isolated from data plane -- no shared locks
-```
-
-Data-oriented design: plain structs, free functions, no virtual
-dispatch, cache-friendly field ordering, zero allocation on the
-hot path (~70 MB pre-allocated per worker).
-
-**Why it's faster:** io_uring batched I/O vs per-packet syscalls,
-kTLS kernel-level AES-GCM vs userspace crypto, sharded workers
-vs shared-map contention, and send coalescing for smoother TCP
-flow. See [docs/architecture.md](docs/architecture.md) for
-details.
-
 ## Quick Start
 
 ```sh
