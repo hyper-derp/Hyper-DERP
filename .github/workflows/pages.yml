@@ -47,8 +47,9 @@ jobs:
 
           REPO="site/build/repo"
           POOL="$REPO/pool/main"
-          DIST="$REPO/dists/stable/main/binary-amd64"
-          mkdir -p "$POOL" "$DIST"
+          DIST_AMD64="$REPO/dists/stable/main/binary-amd64"
+          DIST_ARM64="$REPO/dists/stable/main/binary-arm64"
+          mkdir -p "$POOL" "$DIST_AMD64" "$DIST_ARM64"
 
           # Copy the public key into the build output.
           cp site/static/repo/key.gpg "$REPO/key.gpg"
@@ -67,18 +68,21 @@ jobs:
             exit 0
           fi
 
-          # Generate Packages index.
+          # Generate per-architecture Packages indices.
           cd "$REPO"
-          dpkg-scanpackages --multiversion pool/main > \
+          dpkg-scanpackages --multiversion --arch amd64 pool/main > \
             dists/stable/main/binary-amd64/Packages
           gzip -k dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages --multiversion --arch arm64 pool/main > \
+            dists/stable/main/binary-arm64/Packages
+          gzip -k dists/stable/main/binary-arm64/Packages
 
           # Generate Release file.
           cd dists/stable
           apt-ftparchive \
             -o APT::FTPArchive::Release::Suite=stable \
             -o APT::FTPArchive::Release::Codename=stable \
-            -o APT::FTPArchive::Release::Architectures=amd64 \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
             -o APT::FTPArchive::Release::Components=main \
             -o APT::FTPArchive::Release::Origin=hyper-derp \
             -o APT::FTPArchive::Release::Label=Hyper-DERP \

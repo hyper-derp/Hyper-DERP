@@ -19,7 +19,7 @@ curl -fsSL https://hyper-derp.dev/repo/key.gpg | \
   sudo gpg --dearmor \
     -o /usr/share/keyrings/hyper-derp.gpg
 
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/hyper-derp.gpg] \
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hyper-derp.gpg] \
   https://hyper-derp.dev/repo stable main" | \
   sudo tee /etc/apt/sources.list.d/hyper-derp.list
 
