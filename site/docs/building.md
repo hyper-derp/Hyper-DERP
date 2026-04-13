@@ -15,14 +15,15 @@ sidebar_position: 5
 | Clang | 17 | C++23 compiler |
 | liburing | 2.4 | io_uring API |
 | libsodium | 1.0.18 | Curve25519, XSalsa20 |
-| libspdlog | 1.12 | Logging |
 | OpenSSL | 3.0 | TLS, kTLS support |
+
+spdlog and fmt are fetched and statically linked via CMake FetchContent.
 
 On Debian/Ubuntu:
 
 ```bash
 sudo apt install cmake ninja-build clang \
-  liburing-dev libsodium-dev libspdlog-dev libssl-dev
+  liburing-dev libsodium-dev libssl-dev
 ```
 
 ## CMake Presets

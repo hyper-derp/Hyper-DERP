@@ -38,7 +38,7 @@ hyper-derp --version
 
 ```bash
 sudo apt install cmake ninja-build clang \
-  liburing-dev libsodium-dev libspdlog-dev libssl-dev
+  liburing-dev libsodium-dev libssl-dev
 ```
 
 See [Building](/docs/building/) for the full dependency table, CMake presets, cross-compilation, and running tests.

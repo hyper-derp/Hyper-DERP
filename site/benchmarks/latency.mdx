@@ -10,7 +10,7 @@ import Plot from '@site/src/components/Plot';
 
 ## Methodology
 
-Per-packet DERP relay round-trip time using
+Per-packet DERP relay round-trip time μsing
 `derp_test_client` in ping/echo mode.
 
 - **Path**: client sends DERP `SendPacket` with embedded
@@ -27,53 +27,53 @@ Per-packet DERP relay round-trip time using
 
 <Plot src="latency_load.png" dir="/img/bench" alt="Relay latency vs load level, 8 and 16 vCPU" />
 
-## 8 vCPU -- HD flat, TS degrades
+## 8 vCPU — HD flat, TS degrades
 
 | Load | HD p50 | HD p99 | HD p999 | TS p50 | TS p99 | TS p999 |
 |------|-------:|-------:|--------:|-------:|-------:|--------:|
-| Idle | 114 us | 129 us | 143 us | 112 us | 129 us | 162 us |
-| 25% | 115 us | 138 us | 158 us | 117 us | 148 us | 233 us |
-| 50% | 122 us | 149 us | 172 us | 119 us | 157 us | 251 us |
-| 75% | 124 us | 152 us | 171 us | 119 us | 163 us | 252 us |
-| 100% | 121 us | **147 us** | 169 us | 121 us | **185 us** | 272 us |
-| 150% | 121 us | **153 us** | 184 us | 124 us | **218 us** | 289 us |
+| Idle | 114 μs | 129 μs | 143 μs | 112 μs | 129 μs | 162 μs |
+| 25% | 115 μs | 138 μs | 158 μs | 117 μs | 148 μs | 233 μs |
+| 50% | 122 μs | 149 μs | 172 μs | 119 μs | 157 μs | 251 μs |
+| 75% | 124 μs | 152 μs | 171 μs | 119 μs | 163 μs | 252 μs |
+| 100% | 121 μs | **147 μs** | 169 μs | 121 μs | **185 μs** | 272 μs |
+| 150% | 121 μs | **153 μs** | 184 μs | 124 μs | **218 μs** | 289 μs |
 
-HD p99 is load-invariant: 129--153 us from idle through
-150%. TS p99 rises from 129 to 218 us (+69%). At 150%
+HD p99 is load-invariant: 129–153 μs from idle through
+150%. TS p99 rises from 129 to 218 μs (+69%). At 150%
 load, HD is **1.42x better on p99** and **1.57x better
 on p999**.
 
-## 16 vCPU -- HD dominates
+## 16 vCPU — HD dominates
 
 | Load | HD p50 | HD p99 | HD p999 | TS p50 | TS p99 | TS p999 |
 |------|-------:|-------:|--------:|-------:|-------:|--------:|
-| Idle | 106 us | 119 us | 133 us | 104 us | 117 us | 145 us |
-| 50% | 110 us | 127 us | 140 us | 105 us | 138 us | 258 us |
-| 100% | 109 us | **130 us** | 144 us | 107 us | **190 us** | 275 us |
-| 150% | 105 us | **127 us** | 141 us | 109 us | **214 us** | 286 us |
+| Idle | 106 μs | 119 μs | 133 μs | 104 μs | 117 μs | 145 μs |
+| 50% | 110 μs | 127 μs | 140 μs | 105 μs | 138 μs | 258 μs |
+| 100% | 109 μs | **130 μs** | 144 μs | 107 μs | **190 μs** | 275 μs |
+| 150% | 105 μs | **127 μs** | 141 μs | 109 μs | **214 μs** | 286 μs |
 
-At 150% load: HD p99 = 127 us, TS p99 = 214 us.
+At 150% load: HD p99 = 127 μs, TS p99 = 214 μs.
 **1.69x better on p99, 2.03x better on p999.** HD's
-latency actually decreases slightly at 150% -- the
+latency actually decreases slightly at 150% — the
 io_uring busy-spin loop reduces syscall overhead.
 
-## 2 vCPU -- both marginal
+## 2 vCPU — both marginal
 
 | Load | HD p50 | HD p99 | TS p50 | TS p99 |
 |------|-------:|-------:|-------:|-------:|
-| Idle | 109 us | 143 us | 101 us | 128 us |
-| 100% | 120 us | 166 us | 113 us | 157 us |
-| 150% | 117 us | 147 us | 122 us | 171 us |
+| Idle | 109 μs | 143 μs | 101 μs | 128 μs |
+| 100% | 120 μs | 166 μs | 113 μs | 157 μs |
+| 150% | 117 μs | 147 μs | 122 μs | 171 μs |
 
 Both at their limits. HD slightly better at 150% (147 vs
-171 us p99), TS slightly better at idle.
+171 μs p99), TS slightly better at idle.
 
 ## Known Issue: 4 vCPU Backpressure Stall
 
 HD at 4 vCPU (2 workers) has intermittent
 multi-millisecond stalls at >=50% load. Three consecutive
-runs at 100% load hit p99 of 593 / 2,579 / 3,923 us --
-20-30x worse than the normal ~130 us.
+runs at 100% load hit p99 of 593 / 2,579 / 3,923 μs --
+20-30x worse than the normal ~130 μs.
 
 ### Root Cause
 
@@ -110,8 +110,8 @@ rarely reaches the high-water mark.
 
 | Metric | Before | After (est) |
 |--------|-------:|------------:|
-| 4v p99 @ 100% | 825 us (with 3ms stalls) | &lt;200 us |
-| 4v p99 @ 150% | 765 us | &lt;250 us |
+| 4v p99 @ 100% | 825 μs (with 3ms stalls) | &lt;200 μs |
+| 4v p99 @ 150% | 765 μs | &lt;250 μs |
 | 4v oscillation freq | ~42ms | eliminated |
 | 8v/16v performance | baseline | unchanged |
 
