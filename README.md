@@ -180,7 +180,6 @@ cmake --build build-arm64 -j
 ```
 
 Targets AWS Graviton and Ampere (Oracle/Azure) instances.
-io_uring is architecture-independent on kernel 6.1+.
 
 ### Packaging
 
