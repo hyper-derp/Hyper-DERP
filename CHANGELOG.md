@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.3] - 2026-04-13
+
+### Fixed
+- SVG logos: removed mm units causing clipping in some
+  browsers
+- Data accuracy: corrected latency percentages, removed
+  unsourced context switch claim from landing page, fixed
+  stale libspdlog-dev in build docs
+- Blog: μs units, em dashes, publish date set to 2026-04-15
+
+### Changed
+- Split configuration docs into practical guide and full
+  CLI/config reference page
+- Finalized project logo across site, favicon, and README
+- Removed architecture section from README (covered on site)
+
 ## [0.1.2] - 2026-04-12
 
 ### Fixed
