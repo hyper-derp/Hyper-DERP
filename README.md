@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="graphics/hyper-derp.svg" alt="Hyper-DERP" height="200" />
+  <img src="graphics/hyper-derp.svg" alt="Hyper-DERP" width="600" />
 </p>
 
 <h1 align="center">Hyper-DERP</h1>
