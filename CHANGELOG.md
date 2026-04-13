@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.5] - 2026-04-13
+
+### Fixed
+- ARM64 .deb was named _amd64.deb due to dpkg
+  --print-architecture running on the host, not the
+  cross-compile target. Now uses CMAKE_SYSTEM_PROCESSOR.
+
 ## [0.1.4] - 2026-04-13
 
 ### Added

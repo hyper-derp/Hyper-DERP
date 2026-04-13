@@ -21,7 +21,7 @@ endif()
 project(hyper-derp
   LANGUAGES C CXX
   DESCRIPTION "High-performance DERP relay server"
-  VERSION 0.1.4
+  VERSION 0.1.5
 )
 
 set(CMAKE_CXX_STANDARD 23)
@@ -168,11 +168,17 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
   "liburing2 (>= 2.9), libsodium23 (>= 1.0.18)")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE
   "https://github.com/hyper-derp/hyper-derp")
-# Let dpkg-architecture determine the correct name.
-execute_process(
-  COMMAND dpkg --print-architecture
-  OUTPUT_VARIABLE _dpkg_arch
-  OUTPUT_STRIP_TRAILING_WHITESPACE)
+# Map CMake architecture to Debian architecture name.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+  set(_dpkg_arch "arm64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+  set(_dpkg_arch "amd64")
+else()
+  execute_process(
+    COMMAND dpkg --print-architecture
+    OUTPUT_VARIABLE _dpkg_arch
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${_dpkg_arch}")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
