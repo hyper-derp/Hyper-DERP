@@ -12,7 +12,7 @@ namespace hyper_derp {
 void HdPeersInit(HdPeerRegistry* reg,
                  const Key& relay_key,
                  HdEnrollMode mode) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   reg->relay_key = relay_key;
   reg->enroll_mode = mode;
   reg->peer_count = 0;
@@ -36,7 +36,7 @@ HdPeer* HdPeersLookup(HdPeerRegistry* reg,
 HdPeer* HdPeersInsert(HdPeerRegistry* reg,
                        const Key& key,
                        int fd) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   // Check for duplicate.
   for (int i = 0; i < kHdMaxPeers; ++i) {
     HdPeer& p = reg->peers[i];
@@ -69,7 +69,7 @@ HdPeer* HdPeersInsert(HdPeerRegistry* reg,
 
 bool HdPeersApprove(HdPeerRegistry* reg,
                     const uint8_t* key) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   HdPeer* p = HdPeersLookup(reg, key);
   if (!p) return false;
   p->state = HdPeerState::kApproved;
@@ -78,7 +78,7 @@ bool HdPeersApprove(HdPeerRegistry* reg,
 
 bool HdPeersDeny(HdPeerRegistry* reg,
                  const uint8_t* key) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   HdPeer* p = HdPeersLookup(reg, key);
   if (!p) return false;
   p->state = HdPeerState::kDenied;
@@ -87,7 +87,7 @@ bool HdPeersDeny(HdPeerRegistry* reg,
 
 void HdPeersRemove(HdPeerRegistry* reg,
                    const uint8_t* key) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   HdPeer* p = HdPeersLookup(reg, key);
   if (!p) return;
   p->occupied = 2;  // Tombstone.
@@ -97,7 +97,7 @@ void HdPeersRemove(HdPeerRegistry* reg,
 bool HdPeersAddRule(HdPeerRegistry* reg,
                     const uint8_t* peer_key,
                     const Key& dst_key) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   HdPeer* p = HdPeersLookup(reg, peer_key);
   if (!p) return false;
   if (p->rule_count >= kHdMaxForwardRules) return false;
@@ -116,7 +116,7 @@ bool HdPeersAddRule(HdPeerRegistry* reg,
 bool HdPeersRemoveRule(HdPeerRegistry* reg,
                        const uint8_t* peer_key,
                        const uint8_t* dst_key) {
-  std::lock_guard<std::mutex> lock(reg->mutex);
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
   HdPeer* p = HdPeersLookup(reg, peer_key);
   if (!p) return false;
   for (int i = 0; i < kHdMaxForwardRules; ++i) {

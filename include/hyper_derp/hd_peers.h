@@ -58,7 +58,7 @@ struct HdPeerRegistry {
   int peer_count = 0;
   HdEnrollMode enroll_mode = HdEnrollMode::kManual;
   Key relay_key{};
-  std::mutex mutex;
+  std::recursive_mutex mutex;
 };
 
 /// Initialize the registry with a relay key and mode.

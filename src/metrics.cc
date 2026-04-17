@@ -277,29 +277,48 @@ static void RegisterHdRoutes(MetricsServer* ms) {
   // List all HD peers.
   CROW_ROUTE(ms->app, "/api/v1/peers")
   ([ms]() {
-    std::lock_guard lock(ms->hd_peers->mutex);
+    // Snapshot under lock, build JSON outside.
+    struct PeerSnap {
+      Key key;
+      HdPeerState state;
+      int fd;
+      int rule_count;
+      Key rules[kHdMaxForwardRules];
+    };
+    std::vector<PeerSnap> snaps;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      for (int i = 0; i < kHdMaxPeers; i++) {
+        auto& p = ms->hd_peers->peers[i];
+        if (p.occupied != 1) continue;
+        PeerSnap s;
+        s.key = p.key;
+        s.state = p.state;
+        s.fd = p.fd;
+        s.rule_count = p.rule_count;
+        for (int r = 0; r < p.rule_count; r++) {
+          s.rules[r] = p.rules[r].dst_key;
+        }
+        snaps.push_back(s);
+      }
+    }
     crow::json::wvalue::list peers;
-    for (int i = 0; i < kHdMaxPeers; i++) {
-      auto& p = ms->hd_peers->peers[i];
-      if (p.occupied != 1) continue;
+    for (auto& s : snaps) {
       crow::json::wvalue pj;
       char hex[kKeySize * 2 + 1];
-      KeyToHex(p.key, hex);
+      KeyToHex(s.key, hex);
       pj["key"] = std::string(hex);
-      pj["state"] = p.state == HdPeerState::kApproved
+      pj["state"] = s.state == HdPeerState::kApproved
           ? "approved"
-          : p.state == HdPeerState::kPending
+          : s.state == HdPeerState::kPending
           ? "pending" : "denied";
-      pj["fd"] = p.fd;
-      pj["rule_count"] = p.rule_count;
-      // Build rules list.
+      pj["fd"] = s.fd;
+      pj["rule_count"] = s.rule_count;
       crow::json::wvalue::list rules;
-      for (int r = 0; r < p.rule_count; r++) {
-        if (p.rules[r].occupied) {
-          char dhex[kKeySize * 2 + 1];
-          KeyToHex(p.rules[r].dst_key, dhex);
-          rules.push_back(std::string(dhex));
-        }
+      for (int r = 0; r < s.rule_count; r++) {
+        char dhex[kKeySize * 2 + 1];
+        KeyToHex(s.rules[r], dhex);
+        rules.push_back(std::string(dhex));
       }
       pj["rules"] = std::move(rules);
       peers.push_back(std::move(pj));
@@ -322,20 +341,25 @@ static void RegisterHdRoutes(MetricsServer* ms) {
             nullptr, nullptr, nullptr) != 0) {
       return crow::response(400, "invalid key hex");
     }
-    std::lock_guard lock(ms->hd_peers->mutex);
-    if (!HdPeersApprove(ms->hd_peers, key.data())) {
-      return crow::response(404, "peer not found");
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      if (!HdPeersApprove(ms->hd_peers, key.data())) {
+        return crow::response(404, "peer not found");
+      }
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (p) fd = p->fd;
     }
-    auto* p = HdPeersLookup(ms->hd_peers, key.data());
-    if (p && p->fd >= 0) {
-      HdSendApproved(p->fd, key);
-      // Clear handshake timeouts.
+    // I/O outside the lock.
+    if (fd >= 0) {
+      HdSendApproved(fd, key);
       timeval tv{.tv_sec = 0, .tv_usec = 0};
-      setsockopt(p->fd, SOL_SOCKET, SO_RCVTIMEO,
+      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
                  &tv, sizeof(tv));
-      setsockopt(p->fd, SOL_SOCKET, SO_SNDTIMEO,
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
                  &tv, sizeof(tv));
-      DpAddPeer(ms->ctx, p->fd, key,
+      DpAddPeer(ms->ctx, fd, key,
                 PeerProtocol::kHd);
     }
     return crow::response(200, "approved");
@@ -353,16 +377,21 @@ static void RegisterHdRoutes(MetricsServer* ms) {
             nullptr, nullptr, nullptr) != 0) {
       return crow::response(400, "invalid key hex");
     }
-    std::lock_guard lock(ms->hd_peers->mutex);
-    auto* p = HdPeersLookup(ms->hd_peers, key.data());
-    if (!p) {
-      return crow::response(404, "peer not found");
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+      HdPeersDeny(ms->hd_peers, key.data());
     }
-    if (p->fd >= 0) {
-      HdSendDenied(p->fd, 0, "denied by admin");
-      close(p->fd);
+    if (fd >= 0) {
+      HdSendDenied(fd, 0, "denied by admin");
+      close(fd);
     }
-    HdPeersDeny(ms->hd_peers, key.data());
     return crow::response(200, "denied");
   });
 
@@ -378,16 +407,21 @@ static void RegisterHdRoutes(MetricsServer* ms) {
             nullptr, nullptr, nullptr) != 0) {
       return crow::response(400, "invalid key hex");
     }
-    std::lock_guard lock(ms->hd_peers->mutex);
-    auto* p = HdPeersLookup(ms->hd_peers, key.data());
-    if (!p) {
-      return crow::response(404, "peer not found");
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+      HdPeersRemove(ms->hd_peers, key.data());
     }
-    if (p->fd >= 0) {
+    if (fd >= 0) {
       DpRemovePeer(ms->ctx, key);
-      close(p->fd);
+      close(fd);
     }
-    HdPeersRemove(ms->hd_peers, key.data());
     return crow::response(200, "revoked");
   });
 
