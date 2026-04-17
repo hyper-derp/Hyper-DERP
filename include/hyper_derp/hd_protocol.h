@@ -139,6 +139,22 @@ int HdBuildPeerGone(uint8_t* buf,
                     const Key& peer_key,
                     uint8_t reason);
 
+/// @brief Builds an HD PeerInfo frame.
+///
+/// Carries ICE candidate information for Level 2 direct
+/// path negotiation. Payload format:
+///   [32B peer_key][candidate_data...]
+/// where candidate_data is IceSerializeCandidates output.
+/// @param buf Output buffer (must be large enough).
+/// @param peer_key The peer this info is about.
+/// @param candidate_data Serialized ICE candidates.
+/// @param candidate_len Length of candidate data.
+/// @returns Total frame size written.
+int HdBuildPeerInfo(uint8_t* buf,
+                    const Key& peer_key,
+                    const uint8_t* candidate_data,
+                    int candidate_len);
+
 }  // namespace hyper_derp
 
 #endif  // INCLUDE_HYPER_DERP_HD_PROTOCOL_H_

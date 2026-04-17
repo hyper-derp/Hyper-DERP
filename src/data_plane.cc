@@ -1031,9 +1031,34 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       EnqueueSend(w, peer, buf,
                   static_cast<int>(sizeof(pong)));
     }
+  } else if (hd_type == HdFrameType::kPeerInfo) {
+    // Forward PeerInfo to control plane for ICE
+    // processing. Pipe format: [4B fd BE][1B type]
+    // [4B len BE][payload].
+    uint8_t fd_buf[4];
+    fd_buf[0] = static_cast<uint8_t>(peer->fd >> 24);
+    fd_buf[1] = static_cast<uint8_t>(peer->fd >> 16);
+    fd_buf[2] = static_cast<uint8_t>(peer->fd >> 8);
+    fd_buf[3] = static_cast<uint8_t>(peer->fd);
+    uint8_t tag = static_cast<uint8_t>(
+        HdFrameType::kPeerInfo);
+    uint8_t len_buf[4];
+    len_buf[0] =
+        static_cast<uint8_t>(payload_len >> 24);
+    len_buf[1] =
+        static_cast<uint8_t>(payload_len >> 16);
+    len_buf[2] =
+        static_cast<uint8_t>(payload_len >> 8);
+    len_buf[3] =
+        static_cast<uint8_t>(payload_len);
+    (void)WriteAllBlocking(w->pipe_wr, fd_buf, 4);
+    (void)WriteAllBlocking(w->pipe_wr, &tag, 1);
+    (void)WriteAllBlocking(w->pipe_wr, len_buf, 4);
+    (void)WriteAllBlocking(w->pipe_wr, payload,
+                           payload_len);
   }
-  // Other HD frame types (PeerInfo, PeerGone) are
-  // control frames — ignored in the data plane for now.
+  // Other HD frame types (PeerGone) are control frames
+  // handled elsewhere.
 }
 
 /// Dispatch a complete frame based on peer protocol.

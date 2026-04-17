@@ -18,10 +18,22 @@
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
 #include "hyper_derp/hd_peers.h"
+#include "hyper_derp/ice.h"
 #include "hyper_derp/ktls.h"
 #include "hyper_derp/metrics.h"
+#include "hyper_derp/turn.h"
+#include "hyper_derp/xdp_loader.h"
 
 namespace hyper_derp {
+
+/// Connection level for a peer pair. Level 0 (DERP) is
+/// managed by the standard DERP data plane. Level 1 (HD) and
+/// Level 2 (Direct) are HD protocol extensions.
+enum class ConnectionLevel : uint8_t {
+  kDerp = 0,    // Level 0: standard DERP relay
+  kHd = 1,      // Level 1: HD protocol relay
+  kDirect = 2,  // Level 2: direct path (ICE)
+};
 
 /// Error codes for ServerInit / ServerRun.
 enum class ServerError {
@@ -41,6 +53,8 @@ enum class ServerError {
   DataPlaneRunFailed,
   /// kTLS initialization failed.
   KtlsInitFailed,
+  /// Level 2 initialization failed.
+  Level2InitFailed,
 };
 
 /// Human-readable name for a ServerError code.
@@ -63,6 +77,8 @@ constexpr auto ServerErrorName(ServerError e)
       return "DataPlaneRunFailed";
     case ServerError::KtlsInitFailed:
       return "KtlsInitFailed";
+    case ServerError::Level2InitFailed:
+      return "Level2InitFailed";
   }
   return "Unknown";
 }
@@ -92,6 +108,17 @@ struct ServerConfig {
   HdEnrollMode hd_enroll_mode = HdEnrollMode::kManual;
   std::array<int, kMaxWorkers> pin_cores{};
 
+  /// Level 2 (direct path) configuration.
+  struct Level2Config {
+    bool enabled = false;
+    uint16_t stun_port = 3478;
+    /// NIC name for XDP attachment (e.g. "eth0").
+    std::string xdp_interface;
+    std::string turn_realm;
+    int turn_max_allocations = 10000;
+    int turn_default_lifetime = 600;
+  } level2;
+
   ServerConfig() { pin_cores.fill(-1); }
 };
 
@@ -110,6 +137,12 @@ struct Server {
   std::thread accept_thread;
   std::thread control_thread;
   MetricsServer* metrics_server = nullptr;
+
+  // Level 2 (direct path) subsystems.
+  IceAgent ice_agent{};
+  TurnManager* turn_manager = nullptr;
+  XdpContext xdp_ctx{};
+  bool level2_enabled = false;
 };
 
 /// @brief Initializes the server.
@@ -137,6 +170,16 @@ void ServerStop(Server* server);
 /// @brief Tears down the server, freeing all resources.
 /// @param server Server to destroy.
 void ServerDestroy(Server* server);
+
+/// @brief Attempt Level 2 ICE upgrade for a new HD peer.
+///
+/// Called after a new HD peer connects. Checks the HD peer
+/// registry for other approved peers with matching forwarding
+/// rules and starts ICE sessions for each eligible pair.
+/// @param server Server with Level 2 enabled.
+/// @param new_peer_key The newly connected HD peer's key.
+void TryIceUpgrade(Server* server,
+                   const Key& new_peer_key);
 
 }  // namespace hyper_derp
 

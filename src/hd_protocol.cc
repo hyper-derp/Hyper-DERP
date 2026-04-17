@@ -77,4 +77,20 @@ int HdBuildPeerGone(uint8_t* buf,
   return kHdFrameHeaderSize + payload_len;
 }
 
+int HdBuildPeerInfo(uint8_t* buf,
+                    const Key& peer_key,
+                    const uint8_t* candidate_data,
+                    int candidate_len) {
+  int payload_len = kKeySize + candidate_len;
+  HdWriteFrameHeader(buf, HdFrameType::kPeerInfo,
+                     static_cast<uint32_t>(payload_len));
+  std::memcpy(buf + kHdFrameHeaderSize,
+              peer_key.data(), kKeySize);
+  if (candidate_len > 0) {
+    std::memcpy(buf + kHdFrameHeaderSize + kKeySize,
+                candidate_data, candidate_len);
+  }
+  return kHdFrameHeaderSize + payload_len;
+}
+
 }  // namespace hyper_derp

@@ -13,14 +13,19 @@
 
 #include <spdlog/spdlog.h>
 
+#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <netinet/in.h>
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 
 #include "hyper_derp/data_plane.h"
+#include "hyper_derp/hd_protocol.h"
+#include "hyper_derp/stun.h"
 
 namespace hyper_derp {
 
@@ -272,6 +277,86 @@ static void HandleClosePeer(ControlPlane* cp, int fd,
                PeerGoneReason::kDisconnected);
 }
 
+// -- Level 2 ICE helpers --------------------------------
+
+/// epoll data tags for non-pipe sources.
+/// Worker pipes use data.u32 = [0, kMaxWorkers).
+/// Level 2 sources use higher values.
+static constexpr uint32_t kEpollTagIceTimer =
+    kMaxWorkers;
+static constexpr uint32_t kEpollTagStunUdp =
+    kMaxWorkers + 1;
+
+/// Process STUN responses received on the UDP socket.
+static void HandleStunResponse(ControlPlane* cp) {
+  uint8_t buf[1500];
+  sockaddr_in from{};
+  socklen_t from_len = sizeof(from);
+  int n = recvfrom(cp->stun_udp_fd, buf, sizeof(buf),
+                   MSG_DONTWAIT,
+                   reinterpret_cast<sockaddr*>(&from),
+                   &from_len);
+  if (n <= 0) return;
+
+  StunMessage msg;
+  if (!StunParse(buf, n, &msg)) return;
+  if (msg.type != kStunBindingResponse) return;
+  if (!msg.has_xor_mapped) return;
+
+  // Find the ICE session matching this transaction ID.
+  std::lock_guard lock(cp->ice_agent->mutex);
+  for (int i = 0; i < kIceMaxSessions; ++i) {
+    IceSession* s = &cp->ice_agent->sessions[i];
+    if (!s->occupied) continue;
+    if (s->state != IceState::kChecking) continue;
+    bool nominated = IceProcessResponse(
+        s, msg.transaction_id,
+        msg.xor_mapped_ip, msg.xor_mapped_port);
+    if (nominated) {
+      spdlog::info(
+          "ICE: Level 2 nominated for session {}", i);
+      break;
+    }
+  }
+}
+
+/// Run one round of ICE connectivity checks across
+/// all active sessions.
+static void HandleIceTimer(ControlPlane* cp) {
+  // Drain the timerfd.
+  uint64_t expirations = 0;
+  (void)read(cp->ice_timer_fd, &expirations,
+             sizeof(expirations));
+
+  if (!cp->ice_agent) return;
+
+  std::lock_guard lock(cp->ice_agent->mutex);
+  for (int i = 0; i < kIceMaxSessions; ++i) {
+    IceSession* s = &cp->ice_agent->sessions[i];
+    if (!s->occupied) continue;
+    if (s->state != IceState::kChecking) continue;
+
+    IceCandidatePair* pair = IceNextCheck(s);
+    if (!pair) continue;
+
+    // Build and send STUN Binding Request.
+    uint8_t stun_buf[256];
+    int stun_len = StunBuildBindingRequest(
+        stun_buf, sizeof(stun_buf),
+        pair->transaction_id);
+    if (stun_len <= 0) continue;
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = pair->remote.ip;
+    dst.sin_port = pair->remote.port;
+    sendto(cp->stun_udp_fd, stun_buf, stun_len,
+           MSG_DONTWAIT,
+           reinterpret_cast<const sockaddr*>(&dst),
+           sizeof(dst));
+  }
+}
+
 // -- Public API -------------------------------------
 
 void CpInit(ControlPlane* cp, Ctx* dp) {
@@ -282,6 +367,14 @@ void CpInit(ControlPlane* cp, Ctx* dp) {
 }
 
 void CpDestroy(ControlPlane* cp) {
+  if (cp->ice_timer_fd >= 0) {
+    close(cp->ice_timer_fd);
+    cp->ice_timer_fd = -1;
+  }
+  if (cp->stun_udp_fd >= 0) {
+    close(cp->stun_udp_fd);
+    cp->stun_udp_fd = -1;
+  }
   if (cp->epoll_fd >= 0) {
     close(cp->epoll_fd);
     cp->epoll_fd = -1;
@@ -306,6 +399,14 @@ void CpProcessFrame(ControlPlane* cp, int fd,
                     const uint8_t* payload,
                     int payload_len) {
   std::lock_guard lock(cp->mutex);
+
+  // HD PeerInfo frames arrive with type byte 0x20 from
+  // the data plane pipe (not a FrameType enum member).
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(HdFrameType::kPeerInfo)) {
+    CpHandleHdPeerInfo(cp, fd, payload, payload_len);
+    return;
+  }
 
   switch (type) {
     case FrameType::kWatchConns:
@@ -368,15 +469,41 @@ void CpRunLoop(ControlPlane* cp) {
     }
   }
 
+  // Register Level 2 fds with epoll if enabled.
+  if (cp->level2_enabled) {
+    if (cp->ice_timer_fd >= 0) {
+      epoll_event tev{};
+      tev.events = EPOLLIN;
+      tev.data.u32 = kEpollTagIceTimer;
+      if (epoll_ctl(cp->epoll_fd, EPOLL_CTL_ADD,
+                    cp->ice_timer_fd, &tev) < 0) {
+        spdlog::error("epoll_ctl ADD ice_timer: {}",
+                      strerror(errno));
+      }
+    }
+    if (cp->stun_udp_fd >= 0) {
+      epoll_event sev{};
+      sev.events = EPOLLIN;
+      sev.data.u32 = kEpollTagStunUdp;
+      if (epoll_ctl(cp->epoll_fd, EPOLL_CTL_ADD,
+                    cp->stun_udp_fd, &sev) < 0) {
+        spdlog::error("epoll_ctl ADD stun_udp: {}",
+                      strerror(errno));
+      }
+    }
+  }
+
   cp->running.store(1, std::memory_order_release);
   spdlog::info("control plane running ({} pipes)",
                nworkers);
 
-  epoll_event events[kMaxWorkers];
+  // Extra slots for ICE timer + STUN UDP.
+  constexpr int kMaxEpollEvents = kMaxWorkers + 2;
+  epoll_event events[kMaxEpollEvents];
 
   while (cp->running.load(std::memory_order_acquire)) {
     int nev = epoll_wait(cp->epoll_fd, events,
-                         kMaxWorkers, 500);
+                         kMaxEpollEvents, 500);
     if (nev < 0) {
       if (errno == EINTR) {
         continue;
@@ -386,7 +513,19 @@ void CpRunLoop(ControlPlane* cp) {
     }
 
     for (int e = 0; e < nev; e++) {
-      int wid = static_cast<int>(events[e].data.u32);
+      uint32_t tag = events[e].data.u32;
+
+      // Handle Level 2 epoll sources.
+      if (tag == kEpollTagIceTimer) {
+        HandleIceTimer(cp);
+        continue;
+      }
+      if (tag == kEpollTagStunUdp) {
+        HandleStunResponse(cp);
+        continue;
+      }
+
+      int wid = static_cast<int>(tag);
       int pfd = cp->data_plane->pipe_rds[wid];
       PipeReader* rdr = &cp->readers[wid];
 
@@ -451,6 +590,116 @@ void CpRunLoop(ControlPlane* cp) {
 
 void CpStop(ControlPlane* cp) {
   cp->running.store(0, std::memory_order_release);
+}
+
+int CpEnableLevel2(ControlPlane* cp,
+                   IceAgent* agent,
+                   uint16_t stun_port) {
+  cp->ice_agent = agent;
+  cp->level2_enabled = true;
+
+  // Create timerfd for periodic ICE checks (50ms).
+  cp->ice_timer_fd = timerfd_create(
+      CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+  if (cp->ice_timer_fd < 0) {
+    spdlog::error("timerfd_create: {}",
+                  strerror(errno));
+    return -1;
+  }
+  itimerspec its{};
+  its.it_interval = {.tv_sec = 0,
+                     .tv_nsec = 50000000};  // 50ms
+  its.it_value = {.tv_sec = 0,
+                  .tv_nsec = 50000000};
+  if (timerfd_settime(cp->ice_timer_fd, 0, &its,
+                      nullptr) < 0) {
+    spdlog::error("timerfd_settime: {}",
+                  strerror(errno));
+    close(cp->ice_timer_fd);
+    cp->ice_timer_fd = -1;
+    return -1;
+  }
+
+  // Create UDP socket for STUN binding requests and
+  // responses.
+  cp->stun_udp_fd = socket(AF_INET, SOCK_DGRAM |
+                           SOCK_NONBLOCK | SOCK_CLOEXEC,
+                           0);
+  if (cp->stun_udp_fd < 0) {
+    spdlog::error("STUN UDP socket: {}",
+                  strerror(errno));
+    close(cp->ice_timer_fd);
+    cp->ice_timer_fd = -1;
+    return -1;
+  }
+  sockaddr_in bind_addr{};
+  bind_addr.sin_family = AF_INET;
+  bind_addr.sin_addr.s_addr = INADDR_ANY;
+  bind_addr.sin_port = htons(stun_port);
+  int opt = 1;
+  setsockopt(cp->stun_udp_fd, SOL_SOCKET,
+             SO_REUSEADDR, &opt, sizeof(opt));
+  if (bind(cp->stun_udp_fd,
+           reinterpret_cast<sockaddr*>(&bind_addr),
+           sizeof(bind_addr)) < 0) {
+    spdlog::error("STUN UDP bind port {}: {}",
+                  stun_port, strerror(errno));
+    close(cp->stun_udp_fd);
+    cp->stun_udp_fd = -1;
+    close(cp->ice_timer_fd);
+    cp->ice_timer_fd = -1;
+    return -1;
+  }
+
+  spdlog::info("Level 2 control plane enabled "
+               "(STUN port {})", stun_port);
+  return 0;
+}
+
+void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
+                        const uint8_t* payload,
+                        int payload_len) {
+  if (!cp->level2_enabled || !cp->ice_agent) {
+    spdlog::debug("PeerInfo from fd {} ignored "
+                  "(Level 2 disabled)", fd);
+    return;
+  }
+  // PeerInfo payload: [32B peer_key][candidate_data...]
+  if (payload_len < kKeySize) {
+    spdlog::debug("PeerInfo from fd {} too short", fd);
+    return;
+  }
+  const uint8_t* peer_key = payload;
+  const uint8_t* cand_data = payload + kKeySize;
+  int cand_len = payload_len - kKeySize;
+
+  std::lock_guard lock(cp->ice_agent->mutex);
+
+  IceSession* session =
+      IceFindSession(cp->ice_agent, peer_key);
+  if (!session) {
+    spdlog::debug("PeerInfo: no ICE session for peer");
+    return;
+  }
+
+  int parsed = IceParseCandidates(session,
+                                  cand_data, cand_len);
+  if (parsed < 0) {
+    spdlog::warn("PeerInfo: failed to parse candidates");
+    return;
+  }
+  spdlog::debug("PeerInfo: parsed {} remote candidates",
+                parsed);
+
+  // If we have both local and remote candidates, form
+  // pairs and start checking.
+  if (session->local_count > 0 &&
+      session->remote_count > 0 &&
+      session->state == IceState::kGathering) {
+    IceFormPairs(session);
+    spdlog::info("ICE: formed {} pairs, checking",
+                 session->pair_count);
+  }
 }
 
 }  // namespace hyper_derp

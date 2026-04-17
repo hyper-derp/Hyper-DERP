@@ -24,6 +24,9 @@
 #include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/http.h"
+#include "hyper_derp/ice.h"
+#include "hyper_derp/turn.h"
+#include "hyper_derp/xdp_loader.h"
 
 #include <sodium.h>
 
@@ -74,6 +77,112 @@ static void WarnRateLimit(uint64_t rejected) {
   } else {
     spdlog::warn("rate limit: rejected {} connections",
                  rejected);
+  }
+}
+
+void TryIceUpgrade(Server* server,
+                   const Key& new_peer_key) {
+  if (!server->level2_enabled || !server->hd_enabled) {
+    return;
+  }
+
+  HdPeerRegistry* reg = &server->hd_peers;
+  IceAgent* agent = &server->ice_agent;
+  std::lock_guard reg_lock(reg->mutex);
+
+  // Find the new peer in the registry.
+  HdPeer* new_peer =
+      HdPeersLookup(reg, new_peer_key.data());
+  if (!new_peer || new_peer->state !=
+      HdPeerState::kApproved) {
+    return;
+  }
+
+  // Check every other approved peer for matching
+  // forwarding rules.
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    HdPeer* other = &reg->peers[i];
+    if (other->occupied != 1) continue;
+    if (other->state != HdPeerState::kApproved) continue;
+    if (other->key == new_peer_key) continue;
+    if (other->fd < 0) continue;
+
+    // Check if other has a rule pointing at new_peer
+    // or new_peer has a rule pointing at other.
+    bool has_rule = false;
+    for (int r = 0; r < other->rule_count; ++r) {
+      if (other->rules[r].occupied &&
+          other->rules[r].dst_key == new_peer_key) {
+        has_rule = true;
+        break;
+      }
+    }
+    if (!has_rule) {
+      for (int r = 0; r < new_peer->rule_count; ++r) {
+        if (new_peer->rules[r].occupied &&
+            new_peer->rules[r].dst_key == other->key) {
+          has_rule = true;
+          break;
+        }
+      }
+    }
+    if (!has_rule) continue;
+
+    // Start ICE session for this peer pair.
+    std::lock_guard ice_lock(agent->mutex);
+    IceSession* existing =
+        IceFindSession(agent, other->key.data());
+    if (existing) continue;  // Already in progress.
+
+    IceSession* session =
+        IceStartSession(agent, other->key);
+    if (!session) {
+      spdlog::warn("ICE session table full");
+      return;
+    }
+
+    // Add relay IP as server-reflexive candidate.
+    IceAddLocalCandidate(
+        session, IceCandidateType::kServerReflexive,
+        agent->relay_ip, htons(agent->stun_port));
+
+    // Serialize candidates into PeerInfo frames and
+    // send to both peers.
+    uint8_t cand_buf[256];
+    int cand_len = IceSerializeCandidates(
+        session, cand_buf, sizeof(cand_buf));
+    if (cand_len <= 0) continue;
+
+    // Build PeerInfo frame for the new peer about the
+    // other peer.
+    uint8_t frame[512];
+    int flen = HdBuildPeerInfo(
+        frame, other->key, cand_buf, cand_len);
+    if (flen > 0) {
+      auto* buf = static_cast<uint8_t*>(malloc(flen));
+      if (buf) {
+        std::memcpy(buf, frame, flen);
+        DpWrite(&server->data_plane,
+                new_peer_key, buf, flen);
+      }
+    }
+
+    // Build PeerInfo frame for the other peer about
+    // the new peer.
+    flen = HdBuildPeerInfo(
+        frame, new_peer_key, cand_buf, cand_len);
+    if (flen > 0) {
+      auto* buf = static_cast<uint8_t*>(malloc(flen));
+      if (buf) {
+        std::memcpy(buf, frame, flen);
+        DpWrite(&server->data_plane,
+                other->key, buf, flen);
+      }
+    }
+
+    char hex[kKeySize * 2 + 1];
+    KeyToHex(other->key, hex);
+    spdlog::info("ICE: started session for peer {}", hex);
   }
 }
 
@@ -266,6 +375,11 @@ static void HandleConnection(Server* server, int fd) {
                 result.client_key, PeerProtocol::kHd);
       CpOnPeerConnect(&server->control_plane,
                       result.client_key, fd);
+
+      // Attempt Level 2 upgrade if enabled.
+      if (server->level2_enabled) {
+        TryIceUpgrade(server, result.client_key);
+      }
     } else {
       spdlog::info("HD peer pending approval: {}", hex);
       // fd stays alive in the registry for later
@@ -513,6 +627,66 @@ auto ServerInit(Server* server,
                      : "manual");
   }
 
+  // Initialize Level 2 (ICE/TURN/XDP) if enabled.
+  if (config->level2.enabled) {
+    if (!server->hd_enabled) {
+      spdlog::error("Level 2 requires HD protocol");
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::Level2InitFailed,
+                       "Level 2 requires HD");
+    }
+
+    // Initialize ICE agent.
+    // TODO(karl): resolve relay IP from interface.
+    // For now use 0.0.0.0 (will be overridden by STUN).
+    IceInit(&server->ice_agent, 0,
+            config->level2.stun_port);
+
+    // Initialize TURN manager.
+    server->turn_manager = new TurnManager{};
+    TurnInit(server->turn_manager, 0,
+             config->level2.turn_realm.empty()
+                 ? "relay"
+                 : config->level2.turn_realm.c_str());
+
+    // Load XDP program if interface is specified.
+    if (!config->level2.xdp_interface.empty()) {
+      XdpConfig xdp_cfg{};
+      xdp_cfg.interface =
+          config->level2.xdp_interface.c_str();
+      xdp_cfg.stun_port = config->level2.stun_port;
+      xdp_cfg.enabled = true;
+      int rc = XdpLoad(&server->xdp_ctx, &xdp_cfg);
+      if (rc < 0) {
+        spdlog::warn(
+            "XDP load failed (rc={}), continuing "
+            "without XDP fast path", rc);
+        // Non-fatal: ICE works without XDP.
+      }
+    }
+
+    // Enable Level 2 in the control plane.
+    if (CpEnableLevel2(&server->control_plane,
+                       &server->ice_agent,
+                       config->level2.stun_port) < 0) {
+      spdlog::error("Failed to enable Level 2 in "
+                    "control plane");
+      delete server->turn_manager;
+      server->turn_manager = nullptr;
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::Level2InitFailed,
+                       "CpEnableLevel2 failed");
+    }
+
+    server->level2_enabled = true;
+    spdlog::info(
+        "Level 2 enabled (STUN port {}, XDP on {})",
+        config->level2.stun_port,
+        config->level2.xdp_interface.empty()
+            ? "none"
+            : config->level2.xdp_interface);
+  }
+
   // Create TCP listener.
   int lfd = socket(AF_INET, SOCK_STREAM, 0);
   if (lfd < 0) {
@@ -705,6 +879,14 @@ void ServerStop(Server* server) {
 void ServerDestroy(Server* server) {
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;
+  if (server->level2_enabled) {
+    if (server->xdp_ctx.attached) {
+      XdpUnload(&server->xdp_ctx);
+    }
+    delete server->turn_manager;
+    server->turn_manager = nullptr;
+    server->level2_enabled = false;
+  }
   if (server->ktls_enabled) {
     KtlsCtxDestroy(&server->ktls_ctx);
     server->ktls_enabled = false;

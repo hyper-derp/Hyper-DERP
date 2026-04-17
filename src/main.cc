@@ -48,6 +48,12 @@ static void PrintUsage(const char* prog) {
       "(enables HD)\n"
       "  --hd-enroll-mode <m>  HD enrollment mode "
       "(manual|auto)\n"
+      "  --level2              Enable Level 2 direct "
+      "path (ICE/TURN/XDP)\n"
+      "  --stun-port <port>    STUN listen port "
+      "(default: 3478)\n"
+      "  --xdp-interface <nic> Network interface for "
+      "XDP attachment\n"
       "  --help                Show this help\n"
       "  --version             Show version",
       prog);
@@ -107,10 +113,14 @@ int main(int argc, char* argv[]) {
   const char* log_level = nullptr;
   const char* hd_relay_key = nullptr;
   const char* hd_enroll_mode = nullptr;
+  const char* xdp_interface = nullptr;
+  int stun_port = -1;
   bool debug_endpoints = false;
   bool sqpoll = false;
+  bool level2 = false;
   bool debug_set = false;
   bool sqpoll_set = false;
+  bool level2_set = false;
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -181,6 +191,19 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--hd-enroll-mode"sv &&
                i + 1 < argc) {
       hd_enroll_mode = argv[++i];
+    } else if (arg == "--level2"sv) {
+      level2 = true;
+      level2_set = true;
+    } else if (arg == "--stun-port"sv &&
+               i + 1 < argc) {
+      if (!ParseInt(argv[++i], &stun_port, 1, 65535)) {
+        std::println(stderr,
+                     "error: invalid --stun-port");
+        return EXIT_FAILURE;
+      }
+    } else if (arg == "--xdp-interface"sv &&
+               i + 1 < argc) {
+      xdp_interface = argv[++i];
     } else {
       std::println(stderr,
                    "error: unknown option '{}'", arg);
@@ -270,6 +293,14 @@ int main(int argc, char* argv[]) {
       return EXIT_FAILURE;
     }
   }
+
+  if (level2_set)
+    config.level2.enabled = level2;
+  if (stun_port >= 0)
+    config.level2.stun_port =
+        static_cast<uint16_t>(stun_port);
+  if (xdp_interface)
+    config.level2.xdp_interface = xdp_interface;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,

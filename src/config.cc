@@ -247,6 +247,56 @@ auto LoadConfig(const char* path, ServerConfig* config)
     }
   }
 
+  // Level 2 (direct path) sub-section.
+  if (root.has_child("level2")) {
+    auto l2 = root["level2"];
+    if (l2.is_map()) {
+      if (l2.has_child("enabled")) {
+        bool v = false;
+        if (!ReadBool(l2["enabled"],
+                      "level2.enabled", &v, &err))
+          return std::unexpected(err);
+        config->level2.enabled = v;
+      }
+      if (l2.has_child("stun_port")) {
+        int v = 0;
+        if (!ReadInt(l2["stun_port"],
+                     "level2.stun_port", &v,
+                     1, 65535, &err))
+          return std::unexpected(err);
+        config->level2.stun_port =
+            static_cast<uint16_t>(v);
+      }
+      if (l2.has_child("xdp_interface"))
+        ReadStr(l2["xdp_interface"],
+                &config->level2.xdp_interface);
+      if (l2.has_child("turn")) {
+        auto t = l2["turn"];
+        if (t.is_map()) {
+          if (t.has_child("realm"))
+            ReadStr(t["realm"],
+                    &config->level2.turn_realm);
+          if (t.has_child("max_allocations")) {
+            int v = 0;
+            if (!ReadInt(t["max_allocations"],
+                         "level2.turn.max_allocations",
+                         &v, 1, 1000000, &err))
+              return std::unexpected(err);
+            config->level2.turn_max_allocations = v;
+          }
+          if (t.has_child("default_lifetime")) {
+            int v = 0;
+            if (!ReadInt(t["default_lifetime"],
+                         "level2.turn.default_lifetime",
+                         &v, 30, 3600, &err))
+              return std::unexpected(err);
+            config->level2.turn_default_lifetime = v;
+          }
+        }
+      }
+    }
+  }
+
   // Log level (returned in config for main.cc to apply).
   if (root.has_child("log_level")) {
     auto val = root["log_level"].val();

@@ -39,3 +39,14 @@ metrics:
 # hd:
 #   relay_key: "aabbccdd..."  # 64-char hex, enables HD
 #   enroll_mode: manual       # or "auto"
+
+# Level 2 (direct path) configuration.
+# Requires HD protocol to be enabled.
+# level2:
+#   enabled: true
+#   stun_port: 3478
+#   xdp_interface: eth0
+#   turn:
+#     realm: relay.example.com
+#     max_allocations: 10000
+#     default_lifetime: 600
