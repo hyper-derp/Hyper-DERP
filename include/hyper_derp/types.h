@@ -194,9 +194,15 @@ struct Peer {
   int poll_write_pending;
   int send_pending;  // Queued items await first submit.
 
-  // HD forwarding rules (set via command, read on hot path).
+  // HD forwarding: cached destination pointers.
+  // Set once via kCmdSetFwdRule command. Looked up at
+  // rule-set time (not per-packet). Invalidated on
+  // peer disconnect.
   static constexpr int kMaxPeerRules = 16;
   Key fwd_keys[kMaxPeerRules];
+  Peer* fwd_peers[kMaxPeerRules]{};
+  int fwd_dst_worker[kMaxPeerRules]{};
+  int fwd_dst_fd[kMaxPeerRules]{};
   int fwd_count = 0;
 
   // Cold: accessed on connect/disconnect.

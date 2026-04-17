@@ -1018,9 +1018,10 @@ static inline bool IsValidPeerPayloadLen(
 }
 
 // Forward declarations for HD forwarding.
+// frame points to the complete HD frame (header+payload).
 static void ForwardHdData(Worker* w, Peer* src,
-                          const uint8_t* data,
-                          int data_len);
+                          const uint8_t* frame,
+                          int frame_len);
 
 /// Dispatch a complete HD frame.
 static void DispatchHdFrame(Worker* w, Peer* peer,
@@ -1030,7 +1031,10 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
   const uint8_t* payload = hdr + kHdFrameHeaderSize;
 
   if (hd_type == HdFrameType::kData) {
-    ForwardHdData(w, peer, payload, payload_len);
+    // Pass the complete frame (header + payload) so
+    // HD→HD forwarding can skip the header rebuild.
+    ForwardHdData(w, peer, hdr,
+                  kHdFrameHeaderSize + payload_len);
   } else if (hd_type == HdFrameType::kPing &&
              payload_len == kHdPingDataSize) {
     uint8_t pong[kHdFrameHeaderSize + kHdPingDataSize];
@@ -1089,115 +1093,76 @@ static inline void DispatchFrame(Worker* w, Peer* peer,
 
 // -- Forwarding (HD protocol) ------------------------------------------------
 
-/// Forward HD data using forwarding rules. If the source
-/// peer has rules, forward only to those destinations.
-/// If no rules, broadcast to all same-shard HD peers.
+/// Forward a complete HD frame using cached forwarding
+/// rules. No per-packet hash lookup. No header rebuild.
+/// The incoming frame is forwarded as-is for HD→HD.
 static void ForwardHdData(Worker* w, Peer* src,
-                          const uint8_t* data,
-                          int data_len) {
-  int frame_len = kHdFrameHeaderSize + data_len;
-  uint8_t* frame = FrameAlloc(w, frame_len);
-  if (!frame) return;
-  HdWriteFrameHeader(frame, HdFrameType::kData,
-                     static_cast<uint32_t>(data_len));
-  memcpy(frame + kHdFrameHeaderSize, data, data_len);
-
-  bool used_frame = false;
-
-  if (src->fwd_count > 0) {
-    // Rule-based forwarding: send to specific targets.
-    for (int r = 0; r < src->fwd_count; r++) {
-      Peer* dst = HtLookup(w, src->fwd_keys[r].data());
-      if (!dst || dst == src) continue;
-      if (!used_frame) {
-        EnqueueSend(w, dst, frame, frame_len);
-        used_frame = true;
-      } else {
-        uint8_t* copy = FrameAlloc(w, frame_len);
-        if (!copy) continue;
-        memcpy(copy, frame, frame_len);
-        EnqueueSend(w, dst, copy, frame_len);
-      }
-    }
-    // Cross-shard: check rule targets not on this worker.
-    for (int r = 0; r < src->fwd_count; r++) {
-      if (HtLookup(w, src->fwd_keys[r].data()))
-        continue;
-      Route* rt = RouteLookup(w->routes,
-          src->fwd_keys[r].data());
-      if (!rt) {
-        static int dbg = 0;
-        if (dbg++ < 3) {
-          spdlog::warn("w{}: no route for fwd rule "
-                       "target", w->id);
-        }
-        continue;
-      }
-      if (rt->worker_id == w->id) continue;
-      uint8_t* copy = FrameAlloc(w, frame_len);
-      if (!copy) continue;
-      memcpy(copy, frame, frame_len);
-      int dst_id = rt->worker_id;
-      Worker* dst_w = w->ctx->workers[dst_id];
-      Xfer x{};
-      x.dst_fd = rt->fd;
-      x.frame = copy;
-      x.frame_len = frame_len;
-      x.dst_gen = __atomic_load_n(
-          &dst_w->fd_gen[rt->fd],
-          __ATOMIC_ACQUIRE);
-      int rc = XferSpscPush(
-          dst_w->xfer_inbox[w->id], &x);
-      if (rc < 0) {
-        FrameFree(w, copy);
-      } else {
-        __atomic_fetch_or(
-            &dst_w->pending_sources,
-            1u << static_cast<unsigned>(w->id),
-            __ATOMIC_RELEASE);
-        if (rc == 1) {
-          w->xfer_signal_pending |=
-              (1u << rt->worker_id);
-        }
-      }
-    }
-  } else {
+                          const uint8_t* frame,
+                          int frame_len) {
+  if (src->fwd_count <= 0) {
     // No rules: broadcast to all same-shard HD peers.
-    int local_dsts = 0;
     for (int i = 0; i < kHtCapacity; i++) {
       Peer* dst = &w->ht[i];
       if (dst->occupied != 1 || dst == src) continue;
       if (dst->protocol != PeerProtocol::kHd) continue;
-      local_dsts++;
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) continue;
+      memcpy(buf, frame, frame_len);
+      EnqueueSend(w, dst, buf, frame_len);
     }
-    int sent = 0;
-    for (int i = 0; i < kHtCapacity; i++) {
-      Peer* dst = &w->ht[i];
-      if (dst->occupied != 1 || dst == src) continue;
-      if (dst->protocol != PeerProtocol::kHd) continue;
-      sent++;
-      if (sent < local_dsts) {
-        uint8_t* copy = FrameAlloc(w, frame_len);
-        if (!copy) continue;
-        memcpy(copy, frame, frame_len);
-        EnqueueSend(w, dst, copy, frame_len);
-      } else {
-        EnqueueSend(w, dst, frame, frame_len);
-        used_frame = true;
+    return;
+  }
+
+  for (int r = 0; r < src->fwd_count; r++) {
+    Peer* dst = src->fwd_peers[r];
+    if (dst && dst->occupied == 1) {
+      // Same-shard: copy frame and enqueue.
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) continue;
+      memcpy(buf, frame, frame_len);
+      EnqueueSend(w, dst, buf, frame_len);
+      continue;
+    }
+    // Cross-shard: use cached worker/fd.
+    int dst_id = src->fwd_dst_worker[r];
+    int dst_fd = src->fwd_dst_fd[r];
+    if (dst_fd < 0 || dst_id == w->id) continue;
+    Worker* dst_w = w->ctx->workers[dst_id];
+    uint8_t* buf = FrameAlloc(w, frame_len);
+    if (!buf) continue;
+    memcpy(buf, frame, frame_len);
+    Xfer x{};
+    x.dst_fd = dst_fd;
+    x.frame = buf;
+    x.frame_len = frame_len;
+    x.dst_gen = __atomic_load_n(
+        &dst_w->fd_gen[dst_fd], __ATOMIC_ACQUIRE);
+    int rc = XferSpscPush(
+        dst_w->xfer_inbox[w->id], &x);
+    if (rc < 0) {
+      FrameFree(w, buf);
+    } else {
+      __atomic_fetch_or(
+          &dst_w->pending_sources,
+          1u << static_cast<unsigned>(w->id),
+          __ATOMIC_RELEASE);
+      if (rc == 1) {
+        w->xfer_signal_pending |= (1u << dst_id);
       }
     }
   }
 
   // Forward to same-shard DERP peers via bridge.
+  const uint8_t* hd_payload = frame + kHdFrameHeaderSize;
+  int hd_payload_len = frame_len - kHdFrameHeaderSize;
   for (int i = 0; i < kHtCapacity; i++) {
     Peer* dst = &w->ht[i];
     if (dst->occupied != 1 || dst == src) continue;
     if (dst->protocol != PeerProtocol::kDerp) continue;
-    // HD source -> DERP destination: bridge.
     uint8_t derp_frame[kFrameHeaderSize + kKeySize +
                        kMaxFramePayload];
     int derp_len = BridgeHdToDerp(
-        data, data_len, src->key,
+        hd_payload, hd_payload_len, src->key,
         derp_frame, sizeof(derp_frame));
     if (derp_len > 0) {
       uint8_t* buf = FrameAlloc(w, derp_len);
@@ -1208,24 +1173,6 @@ static void ForwardHdData(Worker* w, Peer* src,
     }
   }
 
-  // Forward to cross-shard HD peers via routing table.
-  for (int i = 0; i < kHtCapacity; i++) {
-    Route* r = &w->routes[i];
-    int occ = __atomic_load_n(
-        &r->occupied, __ATOMIC_ACQUIRE);
-    if (occ != 1) continue;
-    if (r->worker_id == w->id) continue;
-    // Cross-shard: send to every routed peer that
-    // might be HD. The destination worker will drop
-    // the frame if the peer is not HD.
-    // For now, skip cross-shard (requires protocol
-    // in route table). TODO: add protocol to Route.
-  }
-
-  // Free unused frame buffer.
-  if (!used_frame && frame) {
-    FrameFree(w, frame);
-  }
 }
 
 // -- Forwarding (DERP protocol) ----------------------------------------------
@@ -1908,14 +1855,20 @@ static void ProcessCommands(Worker* w) {
       case kCmdSetFwdRule: {
         Peer* p = HtLookup(w, cmd.key.data());
         if (p && p->fwd_count < Peer::kMaxPeerRules) {
-          p->fwd_keys[p->fwd_count++] = cmd.dst_key;
-          spdlog::info("worker {}: set fwd rule for "
-                       "peer fd={} (fwd_count={})",
-                       w->id, p->fd, p->fwd_count);
-        } else {
-          spdlog::warn("worker {}: fwd rule failed "
-                       "(peer={})",
-                       w->id, p ? "full" : "not found");
+          int idx = p->fwd_count++;
+          p->fwd_keys[idx] = cmd.dst_key;
+          // Cache same-shard destination pointer.
+          Peer* dst = HtLookup(w, cmd.dst_key.data());
+          p->fwd_peers[idx] = dst;
+          // Cache cross-shard route info.
+          if (!dst) {
+            Route* rt = RouteLookup(w->routes,
+                cmd.dst_key.data());
+            if (rt) {
+              p->fwd_dst_worker[idx] = rt->worker_id;
+              p->fwd_dst_fd[idx] = rt->fd;
+            }
+          }
         }
         break;
       }
