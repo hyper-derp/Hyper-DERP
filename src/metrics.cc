@@ -450,12 +450,16 @@ static void RegisterHdRoutes(MetricsServer* ms) {
             nullptr, nullptr, nullptr) != 0) {
       return crow::response(400, "invalid dst_key");
     }
-    std::lock_guard lock(ms->hd_peers->mutex);
-    if (!HdPeersAddRule(ms->hd_peers,
-                        peer_key.data(), dst_key)) {
-      return crow::response(
-          400, "rule limit reached or peer not found");
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      if (!HdPeersAddRule(ms->hd_peers,
+                          peer_key.data(), dst_key)) {
+        return crow::response(
+            400, "rule limit or peer not found");
+      }
     }
+    // Push the rule to the data plane (lock-free cmd).
+    DpAddFwdRule(ms->ctx, peer_key, dst_key);
     return crow::response(200, "rule added");
   });
 

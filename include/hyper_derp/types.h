@@ -154,6 +154,7 @@ enum CmdType : uint8_t {
   kCmdRemovePeer = 2,
   kCmdWrite = 3,
   kCmdStop = 4,
+  kCmdSetFwdRule = 5,
 };
 
 // -- Data-oriented structs ---------------------------------------------------
@@ -193,6 +194,11 @@ struct Peer {
   int poll_write_pending;
   int send_pending;  // Queued items await first submit.
 
+  // HD forwarding rules (set via command, read on hot path).
+  static constexpr int kMaxPeerRules = 16;
+  Key fwd_keys[kMaxPeerRules];
+  int fwd_count = 0;
+
   // Cold: accessed on connect/disconnect.
   Key key;
 
@@ -217,6 +223,7 @@ struct Cmd {
   uint8_t* data;
   int data_len;
   PeerProtocol protocol = PeerProtocol::kDerp;
+  Key dst_key;  // For kCmdSetFwdRule.
 };
 
 /// Cross-shard transfer item. Carries a pre-framed buffer

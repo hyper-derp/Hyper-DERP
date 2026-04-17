@@ -632,6 +632,16 @@ void DpRemovePeer(Ctx* ctx, const Key& key) {
   EnqueueCmd(ctx->workers[wid], &cmd);
 }
 
+void DpAddFwdRule(Ctx* ctx, const Key& peer_key,
+                  const Key& dst_key) {
+  int wid = PeerWorker(ctx->num_workers, peer_key);
+  Cmd cmd{};
+  cmd.type = kCmdSetFwdRule;
+  cmd.key = peer_key;
+  cmd.dst_key = dst_key;
+  EnqueueCmd(ctx->workers[wid], &cmd);
+}
+
 void DpWrite(Ctx* ctx, const Key& key,
              uint8_t* data, int data_len) {
   int wid = PeerWorker(ctx->num_workers, key);
@@ -1079,13 +1089,12 @@ static inline void DispatchFrame(Worker* w, Peer* peer,
 
 // -- Forwarding (HD protocol) ------------------------------------------------
 
-/// Forward HD data to all other HD peers on this worker.
-/// Broadcast model: every HD peer receives the frame.
-/// Cross-shard HD forwarding uses the xfer ring.
+/// Forward HD data using forwarding rules. If the source
+/// peer has rules, forward only to those destinations.
+/// If no rules, broadcast to all same-shard HD peers.
 static void ForwardHdData(Worker* w, Peer* src,
                           const uint8_t* data,
                           int data_len) {
-  // Build HD Data frame: [4B header][data].
   int frame_len = kHdFrameHeaderSize + data_len;
   uint8_t* frame = FrameAlloc(w, frame_len);
   if (!frame) return;
@@ -1093,32 +1102,73 @@ static void ForwardHdData(Worker* w, Peer* src,
                      static_cast<uint32_t>(data_len));
   memcpy(frame + kHdFrameHeaderSize, data, data_len);
 
-  // Count same-shard HD destinations for ref counting.
-  int local_dsts = 0;
-  for (int i = 0; i < kHtCapacity; i++) {
-    Peer* dst = &w->ht[i];
-    if (dst->occupied != 1 || dst == src) continue;
-    if (dst->protocol != PeerProtocol::kHd) continue;
-    local_dsts++;
-  }
+  bool used_frame = false;
 
-  // Forward to same-shard HD peers. Allocate copies for
-  // all but the last destination (which reuses the
-  // original buffer).
-  int sent = 0;
-  for (int i = 0; i < kHtCapacity; i++) {
-    Peer* dst = &w->ht[i];
-    if (dst->occupied != 1 || dst == src) continue;
-    if (dst->protocol != PeerProtocol::kHd) continue;
-    sent++;
-    if (sent < local_dsts) {
+  if (src->fwd_count > 0) {
+    // Rule-based forwarding: send to specific targets.
+    for (int r = 0; r < src->fwd_count; r++) {
+      Peer* dst = HtLookup(w, src->fwd_keys[r].data());
+      if (!dst || dst == src) continue;
+      if (!used_frame) {
+        EnqueueSend(w, dst, frame, frame_len);
+        used_frame = true;
+      } else {
+        uint8_t* copy = FrameAlloc(w, frame_len);
+        if (!copy) continue;
+        memcpy(copy, frame, frame_len);
+        EnqueueSend(w, dst, copy, frame_len);
+      }
+    }
+    // Cross-shard: check rule targets not on this worker.
+    for (int r = 0; r < src->fwd_count; r++) {
+      if (HtLookup(w, src->fwd_keys[r].data()))
+        continue;
+      Route* rt = RouteLookup(w->routes,
+          src->fwd_keys[r].data());
+      if (!rt || rt->worker_id == w->id) continue;
       uint8_t* copy = FrameAlloc(w, frame_len);
       if (!copy) continue;
       memcpy(copy, frame, frame_len);
-      EnqueueSend(w, dst, copy, frame_len);
-    } else {
-      EnqueueSend(w, dst, frame, frame_len);
-      frame = nullptr;
+      Worker* dst_w = w->ctx->workers[rt->worker_id];
+      Xfer x{};
+      x.dst_fd = rt->fd;
+      x.frame = copy;
+      x.frame_len = frame_len;
+      x.dst_gen = static_cast<uint32_t>(
+          __atomic_load_n(&rt->occupied,
+                          __ATOMIC_RELAXED));
+      if (XferSpscPush(
+              dst_w->xfer_inbox[w->id], &x) < 0) {
+        FrameFree(w, copy);
+      } else {
+        w->xfer_signal_pending |=
+            (1u << rt->worker_id);
+      }
+    }
+  } else {
+    // No rules: broadcast to all same-shard HD peers.
+    int local_dsts = 0;
+    for (int i = 0; i < kHtCapacity; i++) {
+      Peer* dst = &w->ht[i];
+      if (dst->occupied != 1 || dst == src) continue;
+      if (dst->protocol != PeerProtocol::kHd) continue;
+      local_dsts++;
+    }
+    int sent = 0;
+    for (int i = 0; i < kHtCapacity; i++) {
+      Peer* dst = &w->ht[i];
+      if (dst->occupied != 1 || dst == src) continue;
+      if (dst->protocol != PeerProtocol::kHd) continue;
+      sent++;
+      if (sent < local_dsts) {
+        uint8_t* copy = FrameAlloc(w, frame_len);
+        if (!copy) continue;
+        memcpy(copy, frame, frame_len);
+        EnqueueSend(w, dst, copy, frame_len);
+      } else {
+        EnqueueSend(w, dst, frame, frame_len);
+        used_frame = true;
+      }
     }
   }
 
@@ -1157,7 +1207,7 @@ static void ForwardHdData(Worker* w, Peer* src,
   }
 
   // Free unused frame buffer.
-  if (frame) {
+  if (!used_frame && frame) {
     FrameFree(w, frame);
   }
 }
@@ -1839,6 +1889,13 @@ static void ProcessCommands(Worker* w) {
       case kCmdWrite:
         ProcessCmdWrite(w, &cmd);
         break;
+      case kCmdSetFwdRule: {
+        Peer* p = HtLookup(w, cmd.key.data());
+        if (p && p->fwd_count < Peer::kMaxPeerRules) {
+          p->fwd_keys[p->fwd_count++] = cmd.dst_key;
+        }
+        break;
+      }
       case kCmdStop:
         w->running = 0;
         break;
