@@ -139,7 +139,7 @@ endif()
 # ============================================================================
 # Install rules
 # ============================================================================
-install(TARGETS hyper-derp derp-test-client derp-scale-test derp-tun-proxy hd-test-client
+install(TARGETS hyper-derp derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test
   RUNTIME DESTINATION bin)
 install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.service
