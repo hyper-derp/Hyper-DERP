@@ -1125,24 +1125,40 @@ static void ForwardHdData(Worker* w, Peer* src,
         continue;
       Route* rt = RouteLookup(w->routes,
           src->fwd_keys[r].data());
-      if (!rt || rt->worker_id == w->id) continue;
+      if (!rt) {
+        static int dbg = 0;
+        if (dbg++ < 3) {
+          spdlog::warn("w{}: no route for fwd rule "
+                       "target", w->id);
+        }
+        continue;
+      }
+      if (rt->worker_id == w->id) continue;
       uint8_t* copy = FrameAlloc(w, frame_len);
       if (!copy) continue;
       memcpy(copy, frame, frame_len);
-      Worker* dst_w = w->ctx->workers[rt->worker_id];
+      int dst_id = rt->worker_id;
+      Worker* dst_w = w->ctx->workers[dst_id];
       Xfer x{};
       x.dst_fd = rt->fd;
       x.frame = copy;
       x.frame_len = frame_len;
-      x.dst_gen = static_cast<uint32_t>(
-          __atomic_load_n(&rt->occupied,
-                          __ATOMIC_RELAXED));
-      if (XferSpscPush(
-              dst_w->xfer_inbox[w->id], &x) < 0) {
+      x.dst_gen = __atomic_load_n(
+          &dst_w->fd_gen[rt->fd],
+          __ATOMIC_ACQUIRE);
+      int rc = XferSpscPush(
+          dst_w->xfer_inbox[w->id], &x);
+      if (rc < 0) {
         FrameFree(w, copy);
       } else {
-        w->xfer_signal_pending |=
-            (1u << rt->worker_id);
+        __atomic_fetch_or(
+            &dst_w->pending_sources,
+            1u << static_cast<unsigned>(w->id),
+            __ATOMIC_RELEASE);
+        if (rc == 1) {
+          w->xfer_signal_pending |=
+              (1u << rt->worker_id);
+        }
       }
     }
   } else {
@@ -1893,6 +1909,13 @@ static void ProcessCommands(Worker* w) {
         Peer* p = HtLookup(w, cmd.key.data());
         if (p && p->fwd_count < Peer::kMaxPeerRules) {
           p->fwd_keys[p->fwd_count++] = cmd.dst_key;
+          spdlog::info("worker {}: set fwd rule for "
+                       "peer fd={} (fwd_count={})",
+                       w->id, p->fd, p->fwd_count);
+        } else {
+          spdlog::warn("worker {}: fwd rule failed "
+                       "(peer={})",
+                       w->id, p ? "full" : "not found");
         }
         break;
       }
