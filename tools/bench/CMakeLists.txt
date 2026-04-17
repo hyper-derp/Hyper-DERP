@@ -17,3 +17,6 @@ target_link_libraries(hd-test-client PRIVATE libderp)
 
 add_executable(hd-scale-test hd_scale_test.cc)
 target_link_libraries(hd-scale-test PRIVATE libderp)
+
+add_executable(hd-scale-test-uring hd_scale_test_uring.cc)
+target_link_libraries(hd-scale-test-uring PRIVATE libderp)
