@@ -17,6 +17,7 @@
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/ktls.h"
 #include "hyper_derp/metrics.h"
 
@@ -84,6 +85,11 @@ struct ServerConfig {
   bool sqpoll = false;
   /// Metrics HTTP server configuration.
   MetricsConfig metrics;
+  /// HD Protocol relay key (32-byte shared secret).
+  /// Empty string = HD protocol disabled.
+  std::string hd_relay_key;
+  /// HD enrollment mode.
+  HdEnrollMode hd_enroll_mode = HdEnrollMode::kManual;
   std::array<int, kMaxWorkers> pin_cores{};
 
   ServerConfig() { pin_cores.fill(-1); }
@@ -97,6 +103,8 @@ struct Server {
   ControlPlane control_plane{};
   KtlsCtx ktls_ctx{};
   bool ktls_enabled = false;
+  HdPeerRegistry hd_peers{};
+  bool hd_enabled = false;
   int listen_fd = -1;
   std::atomic<int> running{0};
   std::thread accept_thread;

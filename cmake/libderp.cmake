@@ -8,6 +8,7 @@ find_package(OpenSSL REQUIRED)
 
 add_library(libderp_obj OBJECT
   src/protocol.cc
+  src/hd_protocol.cc
   src/data_plane.cc
   src/http.cc
   src/handshake.cc
@@ -19,6 +20,10 @@ add_library(libderp_obj OBJECT
   src/metrics.cc
   src/ktls.cc
   src/config.cc
+  src/hd_peers.cc
+  src/hd_handshake.cc
+  src/hd_client.cc
+  src/hd_bridge.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include

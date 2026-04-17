@@ -34,3 +34,8 @@ metrics:
   # tls_cert: /etc/hyper-derp/metrics-cert.pem
   # tls_key: /etc/hyper-derp/metrics-key.pem
   debug_endpoints: false
+
+# HD Protocol configuration.
+# hd:
+#   relay_key: "aabbccdd..."  # 64-char hex, enables HD
+#   enroll_mode: manual       # or "auto"

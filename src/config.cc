@@ -12,6 +12,8 @@
 #include <cstring>
 #include <string>
 
+#include "hyper_derp/hd_peers.h"
+
 namespace hyper_derp {
 
 static auto ReadFile(const char* path, std::string* out)
@@ -217,6 +219,30 @@ auto LoadConfig(const char* path, ServerConfig* config)
                       &err))
           return std::unexpected(err);
         config->metrics.enable_debug = v;
+      }
+    }
+  }
+
+  // HD Protocol sub-section.
+  if (root.has_child("hd")) {
+    auto h = root["hd"];
+    if (h.is_map()) {
+      if (h.has_child("relay_key"))
+        ReadStr(h["relay_key"], &config->hd_relay_key);
+      if (h.has_child("enroll_mode")) {
+        auto val = h["enroll_mode"].val();
+        std::string_view mode(val.data(), val.len);
+        if (mode == "auto") {
+          config->hd_enroll_mode =
+              HdEnrollMode::kAutoApprove;
+        } else if (mode == "manual") {
+          config->hd_enroll_mode =
+              HdEnrollMode::kManual;
+        } else {
+          return MakeError(
+              ConfigError::InvalidValue,
+              "hd.enroll_mode: expected manual|auto");
+        }
       }
     }
   }

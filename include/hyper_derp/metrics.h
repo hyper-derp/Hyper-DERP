@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/types.h"
 
 namespace hyper_derp {
@@ -28,9 +29,12 @@ struct MetricsServer;
 ///   thread.
 /// @param config Server configuration.
 /// @param ctx Data plane context (read-only stats access).
+/// @param hd_peers HD peer registry (nullptr if HD
+///   protocol is disabled).
 /// @returns Opaque handle, or nullptr on failure.
 MetricsServer* MetricsStart(const MetricsConfig& config,
-                            Ctx* ctx);
+                            Ctx* ctx,
+                            HdPeerRegistry* hd_peers);
 
 /// @brief Stop the metrics server and free resources.
 /// @param server Handle from MetricsStart.

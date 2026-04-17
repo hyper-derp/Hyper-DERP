@@ -44,6 +44,10 @@ static void PrintUsage(const char* prog) {
       "endpoints\n"
       "  --log-level <level>   Log level "
       "(debug|info|warn|error)\n"
+      "  --hd-relay-key <hex>  HD relay shared secret "
+      "(enables HD)\n"
+      "  --hd-enroll-mode <m>  HD enrollment mode "
+      "(manual|auto)\n"
       "  --help                Show this help\n"
       "  --version             Show version",
       prog);
@@ -101,6 +105,8 @@ int main(int argc, char* argv[]) {
   const char* tls_key = nullptr;
   const char* pin_spec = nullptr;
   const char* log_level = nullptr;
+  const char* hd_relay_key = nullptr;
+  const char* hd_enroll_mode = nullptr;
   bool debug_endpoints = false;
   bool sqpoll = false;
   bool debug_set = false;
@@ -169,6 +175,12 @@ int main(int argc, char* argv[]) {
       sqpoll_set = true;
     } else if (arg == "--log-level"sv && i + 1 < argc) {
       log_level = argv[++i];
+    } else if (arg == "--hd-relay-key"sv &&
+               i + 1 < argc) {
+      hd_relay_key = argv[++i];
+    } else if (arg == "--hd-enroll-mode"sv &&
+               i + 1 < argc) {
+      hd_enroll_mode = argv[++i];
     } else {
       std::println(stderr,
                    "error: unknown option '{}'", arg);
@@ -240,6 +252,24 @@ int main(int argc, char* argv[]) {
     config.metrics.enable_debug = debug_endpoints;
   if (sqpoll_set)
     config.sqpoll = sqpoll;
+
+  if (hd_relay_key)
+    config.hd_relay_key = hd_relay_key;
+  if (hd_enroll_mode) {
+    std::string_view mode = hd_enroll_mode;
+    if (mode == "auto"sv) {
+      config.hd_enroll_mode =
+          hyper_derp::HdEnrollMode::kAutoApprove;
+    } else if (mode == "manual"sv) {
+      config.hd_enroll_mode =
+          hyper_derp::HdEnrollMode::kManual;
+    } else {
+      std::println(stderr,
+                   "error: invalid --hd-enroll-mode "
+                   "(manual|auto)");
+      return EXIT_FAILURE;
+    }
+  }
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,

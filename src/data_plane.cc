@@ -16,6 +16,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include "hyper_derp/hd_bridge.h"
+#include "hyper_derp/hd_protocol.h"
+
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -50,6 +53,12 @@ static void SlabFreeItem(Worker* w, SendItem* item);
 static void FrameFree(Worker* w, uint8_t* buf);
 static int WorkerInitRing(Worker* w);
 static void DrainDeferredRecvs(Worker* w);
+static void ForwardMsg(Worker* w, FrameType type,
+                       uint8_t* payload, int payload_len,
+                       Peer* src);
+static void EnqueueSend(Worker* w, Peer* peer,
+                        uint8_t* data, int len);
+static uint8_t* FrameAlloc(Worker* w, int size);
 
 // -- user_data encoding ------------------------------------------------------
 
@@ -604,12 +613,14 @@ static int EnqueueCmd(Worker* w, const Cmd* cmd) {
   return -1;
 }
 
-void DpAddPeer(Ctx* ctx, int fd, const Key& key) {
+void DpAddPeer(Ctx* ctx, int fd, const Key& key,
+               PeerProtocol protocol) {
   int wid = PeerWorker(ctx->num_workers, key);
   Cmd cmd{};
   cmd.type = kCmdAddPeer;
   cmd.fd = fd;
   cmd.key = key;
+  cmd.protocol = protocol;
   EnqueueCmd(ctx->workers[wid], &cmd);
 }
 
@@ -969,6 +980,163 @@ static void FlushPendingSends(Worker* w) {
   w->pending_count = 0;
 }
 
+// -- HD frame dispatch -------------------------------------------------------
+
+/// Returns the header size for the peer's protocol.
+static inline int FrameHdrSize(const Peer* p) {
+  return p->protocol == PeerProtocol::kHd
+             ? kHdFrameHeaderSize
+             : kFrameHeaderSize;
+}
+
+/// Read payload length from header bytes, protocol-aware.
+static inline uint32_t ReadPeerPayloadLen(
+    const Peer* p, const uint8_t* hdr) {
+  if (p->protocol == PeerProtocol::kHd) {
+    return HdReadPayloadLen(hdr);
+  }
+  return ReadPayloadLen(hdr);
+}
+
+/// Validate payload length, protocol-aware.
+static inline bool IsValidPeerPayloadLen(
+    const Peer* p, uint32_t len) {
+  if (p->protocol == PeerProtocol::kHd) {
+    return HdIsValidPayloadLen(len);
+  }
+  return IsValidPayloadLen(len);
+}
+
+// Forward declarations for HD forwarding.
+static void ForwardHdData(Worker* w, Peer* src,
+                          const uint8_t* data,
+                          int data_len);
+
+/// Dispatch a complete HD frame.
+static void DispatchHdFrame(Worker* w, Peer* peer,
+                            const uint8_t* hdr,
+                            int payload_len) {
+  auto hd_type = HdReadFrameType(hdr);
+  const uint8_t* payload = hdr + kHdFrameHeaderSize;
+
+  if (hd_type == HdFrameType::kData) {
+    ForwardHdData(w, peer, payload, payload_len);
+  } else if (hd_type == HdFrameType::kPing &&
+             payload_len == kHdPingDataSize) {
+    uint8_t pong[kHdFrameHeaderSize + kHdPingDataSize];
+    HdBuildPong(pong, payload);
+    uint8_t* buf = FrameAlloc(w, sizeof(pong));
+    if (buf) {
+      memcpy(buf, pong, sizeof(pong));
+      EnqueueSend(w, peer, buf,
+                  static_cast<int>(sizeof(pong)));
+    }
+  }
+  // Other HD frame types (PeerInfo, PeerGone) are
+  // control frames — ignored in the data plane for now.
+}
+
+/// Dispatch a complete frame based on peer protocol.
+/// ForwardMsg takes non-const payload for historical
+/// reasons; the cast is safe because it only reads.
+static inline void DispatchFrame(Worker* w, Peer* peer,
+                                 const uint8_t* hdr,
+                                 int payload_len) {
+  if (peer->protocol == PeerProtocol::kHd) {
+    DispatchHdFrame(w, peer, hdr, payload_len);
+  } else {
+    auto* payload = const_cast<uint8_t*>(
+        hdr + kFrameHeaderSize);
+    ForwardMsg(w, ReadFrameType(hdr),
+               payload, payload_len, peer);
+  }
+}
+
+// -- Forwarding (HD protocol) ------------------------------------------------
+
+/// Forward HD data to all other HD peers on this worker.
+/// Broadcast model: every HD peer receives the frame.
+/// Cross-shard HD forwarding uses the xfer ring.
+static void ForwardHdData(Worker* w, Peer* src,
+                          const uint8_t* data,
+                          int data_len) {
+  // Build HD Data frame: [4B header][data].
+  int frame_len = kHdFrameHeaderSize + data_len;
+  uint8_t* frame = FrameAlloc(w, frame_len);
+  if (!frame) return;
+  HdWriteFrameHeader(frame, HdFrameType::kData,
+                     static_cast<uint32_t>(data_len));
+  memcpy(frame + kHdFrameHeaderSize, data, data_len);
+
+  // Count same-shard HD destinations for ref counting.
+  int local_dsts = 0;
+  for (int i = 0; i < kHtCapacity; i++) {
+    Peer* dst = &w->ht[i];
+    if (dst->occupied != 1 || dst == src) continue;
+    if (dst->protocol != PeerProtocol::kHd) continue;
+    local_dsts++;
+  }
+
+  // Forward to same-shard HD peers. Allocate copies for
+  // all but the last destination (which reuses the
+  // original buffer).
+  int sent = 0;
+  for (int i = 0; i < kHtCapacity; i++) {
+    Peer* dst = &w->ht[i];
+    if (dst->occupied != 1 || dst == src) continue;
+    if (dst->protocol != PeerProtocol::kHd) continue;
+    sent++;
+    if (sent < local_dsts) {
+      uint8_t* copy = FrameAlloc(w, frame_len);
+      if (!copy) continue;
+      memcpy(copy, frame, frame_len);
+      EnqueueSend(w, dst, copy, frame_len);
+    } else {
+      EnqueueSend(w, dst, frame, frame_len);
+      frame = nullptr;
+    }
+  }
+
+  // Forward to same-shard DERP peers via bridge.
+  for (int i = 0; i < kHtCapacity; i++) {
+    Peer* dst = &w->ht[i];
+    if (dst->occupied != 1 || dst == src) continue;
+    if (dst->protocol != PeerProtocol::kDerp) continue;
+    // HD source -> DERP destination: bridge.
+    uint8_t derp_frame[kFrameHeaderSize + kKeySize +
+                       kMaxFramePayload];
+    int derp_len = BridgeHdToDerp(
+        data, data_len, src->key,
+        derp_frame, sizeof(derp_frame));
+    if (derp_len > 0) {
+      uint8_t* buf = FrameAlloc(w, derp_len);
+      if (buf) {
+        memcpy(buf, derp_frame, derp_len);
+        EnqueueSend(w, dst, buf, derp_len);
+      }
+    }
+  }
+
+  // Forward to cross-shard HD peers via routing table.
+  for (int i = 0; i < kHtCapacity; i++) {
+    Route* r = &w->routes[i];
+    int occ = __atomic_load_n(
+        &r->occupied, __ATOMIC_ACQUIRE);
+    if (occ != 1) continue;
+    if (r->worker_id == w->id) continue;
+    // Cross-shard: send to every routed peer that
+    // might be HD. The destination worker will drop
+    // the frame if the peer is not HD.
+    // For now, skip cross-shard (requires protocol
+    // in route table). TODO: add protocol to Route.
+  }
+
+  // Free unused frame buffer.
+  if (frame) {
+    FrameFree(w, frame);
+  }
+}
+
 // -- Forwarding (DERP protocol) ----------------------------------------------
 
 static void SendToPipe(Worker* w, int fd,
@@ -1040,6 +1208,23 @@ static void ForwardMsg(Worker* w, FrameType type,
   // Same-shard fast path.
   Peer* dst = HtLookup(w, dst_key);
   if (dst) {
+    if (dst->protocol == PeerProtocol::kHd) {
+      // DERP source -> HD destination: bridge.
+      FrameFree(w, frame);
+      uint8_t hd_frame[kHdFrameHeaderSize +
+                        kMaxFramePayload];
+      int hd_len = BridgeDerpToHd(
+          payload, payload_len,
+          hd_frame, sizeof(hd_frame));
+      if (hd_len > 0) {
+        uint8_t* buf = FrameAlloc(w, hd_len);
+        if (buf) {
+          memcpy(buf, hd_frame, hd_len);
+          EnqueueSend(w, dst, buf, hd_len);
+        }
+      }
+      return;
+    }
     EnqueueSend(w, dst, frame, frame_len);
     return;
   }
@@ -1123,24 +1308,25 @@ static void HandleRecvProvided(Worker* w,
     int off = 0;
 
     // Complete any partial frame in rbuf.
+    int hdr_size = FrameHdrSize(peer);
     if (peer->rbuf_len > 0) {
-      while (peer->rbuf_len < kFrameHeaderSize &&
+      while (peer->rbuf_len < hdr_size &&
              off < n) {
         peer->rbuf[peer->rbuf_len++] = buf[off++];
       }
-      if (peer->rbuf_len < kFrameHeaderSize) {
+      if (peer->rbuf_len < hdr_size) {
         goto return_buf;
       }
 
       uint32_t payload_len =
-          ReadPayloadLen(peer->rbuf);
-      if (!IsValidPayloadLen(payload_len)) {
+          ReadPeerPayloadLen(peer, peer->rbuf);
+      if (!IsValidPeerPayloadLen(peer, payload_len)) {
         NotifyPeerClose(w, peer);
         peer->rbuf_len = 0;
         goto return_buf;
       }
 
-      int frame_len = kFrameHeaderSize +
+      int frame_len = hdr_size +
                       static_cast<int>(payload_len);
       int need = frame_len - peer->rbuf_len;
       if (need > n - off) {
@@ -1153,9 +1339,8 @@ static void HandleRecvProvided(Worker* w,
       memcpy(peer->rbuf + peer->rbuf_len,
              buf + off, need);
       off += need;
-      ForwardMsg(w, ReadFrameType(peer->rbuf),
-                 peer->rbuf + kFrameHeaderSize,
-                 static_cast<int>(payload_len), peer);
+      DispatchFrame(w, peer, peer->rbuf,
+                    static_cast<int>(payload_len));
       peer->rbuf_len = 0;
     }
 
@@ -1164,21 +1349,20 @@ static void HandleRecvProvided(Worker* w,
     // extra batch after shutdown signal.
     int running = __atomic_load_n(
         &w->running, __ATOMIC_ACQUIRE);
-    while (running && off + kFrameHeaderSize <= n) {
+    while (running && off + hdr_size <= n) {
       uint32_t payload_len =
-          ReadPayloadLen(buf + off);
-      if (!IsValidPayloadLen(payload_len)) {
+          ReadPeerPayloadLen(peer, buf + off);
+      if (!IsValidPeerPayloadLen(peer, payload_len)) {
         NotifyPeerClose(w, peer);
         goto return_buf;
       }
-      int frame_len = kFrameHeaderSize +
+      int frame_len = hdr_size +
                       static_cast<int>(payload_len);
       if (off + frame_len > n) {
         break;
       }
-      ForwardMsg(w, ReadFrameType(buf + off),
-                 buf + off + kFrameHeaderSize,
-                 static_cast<int>(payload_len), peer);
+      DispatchFrame(w, peer, buf + off,
+                    static_cast<int>(payload_len));
       off += frame_len;
     }
 
@@ -1223,24 +1407,24 @@ static void HandleRecvSingle(Worker* w,
   w->stats.recv_bytes += n;
   peer->rbuf_len += n;
 
+  int hdr_size = FrameHdrSize(peer);
   int running = __atomic_load_n(
       &w->running, __ATOMIC_ACQUIRE);
-  while (running && peer->rbuf_len >= kFrameHeaderSize) {
+  while (running && peer->rbuf_len >= hdr_size) {
     uint32_t payload_len =
-        ReadPayloadLen(peer->rbuf);
-    if (!IsValidPayloadLen(payload_len)) {
+        ReadPeerPayloadLen(peer, peer->rbuf);
+    if (!IsValidPeerPayloadLen(peer, payload_len)) {
       NotifyPeerClose(w, peer);
       return;
     }
-    int frame_len = kFrameHeaderSize +
+    int frame_len = hdr_size +
                     static_cast<int>(payload_len);
     if (peer->rbuf_len < frame_len) {
       break;
     }
 
-    ForwardMsg(w, ReadFrameType(peer->rbuf),
-               peer->rbuf + kFrameHeaderSize,
-               static_cast<int>(payload_len), peer);
+    DispatchFrame(w, peer, peer->rbuf,
+                  static_cast<int>(payload_len));
 
     int remaining = peer->rbuf_len - frame_len;
     if (remaining > 0) {
@@ -1540,6 +1724,7 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
   if (!p) {
     return;
   }
+  p->protocol = cmd->protocol;
   w->fd_map[cmd->fd] = p;
   w->fd_gen[cmd->fd]++;
   w->peer_count++;

@@ -42,6 +42,9 @@ inline constexpr int kPingDataSize = 8;
 /// DERP magic bytes for the HTTP upgrade path.
 inline constexpr const char* kUpgradePath = "/derp";
 
+/// HD protocol HTTP upgrade path.
+inline constexpr const char* kHdUpgradePath = "/hd";
+
 /// Protocol version sent during HTTP upgrade.
 inline constexpr int kProtocolVersion = 2;
 

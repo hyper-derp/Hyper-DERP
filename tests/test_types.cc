@@ -116,4 +116,9 @@ TEST(TypesTest, FramePoolCountIsPowerOfTwo) {
   EXPECT_EQ(kFramePoolCount & (kFramePoolCount - 1), 0);
 }
 
+TEST(TypesTest, PeerProtocolDefaults) {
+  EXPECT_EQ(static_cast<uint8_t>(PeerProtocol::kDerp), 0);
+  EXPECT_EQ(static_cast<uint8_t>(PeerProtocol::kHd), 1);
+}
+
 }  // namespace hyper_derp

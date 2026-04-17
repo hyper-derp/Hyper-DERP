@@ -165,6 +165,12 @@ struct SendItem {
   SendItem* next;
 };
 
+/// Protocol type for each peer connection.
+enum class PeerProtocol : uint8_t {
+  kDerp = 0,
+  kHd   = 1,
+};
+
 /// Per-peer mutable state. Stored in a flat hash table
 /// indexed by peer key. Fields are ordered hot-to-cold.
 /// rbuf is allocated separately to keep the hot struct
@@ -174,6 +180,7 @@ struct Peer {
   int fd;
   int rbuf_len;
   uint8_t occupied;  // 0=empty, 1=live, 2=tombstone
+  PeerProtocol protocol = PeerProtocol::kDerp;
 
   // Warm: accessed on send path.
   SendItem* send_head;
@@ -209,6 +216,7 @@ struct Cmd {
   Key key;
   uint8_t* data;
   int data_len;
+  PeerProtocol protocol = PeerProtocol::kDerp;
 };
 
 /// Cross-shard transfer item. Carries a pre-framed buffer

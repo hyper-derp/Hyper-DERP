@@ -31,7 +31,10 @@ void DpDestroy(Ctx* ctx);
 /// @param ctx Data plane context.
 /// @param fd The peer's socket file descriptor.
 /// @param key The peer's 32-byte public key.
-void DpAddPeer(Ctx* ctx, int fd, const Key& key);
+/// @param protocol Protocol type (DERP or HD).
+void DpAddPeer(Ctx* ctx, int fd, const Key& key,
+               PeerProtocol protocol =
+                   PeerProtocol::kDerp);
 
 /// @brief Removes a peer from the data plane.
 /// @param ctx Data plane context.

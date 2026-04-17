@@ -20,7 +20,12 @@
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
+#include "hyper_derp/hd_handshake.h"
+#include "hyper_derp/hd_peers.h"
+#include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/http.h"
+
+#include <sodium.h>
 
 namespace hyper_derp {
 
@@ -182,6 +187,89 @@ static void HandleConnection(Server* server, int fd) {
       SendAndClose(fd, resp, n);
     } else {
       close(fd);
+    }
+    return;
+  }
+
+  // HD protocol path.
+  if (req.path == "/hd"sv) {
+    if (!server->hd_enabled) {
+      uint8_t resp[256];
+      int n = WriteErrorResponse(
+          resp, sizeof(resp), 404, "not found");
+      if (n > 0) {
+        SendAndClose(fd, resp, n);
+      } else {
+        close(fd);
+      }
+      return;
+    }
+    if (!req.has_upgrade) {
+      uint8_t resp[256];
+      int n = WriteErrorResponse(
+          resp, sizeof(resp), 426,
+          "HD requires connection upgrade");
+      if (n > 0) {
+        SendAndClose(fd, resp, n);
+      } else {
+        close(fd);
+      }
+      return;
+    }
+
+    // Send HTTP 101 Switching Protocols for HD.
+    uint8_t resp[512];
+    int n = WriteHdUpgradeResponse(
+        resp, sizeof(resp));
+    if (n < 0) {
+      close(fd);
+      return;
+    }
+    int total = 0;
+    while (total < n) {
+      int w = write(fd, resp + total, n - total);
+      if (w <= 0) {
+        close(fd);
+        return;
+      }
+      total += w;
+    }
+
+    // Perform HD enrollment handshake.
+    HdEnrollResult result;
+    auto hs = HdPerformHandshake(
+        fd, &server->hd_peers, &result);
+    if (!hs) {
+      spdlog::warn(
+          "HD handshake failed for fd {}: {} ({})",
+          fd, hs.error().message,
+          HdHandshakeErrorName(hs.error().code));
+      close(fd);
+      return;
+    }
+
+    char hex[kKeySize * 2 + 1];
+    KeyToHex(result.client_key, hex);
+
+    if (result.auto_approved) {
+      spdlog::info("HD peer auto-approved: {}", hex);
+
+      // Clear handshake timeouts.
+      tv = {.tv_sec = 0, .tv_usec = 0};
+      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv,
+                 sizeof(tv));
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv,
+                 sizeof(tv));
+
+      // Hand to data plane as HD peer.
+      DpAddPeer(&server->data_plane, fd,
+                result.client_key, PeerProtocol::kHd);
+      CpOnPeerConnect(&server->control_plane,
+                      result.client_key, fd);
+    } else {
+      spdlog::info("HD peer pending approval: {}", hex);
+      // fd stays alive in the registry for later
+      // manual approval. Don't hand to data plane yet.
     }
     return;
   }
@@ -392,6 +480,39 @@ auto ServerInit(Server* server,
     spdlog::info("kTLS enabled (TLS 1.3 AES-GCM)");
   }
 
+  // Initialize HD protocol if relay key is configured.
+  if (!config->hd_relay_key.empty()) {
+    if (config->hd_relay_key.size() != kKeySize * 2) {
+      spdlog::error(
+          "HD relay key must be {} hex chars, got {}",
+          kKeySize * 2, config->hd_relay_key.size());
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::DataPlaneInitFailed,
+                       "bad HD relay key length");
+    }
+    Key relay_key{};
+    size_t bin_len = 0;
+    if (sodium_hex2bin(
+            relay_key.data(), kKeySize,
+            config->hd_relay_key.c_str(),
+            config->hd_relay_key.size(),
+            nullptr, &bin_len, nullptr) != 0 ||
+        static_cast<int>(bin_len) != kKeySize) {
+      spdlog::error("HD relay key: invalid hex");
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::DataPlaneInitFailed,
+                       "bad HD relay key hex");
+    }
+    HdPeersInit(&server->hd_peers, relay_key,
+                config->hd_enroll_mode);
+    server->hd_enabled = true;
+    spdlog::info("HD protocol enabled (mode={})",
+                 config->hd_enroll_mode ==
+                         HdEnrollMode::kAutoApprove
+                     ? "auto"
+                     : "manual");
+  }
+
   // Create TCP listener.
   int lfd = socket(AF_INET, SOCK_STREAM, 0);
   if (lfd < 0) {
@@ -465,7 +586,8 @@ auto ServerRun(Server* server,
 
   // Start metrics server (if configured).
   server->metrics_server = MetricsStart(
-      server->config.metrics, &server->data_plane);
+      server->config.metrics, &server->data_plane,
+      server->hd_enabled ? &server->hd_peers : nullptr);
 
   // Poll for external stop signal in a background
   // thread. This bridges the async-signal-safe flag

@@ -79,6 +79,13 @@ int WriteProbeResponse(uint8_t* buf, int buf_size);
 int WriteNoContentResponse(uint8_t* buf, int buf_size,
                            const char* challenge);
 
+/// @brief Writes an HTTP 101 response for HD protocol
+///   upgrade.
+/// @param buf Output buffer.
+/// @param buf_size Buffer capacity.
+/// @returns Bytes written, or -1 if buffer too small.
+int WriteHdUpgradeResponse(uint8_t* buf, int buf_size);
+
 /// @brief Writes an HTTP error response.
 /// @param buf Output buffer.
 /// @param buf_size Buffer capacity.
