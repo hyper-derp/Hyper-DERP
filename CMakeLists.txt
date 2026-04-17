@@ -108,6 +108,9 @@ message(STATUS "liburing: ${URING_LIB}")
 # Fetch 3rd party libraries.
 include("cmake/3rd_party_libs/fetch.cmake")
 
+# BPF XDP program (STUN/TURN fast path).
+include("cmake/bpf.cmake")
+
 # Build libderp.
 include("cmake/libderp.cmake")
 
