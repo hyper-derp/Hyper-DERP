@@ -237,6 +237,7 @@ struct Cmd {
   PeerProtocol protocol = PeerProtocol::kDerp;
   uint16_t peer_id = 0;  // HD peer ID for MeshData routing.
   Key dst_key;  // For kCmdSetFwdRule.
+  int retries = 0;  // Self-retry counter.
 };
 
 /// Cross-shard transfer item. Carries a pre-framed buffer

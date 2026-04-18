@@ -106,7 +106,73 @@ static bool HexDecode(const char* hex,
   return true;
 }
 
-// --- HTTP helper for forwarding rule setup ---
+// --- HTTP helpers for REST API ---
+
+/// Query GET /api/v1/peers and count approved peers.
+/// Returns -1 on error.
+static int CountApprovedPeers(const char* host, int port) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(port));
+  if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+    close(fd);
+    return -1;
+  }
+  if (connect(fd, reinterpret_cast<sockaddr*>(&addr),
+              sizeof(addr)) < 0) {
+    close(fd);
+    return -1;
+  }
+
+  char req[256];
+  int req_len = snprintf(req, sizeof(req),
+      "GET /api/v1/peers HTTP/1.1\r\n"
+      "Host: %s:%d\r\n"
+      "Connection: close\r\n\r\n",
+      host, port);
+  int total = 0;
+  while (total < req_len) {
+    int w = write(fd, req + total, req_len - total);
+    if (w <= 0) { close(fd); return -1; }
+    total += w;
+  }
+
+  // Read response, count "approved" occurrences.
+  char buf[16384];
+  int off = 0;
+  while (off < static_cast<int>(sizeof(buf)) - 1) {
+    int n = read(fd, buf + off, sizeof(buf) - 1 - off);
+    if (n <= 0) break;
+    off += n;
+  }
+  close(fd);
+  buf[off] = '\0';
+
+  int count = 0;
+  const char* p = buf;
+  while ((p = strstr(p, "\"approved\"")) != nullptr) {
+    count++;
+    p++;
+  }
+  return count;
+}
+
+/// Wait until the relay reports at least n approved peers.
+static bool WaitForPeers(const char* host, int port,
+                         int n, int timeout_ms) {
+  uint64_t deadline =
+      NowNs() +
+      static_cast<uint64_t>(timeout_ms) * 1000000ULL;
+  while (NowNs() < deadline) {
+    int count = CountApprovedPeers(host, port);
+    if (count >= n) return true;
+    usleep(10000);
+  }
+  return false;
+}
 
 /// Sets a forwarding rule via the metrics REST API.
 /// Sends POST /api/v1/peers/<sender_hex>/rules with
@@ -481,9 +547,15 @@ int main(int argc, char** argv) {
   fprintf(stderr, "Connected %d/%d in %.0f ms\n\n",
           connected, g_num_peers, connect_ms);
 
-  // Let workers process peer add commands and broadcast
-  // routes before setting forwarding rules.
-  usleep(100000);
+  // Wait for all peers to be visible in the relay before
+  // setting forwarding rules. This ensures routes are
+  // broadcast to all workers.
+  if (!WaitForPeers(g_metrics_host, g_metrics_port,
+                    connected, 3000)) {
+    fprintf(stderr,
+            "warning: timed out waiting for peer "
+            "visibility\n");
+  }
 
   // Phase 2: Set forwarding rules via REST API.
   fprintf(stderr,
@@ -520,8 +592,8 @@ int main(int argc, char** argv) {
   fprintf(stderr, "Rules set: %d, failed: %d\n\n",
           rules_set, rules_failed);
 
-  // Give workers time to process rule commands.
-  usleep(100000);
+  // Wait for rule commands to be processed by workers.
+  usleep(50000);
 
   // Phase 3: Traffic.
   uint64_t total_sent = 0, total_recv = 0;

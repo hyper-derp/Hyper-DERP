@@ -1095,11 +1095,21 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
         // Same-shard: direct enqueue.
         EnqueueSend(w, dst, buf, frame_len);
       } else {
-        // Cross-shard: xfer ring to destination worker
-        // (same path as DERP ForwardMsg — distributes
-        // send load to the owning worker).
+        // Cross-shard: xfer ring to destination worker.
         int dst_fd = peer->fwd_dst_fd[0];
         int dst_id = peer->fwd_dst_worker[0];
+        // Lazy route resolution: if the route wasn't
+        // cached at rule setup (race), resolve now.
+        if (dst_fd < 0) {
+          Route* rt = RouteLookup(w->routes,
+              peer->fwd_keys[0].data());
+          if (rt) {
+            peer->fwd_dst_worker[0] = rt->worker_id;
+            peer->fwd_dst_fd[0] = rt->fd;
+            dst_fd = rt->fd;
+            dst_id = rt->worker_id;
+          }
+        }
         if (dst_fd < 0 || dst_id == w->id ||
             dst_id >= w->ctx->num_workers) {
           FrameFree(w, buf);
@@ -1318,9 +1328,19 @@ static void ForwardHdData(Worker* w, Peer* src,
       continue;
     }
 
-    // Cross-shard: cached route (same as ForwardMsg).
+    // Cross-shard: cached or lazy-resolved route.
     int dst_fd = src->fwd_dst_fd[r];
     int dst_id = src->fwd_dst_worker[r];
+    if (dst_fd < 0) {
+      Route* rt = RouteLookup(w->routes,
+          src->fwd_keys[r].data());
+      if (rt) {
+        src->fwd_dst_worker[r] = rt->worker_id;
+        src->fwd_dst_fd[r] = rt->fd;
+        dst_fd = rt->fd;
+        dst_id = rt->worker_id;
+      }
+    }
     if (dst_fd < 0 || dst_id == w->id ||
         dst_id >= w->ctx->num_workers) {
       FrameFree(w, buf);
@@ -2089,18 +2109,15 @@ static void ProcessCommands(Worker* w) {
           break;
         }
         int idx = p->fwd_count;
+        p->fwd_keys[idx] = cmd.dst_key;
 
         // Check if destination is on this worker.
         Peer* dst = HtLookup(w, cmd.dst_key.data());
-        if (!dst) {
-          // Destination on another worker. Cache route
-          // for cross-shard forwarding. Migration
-          // disabled — it races with concurrent clients.
-          // Fall through — dst stays null, cached below.
-        }
-        p->fwd_keys[idx] = cmd.dst_key;
         p->fwd_peers[idx] = dst;
         if (!dst) {
+          // Cross-shard: try to cache route now.
+          // If route isn't broadcast yet, leave fd=-1;
+          // the forwarding path does lazy lookup.
           Route* rt = RouteLookup(w->routes,
               cmd.dst_key.data());
           if (rt) {
