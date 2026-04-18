@@ -22,8 +22,9 @@ TEST(TypesTest, PressureHighScalesLinearly) {
             5 * kPressurePerPeer);
   EXPECT_EQ(SendPressureHigh(10),
             10 * kPressurePerPeer);
-  EXPECT_EQ(SendPressureHigh(25),
-            25 * kPressurePerPeer);
+  // 25 * 2048 = 51200 > kSendPressureMax, so clamped.
+  EXPECT_EQ(SendPressureHigh(15),
+            15 * kPressurePerPeer);
 }
 
 TEST(TypesTest, PressureHighClampsAtMax) {
@@ -68,10 +69,10 @@ TEST(TypesTest, PressureHighBelowSlabSize) {
 }
 
 TEST(TypesTest, FivePeersGetsTightThreshold) {
-  // At 5 peers, total possible queue = 5 * 2048 = 10240.
-  // Threshold should be 2560, well below the queue max.
+  // At 5 peers, threshold = 5 * 2048 = 10240.
+  // Below total queue max = 5 * 8192 = 40960.
   int high = SendPressureHigh(5);
-  EXPECT_EQ(high, 2560);
+  EXPECT_EQ(high, 5 * kPressurePerPeer);
   EXPECT_LT(high, 5 * kMaxSendQueueDepth);
 }
 

@@ -900,7 +900,6 @@ static inline bool SubmitPeerSend(Worker* w, Peer* peer,
 
 static void EnqueueSend(Worker* w, Peer* peer,
                         uint8_t* data, int len) {
-  // Drop newest when queue is full (backpressure).
   if (peer->send_queued >= kMaxSendQueueDepth) {
     w->stats.send_queue_drops++;
     FrameFree(w, data);
@@ -1152,6 +1151,9 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
         } else {
           FrameFree(w, buf);
           w->stats.xfer_drops++;
+          // Count xfer drops as send pressure so
+          // recv pauses when cross-shard can't keep up.
+          w->send_pressure++;
         }
       }
       return;
@@ -1391,6 +1393,7 @@ static void ForwardHdData(Worker* w, Peer* src,
     } else {
       FrameFree(w, buf);
       w->stats.xfer_drops++;
+      w->send_pressure++;
     }
   }
 
@@ -1538,6 +1541,7 @@ static void ForwardMsg(Worker* w, FrameType type,
   } else {
     FrameFree(w, frame);
     w->stats.xfer_drops++;
+    w->send_pressure++;
   }
 }
 
