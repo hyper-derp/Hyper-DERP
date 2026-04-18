@@ -11,6 +11,7 @@
 
 #include "hd/sdk/config.h"
 #include "hd/sdk/error.h"
+#include "hd/sdk/frame_pool.h"
 
 namespace hd::sdk {
 
@@ -33,6 +34,10 @@ class Tunnel {
 
   /// Send data to the peer (copy-and-send).
   Result<> Send(std::span<const uint8_t> data);
+
+  /// Zero-copy send. Transfers ownership of a FrameBuffer
+  /// from AllocFrame(). Buffer returned to pool after send.
+  Result<> SendOwned(std::unique_ptr<FrameBuffer> buf);
 
   /// Register callback for incoming data.
   void SetDataCallback(DataCallback cb);

@@ -11,8 +11,11 @@
 
 #include "hd/sdk/config.h"
 #include "hd/sdk/error.h"
+#include "hd/sdk/frame_pool.h"
 #include "hd/sdk/peer_info.h"
 #include "hd/sdk/tunnel.h"
+
+#include "hyper_derp/hd_protocol.h"
 
 namespace hd::sdk {
 
@@ -97,6 +100,10 @@ class Client {
   Result<> SendMeshData(uint16_t dst_peer_id,
                         std::span<const uint8_t> data);
 
+  /// Allocate a frame from the zero-copy pool.
+  /// Returns nullptr if pool is exhausted.
+  std::unique_ptr<FrameBuffer> AllocFrame();
+
  private:
   Client();
   struct Impl;
@@ -104,6 +111,9 @@ class Client {
 
   static bool DoConnect(Impl* impl);
   static void RecvLoop(Impl* impl);
+  static void DispatchFrame(Impl* impl,
+                            hyper_derp::HdFrameType ftype,
+                            const uint8_t* buf, int len);
 };
 
 }  // namespace hd::sdk

@@ -17,6 +17,8 @@ list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_hd_reconnect\\.cc")
 list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_hd_sdk\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_frame_pool\\.cc")
 
 foreach(test_source ${UNIT_TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
@@ -110,3 +112,10 @@ target_link_libraries(test_hd_sdk PRIVATE
   hd_sdk GTest::gtest_main)
 gtest_discover_tests(test_hd_sdk
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 60)
+
+# Frame pool unit test.
+add_executable(test_frame_pool test_frame_pool.cc)
+target_link_libraries(test_frame_pool PRIVATE
+  hd_sdk GTest::gtest_main)
+gtest_discover_tests(test_frame_pool
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)

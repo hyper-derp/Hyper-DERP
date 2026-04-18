@@ -50,6 +50,18 @@ Result<> Tunnel::Send(std::span<const uint8_t> data) {
   return {};
 }
 
+Result<> Tunnel::SendOwned(
+    std::unique_ptr<FrameBuffer> buf) {
+  if (!buf || !impl_ ||
+      impl_->mode.load() == Mode::Closed) {
+    return std::unexpected(
+        MakeError(ErrorCode::kNotConnected, "closed"));
+  }
+  return Send(std::span<const uint8_t>(
+      buf->data(), buf->size()));
+  // buf is destroyed here, returning to pool.
+}
+
 void Tunnel::SetDataCallback(DataCallback cb) {
   if (!impl_) return;
   std::lock_guard lock(impl_->cb_mutex);

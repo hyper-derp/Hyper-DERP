@@ -39,6 +39,30 @@ static bool ParseRelayUrl(const std::string& url,
   return !host->empty();
 }
 
+// -- Key persistence ---------------------------------------------------------
+
+static bool SaveKey(const std::string& path,
+                    const uint8_t* pub, const uint8_t* priv) {
+  if (path.empty()) return true;
+  FILE* f = fopen(path.c_str(), "wb");
+  if (!f) return false;
+  fwrite(pub, 1, 32, f);
+  fwrite(priv, 1, 32, f);
+  fclose(f);
+  return true;
+}
+
+static bool LoadKey(const std::string& path,
+                    uint8_t* pub, uint8_t* priv) {
+  if (path.empty()) return false;
+  FILE* f = fopen(path.c_str(), "rb");
+  if (!f) return false;
+  bool ok = fread(pub, 1, 32, f) == 32 &&
+            fread(priv, 1, 32, f) == 32;
+  fclose(f);
+  return ok;
+}
+
 // -- Impl --------------------------------------------------------------------
 
 struct Client::Impl {
@@ -67,16 +91,32 @@ struct Client::Impl {
 
   // Send serialization.
   std::mutex send_mutex;
+
+  // Frame pool.
+  std::unique_ptr<FramePool> pool;
 };
 
 // -- Connect helper ----------------------------------------------------------
 
 bool Client::DoConnect(Impl* impl) {
   hyper_derp::HdClientClose(&impl->hd);
-  auto init = hyper_derp::HdClientInit(&impl->hd);
-  if (!init) {
-    spdlog::error("sdk init: {}", init.error().message);
-    return false;
+
+  // Try to load persisted keys.
+  uint8_t pub[32], priv[32];
+  if (LoadKey(impl->config.key_path, pub, priv)) {
+    hyper_derp::HdClientInitWithKeys(
+        &impl->hd, pub, priv, impl->relay_key);
+  } else {
+    auto init = hyper_derp::HdClientInit(&impl->hd);
+    if (!init) {
+      spdlog::error("sdk init: {}",
+                    init.error().message);
+      return false;
+    }
+    // Persist new keys.
+    SaveKey(impl->config.key_path,
+            impl->hd.public_key.data(),
+            impl->hd.private_key.data());
   }
   impl->hd.relay_key = impl->relay_key;
 
@@ -191,88 +231,7 @@ void Client::RecvLoop(Impl* impl) {
       continue;
     }
 
-    // Dispatch.
-    using hyper_derp::HdFrameType;
-
-    if (ftype == HdFrameType::kPeerInfo && buf_len >= 34) {
-      PeerInfo pi{};
-      std::memcpy(pi.public_key.data(), buf, 32);
-      pi.peer_id = static_cast<uint16_t>(buf[32]) << 8 |
-                   buf[33];
-      pi.connected = true;
-      // Name = hex of first 8 bytes of key.
-      char hex[17];
-      sodium_bin2hex(hex, sizeof(hex), buf, 8);
-      pi.name = hex;
-
-      {
-        std::lock_guard lock(impl->peers_mutex);
-        impl->peers[pi.peer_id] = pi;
-      }
-      {
-        std::lock_guard lock(impl->cb_mutex);
-        if (impl->on_peer)
-          impl->on_peer(pi, true);
-      }
-
-    } else if (ftype == HdFrameType::kPeerGone &&
-               buf_len >= 32) {
-      hyper_derp::Key key;
-      std::memcpy(key.data(), buf, 32);
-      PeerInfo pi{};
-      std::memcpy(pi.public_key.data(), buf, 32);
-      pi.connected = false;
-
-      // Find peer_id by key.
-      uint16_t gone_id = 0;
-      {
-        std::lock_guard lock(impl->peers_mutex);
-        for (auto& [id, p] : impl->peers) {
-          if (p.public_key == pi.public_key) {
-            gone_id = id;
-            pi = p;
-            pi.connected = false;
-            break;
-          }
-        }
-        if (gone_id > 0) impl->peers.erase(gone_id);
-      }
-      {
-        std::lock_guard lock(impl->cb_mutex);
-        if (impl->on_peer)
-          impl->on_peer(pi, false);
-      }
-      // Close tunnel if open.
-      {
-        std::lock_guard lock(impl->tunnels_mutex);
-        auto it = impl->tunnels.find(gone_id);
-        if (it != impl->tunnels.end()) {
-          it->second->mode.store(Mode::Closed);
-        }
-      }
-
-    } else if (ftype == HdFrameType::kMeshData &&
-               buf_len >= 2) {
-      uint16_t src =
-          static_cast<uint16_t>(buf[0]) << 8 | buf[1];
-      const uint8_t* payload = buf + 2;
-      int payload_len = buf_len - 2;
-
-      // Dispatch to tunnel.
-      std::lock_guard lock(impl->tunnels_mutex);
-      auto it = impl->tunnels.find(src);
-      if (it != impl->tunnels.end()) {
-        auto* t = it->second;
-        std::lock_guard tl(t->cb_mutex);
-        if (t->on_data && t->mode.load() != Mode::Closed) {
-          t->on_data(std::span<const uint8_t>(
-              payload, payload_len));
-        }
-      }
-
-    } else if (ftype == HdFrameType::kPong) {
-      // Keepalive handled.
-    }
+    DispatchFrame(impl, ftype, buf, buf_len);
   }
 }
 
@@ -335,6 +294,10 @@ Result<Client> Client::Create(const ClientConfig& config) {
                   "failed to connect to relay"));
   }
 
+  // Create frame pool.
+  c.impl_->pool = std::make_unique<FramePool>(
+      config.frame_pool_size);
+
   spdlog::info("sdk connected to {}:{}", c.impl_->host,
                c.impl_->port);
   return c;
@@ -374,20 +337,90 @@ void Client::Run() {
   RecvLoop(impl_);
 }
 
+void Client::DispatchFrame(Impl* impl,
+                           hyper_derp::HdFrameType ftype,
+                           const uint8_t* buf,
+                           int buf_len) {
+  using hyper_derp::HdFrameType;
+
+  if (ftype == HdFrameType::kPeerInfo && buf_len >= 34) {
+    PeerInfo pi{};
+    std::memcpy(pi.public_key.data(), buf, 32);
+    pi.peer_id = static_cast<uint16_t>(buf[32]) << 8 |
+                 buf[33];
+    pi.connected = true;
+    char hex[17];
+    sodium_bin2hex(hex, sizeof(hex), buf, 8);
+    pi.name = hex;
+    {
+      std::lock_guard lock(impl->peers_mutex);
+      impl->peers[pi.peer_id] = pi;
+    }
+    {
+      std::lock_guard lock(impl->cb_mutex);
+      if (impl->on_peer) impl->on_peer(pi, true);
+    }
+  } else if (ftype == HdFrameType::kPeerGone &&
+             buf_len >= 32) {
+    PeerInfo pi{};
+    std::memcpy(pi.public_key.data(), buf, 32);
+    pi.connected = false;
+    uint16_t gone_id = 0;
+    {
+      std::lock_guard lock(impl->peers_mutex);
+      for (auto& [id, p] : impl->peers) {
+        if (p.public_key == pi.public_key) {
+          gone_id = id;
+          pi = p;
+          pi.connected = false;
+          break;
+        }
+      }
+      if (gone_id > 0) impl->peers.erase(gone_id);
+    }
+    {
+      std::lock_guard lock(impl->cb_mutex);
+      if (impl->on_peer) impl->on_peer(pi, false);
+    }
+    {
+      std::lock_guard lock(impl->tunnels_mutex);
+      auto it = impl->tunnels.find(gone_id);
+      if (it != impl->tunnels.end()) {
+        it->second->mode.store(Mode::Closed);
+      }
+    }
+  } else if (ftype == HdFrameType::kMeshData &&
+             buf_len >= 2) {
+    uint16_t src =
+        static_cast<uint16_t>(buf[0]) << 8 | buf[1];
+    const uint8_t* payload = buf + 2;
+    int payload_len = buf_len - 2;
+    std::lock_guard lock(impl->tunnels_mutex);
+    auto it = impl->tunnels.find(src);
+    if (it != impl->tunnels.end()) {
+      auto* t = it->second;
+      std::lock_guard tl(t->cb_mutex);
+      if (t->on_data && t->mode.load() != Mode::Closed) {
+        t->on_data(std::span<const uint8_t>(
+            payload, payload_len));
+      }
+    }
+  }
+  // kPong handled silently.
+}
+
 void Client::Poll() {
-  // Single iteration of recv — process available frames.
   if (!impl_ || impl_->status.load() != Status::Connected)
     return;
 
   uint8_t buf[hyper_derp::kHdMaxFramePayload];
   int buf_len;
   hyper_derp::HdFrameType ftype;
-  // Process up to 64 frames per Poll.
   for (int i = 0; i < 64; i++) {
     auto rv = hyper_derp::HdClientRecvFrame(
         &impl_->hd, &ftype, buf, &buf_len, sizeof(buf));
     if (!rv) break;
-    // TODO: dispatch like RecvLoop.
+    DispatchFrame(impl_, ftype, buf, buf_len);
   }
 }
 
@@ -503,6 +536,13 @@ Result<> Client::SendMeshData(
                   r.error().message));
   }
   return {};
+}
+
+// -- Frame pool --------------------------------------------------------------
+
+std::unique_ptr<FrameBuffer> Client::AllocFrame() {
+  if (!impl_ || !impl_->pool) return nullptr;
+  return impl_->pool->Alloc();
 }
 
 }  // namespace hd::sdk
