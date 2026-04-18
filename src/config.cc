@@ -229,6 +229,13 @@ auto LoadConfig(const char* path, ServerConfig* config)
     if (h.is_map()) {
       if (h.has_child("relay_key"))
         ReadStr(h["relay_key"], &config->hd_relay_key);
+      if (h.has_child("relay_id")) {
+        int v = 0;
+        if (!ReadInt(h["relay_id"], "hd.relay_id",
+                     &v, 0, 65535, &err))
+          return std::unexpected(err);
+        config->hd_relay_id = static_cast<uint16_t>(v);
+      }
       if (h.has_child("enroll_mode")) {
         auto val = h["enroll_mode"].val();
         std::string_view mode(val.data(), val.len);

@@ -28,6 +28,9 @@ inline constexpr int kHdMeshDstSize = 2;
 /// FleetData destination header size.
 inline constexpr int kHdFleetDstSize = 4;
 
+/// RouteAnnounce entry size (2B relay_id + 1B hops).
+inline constexpr int kHdRouteEntrySize = 3;
+
 // -- Frame types -------------------------------------------------------------
 
 /// HD frame type identifiers (wire values).
@@ -42,6 +45,7 @@ enum class HdFrameType : uint8_t {
   kDenied = 0x12,
   kPeerInfo = 0x20,
   kPeerGone = 0x21,
+  kRouteAnnounce = 0x30,
 };
 
 // -- Frame header codec (operates on raw buffers) ----------------------------
@@ -217,6 +221,35 @@ inline uint16_t HdReadFleetPeer(
   return static_cast<uint16_t>(
       (payload[2] << 8) | payload[3]);
 }
+
+/// @brief Builds a RouteAnnounce frame from relay table
+///   data.
+/// @param buf Output buffer (must be large enough for
+///   header + count * kHdRouteEntrySize bytes).
+/// @param buf_size Size of the output buffer.
+/// @param relay_ids Array of relay IDs.
+/// @param hops Array of hop counts.
+/// @param count Number of entries.
+/// @returns Total frame size written, or -1 if the buffer
+///   is too small.
+int HdBuildRouteAnnounce(uint8_t* buf, int buf_size,
+                         const uint16_t* relay_ids,
+                         const uint8_t* hops,
+                         int count);
+
+/// @brief Parses a RouteAnnounce frame payload.
+/// @param payload Pointer to the payload start (after
+///   frame header).
+/// @param payload_len Length of the payload.
+/// @param out_ids Output array for relay IDs.
+/// @param out_hops Output array for hop counts.
+/// @param max_out Maximum entries to write.
+/// @returns Number of entries parsed.
+int HdParseRouteAnnounce(const uint8_t* payload,
+                         int payload_len,
+                         uint16_t* out_ids,
+                         uint8_t* out_hops,
+                         int max_out);
 
 }  // namespace hyper_derp
 

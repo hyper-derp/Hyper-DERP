@@ -124,4 +124,40 @@ int HdBuildFleetDataHeader(uint8_t* buf,
   return kHdFrameHeaderSize + kHdFleetDstSize;
 }
 
+int HdBuildRouteAnnounce(uint8_t* buf, int buf_size,
+                         const uint16_t* relay_ids,
+                         const uint8_t* hops,
+                         int count) {
+  int payload_len = count * kHdRouteEntrySize;
+  int total = kHdFrameHeaderSize + payload_len;
+  if (total > buf_size) return -1;
+  HdWriteFrameHeader(buf, HdFrameType::kRouteAnnounce,
+                     static_cast<uint32_t>(payload_len));
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  for (int i = 0; i < count; i++) {
+    p[0] = static_cast<uint8_t>(relay_ids[i] >> 8);
+    p[1] = static_cast<uint8_t>(relay_ids[i]);
+    p[2] = hops[i];
+    p += kHdRouteEntrySize;
+  }
+  return total;
+}
+
+int HdParseRouteAnnounce(const uint8_t* payload,
+                         int payload_len,
+                         uint16_t* out_ids,
+                         uint8_t* out_hops,
+                         int max_out) {
+  int entry_count = payload_len / kHdRouteEntrySize;
+  if (entry_count > max_out) entry_count = max_out;
+  const uint8_t* p = payload;
+  for (int i = 0; i < entry_count; i++) {
+    out_ids[i] = static_cast<uint16_t>(
+        (p[0] << 8) | p[1]);
+    out_hops[i] = p[2];
+    p += kHdRouteEntrySize;
+  }
+  return entry_count;
+}
+
 }  // namespace hyper_derp

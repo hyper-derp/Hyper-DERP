@@ -625,12 +625,26 @@ auto ServerInit(Server* server,
     }
     HdPeersInit(&server->hd_peers, relay_key,
                 config->hd_enroll_mode);
+    server->hd_peers.relay_id = config->hd_relay_id;
     server->hd_enabled = true;
-    spdlog::info("HD protocol enabled (mode={})",
+
+    // Initialize relay table and set relay_id in data
+    // plane context.
+    server->data_plane.relay_id = config->hd_relay_id;
+    if (config->hd_relay_id > 0) {
+      RelayTableInit(&server->relay_table,
+                     config->hd_relay_id);
+      spdlog::info("relay table initialized (self_id={})",
+                   config->hd_relay_id);
+    }
+
+    spdlog::info("HD protocol enabled (mode={}, "
+                 "relay_id={})",
                  config->hd_enroll_mode ==
                          HdEnrollMode::kAutoApprove
                      ? "auto"
-                     : "manual");
+                     : "manual",
+                 config->hd_relay_id);
   }
 
   // Initialize Level 2 (ICE/TURN/XDP) if enabled.

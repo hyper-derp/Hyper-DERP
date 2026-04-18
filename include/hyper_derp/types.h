@@ -401,6 +401,12 @@ struct Ctx {
   int sockbuf_size;
   /// SQPOLL mode: kernel thread polls SQ on our behalf.
   int sqpoll;
+  /// This relay's fleet ID (0 = standalone).
+  uint16_t relay_id = 0;
+  /// Relay-to-relay routing: relay_id -> peer_id of the
+  /// neighbor relay's HD connection on this relay.
+  /// Indexed by destination relay_id. 0 = no mapping.
+  uint16_t relay_peer_map[256]{};
 };
 
 }  // namespace hyper_derp

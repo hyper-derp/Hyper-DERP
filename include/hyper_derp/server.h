@@ -18,6 +18,7 @@
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
 #include "hyper_derp/hd_peers.h"
+#include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/ktls.h"
 #include "hyper_derp/metrics.h"
@@ -106,6 +107,8 @@ struct ServerConfig {
   std::string hd_relay_key;
   /// HD enrollment mode.
   HdEnrollMode hd_enroll_mode = HdEnrollMode::kManual;
+  /// This relay's fleet ID (0 = standalone, no fleet).
+  uint16_t hd_relay_id = 0;
   std::array<int, kMaxWorkers> pin_cores{};
 
   /// Level 2 (direct path) configuration.
@@ -131,6 +134,7 @@ struct Server {
   KtlsCtx ktls_ctx{};
   bool ktls_enabled = false;
   HdPeerRegistry hd_peers{};
+  RelayTable relay_table{};
   bool hd_enabled = false;
   int listen_fd = -1;
   std::atomic<int> running{0};

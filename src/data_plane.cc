@@ -1117,6 +1117,52 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
            payload + kHdMeshDstSize,
            fwd_payload_len);
     EnqueueSend(w, dst, buf, fwd_frame_len);
+  } else if (hd_type == HdFrameType::kFleetData) {
+    // FleetData: [4B header][2B relay_id][2B peer_id]
+    // [payload]
+    if (payload_len < kHdFleetDstSize) return;
+    uint16_t dst_relay = HdReadFleetRelay(payload);
+    uint16_t dst_peer = HdReadFleetPeer(payload);
+
+    if (dst_relay == w->ctx->relay_id ||
+        dst_relay == 0) {
+      // Local delivery: route to local peer by ID.
+      Peer* dst = nullptr;
+      if (w->peer_id_map && dst_peer > 0) {
+        dst = w->peer_id_map[dst_peer];
+      }
+      if (!dst || dst->occupied != 1) return;
+
+      // Strip fleet header, deliver as Data.
+      int fwd_len = payload_len - kHdFleetDstSize;
+      int frame_len =
+          kHdFrameHeaderSize + fwd_len;
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) return;
+      HdWriteFrameHeader(buf, HdFrameType::kData,
+          static_cast<uint32_t>(fwd_len));
+      memcpy(buf + kHdFrameHeaderSize,
+             payload + kHdFleetDstSize, fwd_len);
+      EnqueueSend(w, dst, buf, frame_len);
+    } else {
+      // Remote delivery: forward to next-hop relay
+      // peer via relay_peer_map.
+      uint16_t next_peer =
+          w->ctx->relay_peer_map[dst_relay];
+      if (next_peer == 0 || !w->peer_id_map) return;
+      Peer* relay_peer =
+          w->peer_id_map[next_peer];
+      if (!relay_peer || relay_peer->occupied != 1)
+        return;
+
+      // Forward entire FleetData frame as-is.
+      int frame_len =
+          kHdFrameHeaderSize + payload_len;
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) return;
+      memcpy(buf, hdr, frame_len);
+      EnqueueSend(w, relay_peer, buf, frame_len);
+    }
   } else if (hd_type == HdFrameType::kPeerInfo) {
     // Forward PeerInfo to control plane for ICE
     // processing. Pipe format: [4B fd BE][1B type]

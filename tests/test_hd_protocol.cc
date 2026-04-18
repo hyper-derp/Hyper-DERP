@@ -52,6 +52,7 @@ TEST(HdProtocolTest, AllFrameTypesDistinct) {
       static_cast<uint8_t>(HdFrameType::kDenied),
       static_cast<uint8_t>(HdFrameType::kPeerInfo),
       static_cast<uint8_t>(HdFrameType::kPeerGone),
+      static_cast<uint8_t>(HdFrameType::kRouteAnnounce),
   };
   int count = sizeof(types) / sizeof(types[0]);
   for (int i = 0; i < count; i++) {

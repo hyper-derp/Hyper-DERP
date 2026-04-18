@@ -28,6 +28,7 @@ add_library(libderp_obj OBJECT
   src/hd_handshake.cc
   src/hd_client.cc
   src/hd_bridge.cc
+  src/hd_relay_table.cc
   src/stun.cc
   src/turn.cc
   src/xdp_loader.cc
