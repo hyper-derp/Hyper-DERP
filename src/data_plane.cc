@@ -643,41 +643,10 @@ void DpRemovePeer(Ctx* ctx, const Key& key) {
 void DpAddFwdRule(Ctx* ctx, const Key& peer_key,
                   const Key& dst_key) {
   int src_wid = PeerWorker(ctx->num_workers, peer_key);
-  int dst_wid = PeerWorker(ctx->num_workers, dst_key);
 
-  // Migrate destination to source's worker for
-  // same-shard forwarding (no xfer overhead).
-  if (src_wid != dst_wid) {
-    // Find the destination's fd from the route table.
-    int dst_fd = -1;
-    for (int i = 0; i < kHtCapacity; i++) {
-      Route* r = &ctx->workers[src_wid]->routes[i];
-      if (__atomic_load_n(&r->occupied,
-                          __ATOMIC_ACQUIRE) == 1 &&
-          memcmp(r->key.data(), dst_key.data(),
-                 kKeySize) == 0) {
-        dst_fd = r->fd;
-        break;
-      }
-    }
-    if (dst_fd >= 0) {
-      // Remove from old worker (don't close fd).
-      Cmd mv{};
-      mv.type = kCmdMovePeerOut;
-      mv.key = dst_key;
-      EnqueueCmd(ctx->workers[dst_wid], &mv);
-
-      // Re-add to source's worker.
-      Cmd add{};
-      add.type = kCmdAddPeer;
-      add.fd = dst_fd;
-      add.key = dst_key;
-      add.protocol = PeerProtocol::kHd;
-      EnqueueCmd(ctx->workers[src_wid], &add);
-    }
-  }
-
-  // Set the forwarding rule on the source's worker.
+  // Single command to the source worker. The worker
+  // handles migration internally — no cross-worker
+  // command ordering issues.
   Cmd cmd{};
   cmd.type = kCmdSetFwdRule;
   cmd.key = peer_key;
@@ -1904,22 +1873,55 @@ static void ProcessCommands(Worker* w) {
         break;
       case kCmdSetFwdRule: {
         Peer* p = HtLookup(w, cmd.key.data());
-        if (p && p->fwd_count < Peer::kMaxPeerRules) {
-          int idx = p->fwd_count++;
-          p->fwd_keys[idx] = cmd.dst_key;
-          // Cache same-shard destination pointer.
-          Peer* dst = HtLookup(w, cmd.dst_key.data());
-          p->fwd_peers[idx] = dst;
-          // Cache cross-shard route info.
-          if (!dst) {
-            Route* rt = RouteLookup(w->routes,
-                cmd.dst_key.data());
-            if (rt) {
-              p->fwd_dst_worker[idx] = rt->worker_id;
-              p->fwd_dst_fd[idx] = rt->fd;
-            }
+        if (!p || p->fwd_count >= Peer::kMaxPeerRules) {
+          break;
+        }
+        int idx = p->fwd_count;
+
+        // Check if destination is on this worker.
+        Peer* dst = HtLookup(w, cmd.dst_key.data());
+        if (!dst) {
+          // Destination is on another worker. Migrate
+          // it here for same-shard forwarding.
+          Route* rt = RouteLookup(w->routes,
+              cmd.dst_key.data());
+          if (rt && rt->worker_id != w->id) {
+            int old_wid = rt->worker_id;
+            int dst_fd = rt->fd;
+
+            // Tell old worker to release the peer
+            // (don't close fd).
+            Cmd mv{};
+            mv.type = kCmdMovePeerOut;
+            mv.key = cmd.dst_key;
+            EnqueueCmd(w->ctx->workers[old_wid], &mv);
+
+            // Add to this worker directly. We're on
+            // the worker thread so we can call
+            // ProcessCmdAdd inline via a synthetic cmd.
+            Cmd add{};
+            add.type = kCmdAddPeer;
+            add.fd = dst_fd;
+            add.key = cmd.dst_key;
+            add.protocol = PeerProtocol::kHd;
+            ProcessCmdAdd(w, &add);
+
+            dst = HtLookup(w, cmd.dst_key.data());
           }
         }
+
+        p->fwd_keys[idx] = cmd.dst_key;
+        p->fwd_peers[idx] = dst;
+        if (!dst) {
+          // Fallback: cache route for cross-shard.
+          Route* rt = RouteLookup(w->routes,
+              cmd.dst_key.data());
+          if (rt) {
+            p->fwd_dst_worker[idx] = rt->worker_id;
+            p->fwd_dst_fd[idx] = rt->fd;
+          }
+        }
+        p->fwd_count++;
         break;
       }
       case kCmdMovePeerOut: {
