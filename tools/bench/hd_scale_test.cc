@@ -516,6 +516,9 @@ int main(int argc, char** argv) {
   fprintf(stderr, "Rules set: %d, failed: %d\n\n",
           rules_set, rules_failed);
 
+  // Wait for peer migrations to complete before traffic.
+  usleep(2000000);
+
   // Phase 3: Traffic.
   uint64_t total_sent = 0, total_recv = 0;
   uint64_t total_bytes_sent = 0, total_bytes_recv = 0;

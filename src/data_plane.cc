@@ -2034,25 +2034,10 @@ static void ProcessCommands(Worker* w) {
         // Check if destination is on this worker.
         Peer* dst = HtLookup(w, cmd.dst_key.data());
         if (!dst) {
-          // Migrate destination here for same-shard.
-          Route* rt = RouteLookup(w->routes,
-              cmd.dst_key.data());
-          if (rt && rt->worker_id != w->id) {
-            Worker* old_w =
-                w->ctx->workers[rt->worker_id];
-            Cmd mv{};
-            mv.type = kCmdMovePeerOut;
-            mv.key = cmd.dst_key;
-            EnqueueCmd(old_w, &mv);
-
-            Cmd add{};
-            add.type = kCmdAddPeer;
-            add.fd = rt->fd;
-            add.key = cmd.dst_key;
-            add.protocol = PeerProtocol::kHd;
-            ProcessCmdAdd(w, &add);
-            dst = HtLookup(w, cmd.dst_key.data());
-          }
+          // Destination on another worker. Cache route
+          // for cross-shard forwarding. Migration
+          // disabled — it races with concurrent clients.
+          // Fall through — dst stays null, cached below.
         }
         p->fwd_keys[idx] = cmd.dst_key;
         p->fwd_peers[idx] = dst;
