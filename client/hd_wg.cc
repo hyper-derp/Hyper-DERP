@@ -18,8 +18,10 @@
 #include <cstring>
 
 #include <arpa/inet.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <sodium.h>
 #include <unistd.h>
 
@@ -46,6 +48,79 @@ static uint64_t NowMs() {
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return static_cast<uint64_t>(ts.tv_sec) * 1000 +
          static_cast<uint64_t>(ts.tv_nsec) / 1000000;
+}
+
+/// WG MTU: 1500 (ethernet) - 20 (IP) - 20 (TCP) - 29 (TLS)
+///   - 4 (HD header) - 6 (MeshData header) - 32 (WG outer)
+///   = 1389. Round down to 1380 for safety.
+inline constexpr int kWgTunnelMtu = 1380;
+
+// -- Relay connection helper -------------------------------------------------
+
+/// Connect to HD relay: TCP → TLS → HTTP upgrade → enroll.
+/// Returns true on success. On failure, hd is closed.
+static bool ConnectRelay(HdClient* hd, const char* host,
+                         uint16_t port,
+                         const Key& relay_key) {
+  HdClientClose(hd);
+  auto init = HdClientInit(hd);
+  if (!init) {
+    spdlog::error("hd init: {}",
+                  init.error().message);
+    return false;
+  }
+  hd->relay_key = relay_key;
+
+  auto conn = HdClientConnect(hd, host, port);
+  if (!conn) {
+    spdlog::error("hd connect: {}",
+                  conn.error().message);
+    return false;
+  }
+
+  auto tls = HdClientTlsConnect(hd);
+  if (!tls) {
+    spdlog::error("hd tls: {}",
+                  tls.error().message);
+    HdClientClose(hd);
+    return false;
+  }
+
+  auto up = HdClientUpgrade(hd);
+  if (!up) {
+    spdlog::error("hd upgrade: {}",
+                  up.error().message);
+    HdClientClose(hd);
+    return false;
+  }
+
+  auto enr = HdClientEnroll(hd);
+  if (!enr) {
+    spdlog::error("hd enroll: {}",
+                  enr.error().message);
+    HdClientClose(hd);
+    return false;
+  }
+
+  HdClientSetTimeout(hd, 100);
+  return true;
+}
+
+/// Re-exchange WGEX with all known peers after reconnect.
+static void ReannounceToAllPeers(HdClient* hd,
+                                 WgPeerTable* peers,
+                                 const uint8_t* wg_pubkey,
+                                 uint32_t tunnel_ip,
+                                 uint32_t host_ip,
+                                 uint16_t host_port,
+                                 uint32_t srflx_ip,
+                                 uint16_t srflx_port) {
+  for (int i = 0; i < kWgMaxPeers; i++) {
+    auto* p = &peers->peers[i];
+    if (!p->active) continue;
+    // Reset state so WGEX is re-sent on next PeerInfo.
+    p->state = WgPeerState::kNew;
+  }
 }
 
 // -- STUN reflexive address discovery ----------------------------------------
@@ -392,6 +467,7 @@ static void CheckDirectPromotion(WgPeer* peer,
 static void PrintUsage() {
   fprintf(stderr,
       "Usage: hd-wg [options]\n"
+      "  --config PATH        YAML config file\n"
       "  --relay-host HOST    Relay IP\n"
       "  --relay-port PORT    Relay port (3341)\n"
       "  --relay-key HEX      Relay shared secret\n"
@@ -410,9 +486,22 @@ static void PrintUsage() {
 int main(int argc, char** argv) {
   WgDaemonConfig cfg;
 
+  // Load config file first, then override with CLI args.
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+      if (!WgLoadConfig(argv[i + 1], &cfg)) {
+        return 1;
+      }
+      spdlog::info("loaded config from {}", argv[i + 1]);
+      break;
+    }
+  }
+
   for (int i = 1; i < argc; i++) {
     auto arg = std::string_view(argv[i]);
-    if (arg == "--relay-host"sv && i + 1 < argc) {
+    if (arg == "--config"sv && i + 1 < argc) {
+      i++;  // Already loaded.
+    } else if (arg == "--relay-host"sv && i + 1 < argc) {
       cfg.relay_host = argv[++i];
     } else if (arg == "--relay-port"sv && i + 1 < argc) {
       cfg.relay_port =
@@ -583,56 +672,31 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Set WG interface MTU to account for MeshData + TLS.
+  {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) {
+      struct ifreq ifr{};
+      strncpy(ifr.ifr_name, cfg.wg_interface.c_str(),
+              IFNAMSIZ - 1);
+      ifr.ifr_mtu = kWgTunnelMtu;
+      if (ioctl(sock, SIOCSIFMTU, &ifr) == 0) {
+        spdlog::info("wg0 mtu set to {}", kWgTunnelMtu);
+      }
+      close(sock);
+    }
+  }
+
   // -------------------------------------------------------
   // Phase 3: Connect to HD relay.
   // -------------------------------------------------------
 
   HdClient hd{};
-  auto hd_init = HdClientInit(&hd);
-  if (!hd_init) {
-    spdlog::error("hd init: {}",
-                  hd_init.error().message);
+  if (!ConnectRelay(&hd, cfg.relay_host.c_str(),
+                    cfg.relay_port, relay_key)) {
     WgNlClose(&wg);
     return 1;
   }
-  hd.relay_key = relay_key;
-
-  auto hd_conn = HdClientConnect(
-      &hd, cfg.relay_host.c_str(), cfg.relay_port);
-  if (!hd_conn) {
-    spdlog::error("hd connect: {}",
-                  hd_conn.error().message);
-    WgNlClose(&wg);
-    return 1;
-  }
-
-  auto hd_tls = HdClientTlsConnect(&hd);
-  if (!hd_tls) {
-    spdlog::error("hd tls: {}",
-                  hd_tls.error().message);
-    HdClientClose(&hd);
-    WgNlClose(&wg);
-    return 1;
-  }
-
-  auto hd_up = HdClientUpgrade(&hd);
-  if (!hd_up) {
-    spdlog::error("hd upgrade: {}",
-                  hd_up.error().message);
-    HdClientClose(&hd);
-    WgNlClose(&wg);
-    return 1;
-  }
-
-  auto hd_enr = HdClientEnroll(&hd);
-  if (!hd_enr) {
-    spdlog::error("hd enroll: {}",
-                  hd_enr.error().message);
-    HdClientClose(&hd);
-    WgNlClose(&wg);
-    return 1;
-  }
-
   spdlog::info("enrolled with relay (peer_id={})",
                hd.peer_id);
 
@@ -651,28 +715,72 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  HdClientSetTimeout(&hd, 100);
   WgPeerTable peers{};
+  bool connected = true;
+  int reconnect_backoff = 1;
+  uint64_t last_ping = NowMs();
 
   spdlog::info("hd-wg running (tunnel {}, proxy "
-               "127.0.0.1:{})",
-               cfg.tunnel_cidr, cfg.proxy_port);
-
-  pollfd fds[2];
-  fds[0].fd = hd.ssl ? SSL_get_fd(hd.ssl) : hd.fd;
-  fds[0].events = POLLIN;
-  fds[1].fd = proxy.udp_fd;
-  fds[1].events = POLLIN;
+               "127.0.0.1:{}, mtu {})",
+               cfg.tunnel_cidr, cfg.proxy_port,
+               kWgTunnelMtu);
 
   uint8_t frame_buf[kHdMaxFramePayload];
   int frame_len;
   HdFrameType frame_type;
 
   while (!g_stop) {
+    // Reconnect if disconnected.
+    if (!connected) {
+      spdlog::info("reconnecting in {}s...",
+                   reconnect_backoff);
+      for (int i = 0; i < reconnect_backoff * 5 &&
+           !g_stop; i++) {
+        usleep(200000);
+      }
+      if (g_stop) break;
+
+      if (ConnectRelay(&hd, cfg.relay_host.c_str(),
+                       cfg.relay_port, relay_key)) {
+        spdlog::info("reconnected (peer_id={})",
+                     hd.peer_id);
+        proxy.hd = &hd;
+        connected = true;
+        reconnect_backoff = 1;
+        last_ping = NowMs();
+        // Reset peer states so WGEX re-exchanges.
+        ReannounceToAllPeers(&hd, &peers, wg_public,
+            tunnel_ip, host_ip, host_port,
+            srflx_ip, srflx_port);
+      } else {
+        reconnect_backoff =
+            reconnect_backoff < 30
+                ? reconnect_backoff * 2 : 30;
+      }
+      continue;
+    }
+
+    pollfd fds[2];
+    fds[0].fd = hd.ssl ? SSL_get_fd(hd.ssl) : hd.fd;
+    fds[0].events = POLLIN;
+    fds[1].fd = proxy.udp_fd;
+    fds[1].events = POLLIN;
+
     int ret = poll(fds, 2, 200);
     if (ret < 0) {
       if (errno == EINTR) continue;
       break;
+    }
+
+    // Periodic ping for keepalive / liveness detection.
+    if (NowMs() - last_ping > 10000) {
+      auto pr = HdClientSendPing(&hd);
+      if (!pr) {
+        spdlog::warn("ping failed, relay connection lost");
+        connected = false;
+        continue;
+      }
+      last_ping = NowMs();
     }
 
     // HD frames.
@@ -681,7 +789,14 @@ int main(int argc, char** argv) {
         auto rv = HdClientRecvFrame(
             &hd, &frame_type, frame_buf,
             &frame_len, sizeof(frame_buf));
-        if (!rv) break;
+        if (!rv) {
+          // Check if it's a real disconnect vs timeout.
+          if (!hd.connected) {
+            spdlog::warn("relay disconnected");
+            connected = false;
+          }
+          break;
+        }
 
         if (frame_type == HdFrameType::kPeerInfo) {
           HandlePeerInfo(&hd, &peers, frame_buf,

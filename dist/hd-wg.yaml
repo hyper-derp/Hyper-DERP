@@ -1,0 +1,29 @@
+# hd-wg daemon configuration.
+# Copy to /etc/hd-wg/config.yaml and edit.
+
+relay:
+  host: "RELAY_IP"
+  port: 3341
+  key: "RELAY_KEY_HEX_64_CHARS"
+
+wireguard:
+  # Generate with: wg genkey | xxd -p -c 32
+  private_key: "WG_PRIVATE_KEY_HEX_64_CHARS"
+  interface: wg0
+  listen_port: 51820
+
+tunnel:
+  # Each peer needs a unique IP in the same subnet.
+  cidr: "10.99.0.1/24"
+
+proxy:
+  port: 51821
+
+stun:
+  # Optional: STUN server for NAT traversal.
+  # Direct path only works if STUN is configured.
+  server: "stun.l.google.com:19302"
+  timeout_ms: 5000
+
+keepalive: 25
+log_level: info

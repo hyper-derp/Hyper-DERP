@@ -142,7 +142,7 @@ add_subdirectory(client)
 # ============================================================================
 # Install rules
 # ============================================================================
-install(TARGETS hyper-derp derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test hd-scale-test-uring
+install(TARGETS hyper-derp hd-wg hdctl derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test hd-scale-test-uring
   RUNTIME DESTINATION bin)
 install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.service
@@ -155,6 +155,13 @@ install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.yaml
   DESTINATION /etc/hyper-derp
   RENAME hyper-derp.yaml.example)
+install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/hd-wg.service
+  DESTINATION lib/systemd/system)
+install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/hd-wg.yaml
+  DESTINATION /etc/hd-wg
+  RENAME config.yaml.example)
 
 # ============================================================================
 # CPack — Debian package
@@ -171,7 +178,7 @@ set(CPACK_PACKAGE_CONTACT
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
-  "liburing2 (>= 2.9), libsodium23 (>= 1.0.18)")
+  "liburing2 (>= 2.9), libsodium23 (>= 1.0.18), libzmq5 (>= 4.3), libmnl0 (>= 1.0)")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE
   "https://github.com/hyper-derp/hyper-derp")
 # Map CMake architecture to Debian architecture name.

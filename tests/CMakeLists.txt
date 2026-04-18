@@ -13,6 +13,8 @@ list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_ctl_channel\\.cc")
 list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_hd_peerinfo\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_hd_reconnect\\.cc")
 
 foreach(test_source ${UNIT_TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
@@ -73,6 +75,12 @@ target_link_libraries(test_wg_peer PRIVATE
 gtest_discover_tests(test_wg_peer
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
 
+add_executable(test_wg_config test_wg_config.cc)
+target_link_libraries(test_wg_config PRIVATE
+  wg_client GTest::gtest_main)
+gtest_discover_tests(test_wg_config
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
+
 # ZMQ control channel tests.
 add_executable(test_ctl_channel test_ctl_channel.cc)
 target_link_libraries(test_ctl_channel PRIVATE
@@ -85,4 +93,11 @@ add_executable(test_hd_peerinfo test_hd_peerinfo.cc harness.cc)
 target_link_libraries(test_hd_peerinfo PRIVATE
   libderp GTest::gtest_main)
 gtest_discover_tests(test_hd_peerinfo
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 60)
+
+# HD reconnect e2e.
+add_executable(test_hd_reconnect test_hd_reconnect.cc harness.cc)
+target_link_libraries(test_hd_reconnect PRIVATE
+  libderp GTest::gtest_main)
+gtest_discover_tests(test_hd_reconnect
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 60)

@@ -4,7 +4,8 @@ find_path(MNL_INCLUDE libmnl/libmnl.h REQUIRED)
 add_library(wg_client STATIC
   wg_netlink.cc
   wg_proxy.cc
-  wg_peer.cc)
+  wg_peer.cc
+  wg_config.cc)
 target_include_directories(wg_client PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/include

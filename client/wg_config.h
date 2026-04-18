@@ -29,6 +29,11 @@ struct WgDaemonConfig {
   std::string log_level = "info";
 };
 
+/// Load config from YAML file.
+/// Returns true on success.
+bool WgLoadConfig(const char* path,
+                  WgDaemonConfig* config);
+
 }  // namespace hyper_derp
 
 #endif  // CLIENT_WG_CONFIG_H_
