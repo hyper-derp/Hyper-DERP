@@ -406,7 +406,7 @@ struct Ctx {
   /// Relay-to-relay routing: relay_id -> peer_id of the
   /// neighbor relay's HD connection on this relay.
   /// Indexed by destination relay_id. 0 = no mapping.
-  uint16_t relay_peer_map[256]{};
+  uint16_t relay_peer_map[65536]{};
 };
 
 }  // namespace hyper_derp

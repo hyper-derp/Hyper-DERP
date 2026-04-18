@@ -12,8 +12,10 @@
 
 namespace hyper_derp {
 
-/// Maximum number of relay entries in the table.
-inline constexpr int kMaxRelays = 256;
+/// Maximum relay entries. Supports up to 65535 relays
+/// in the address space; the table stores active routes.
+/// For large fleets, increase this or switch to a hash.
+inline constexpr int kMaxRelays = 4096;
 
 /// A neighbor relay entry.
 struct RelayEntry {
