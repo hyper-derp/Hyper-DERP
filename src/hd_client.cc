@@ -458,28 +458,79 @@ auto HdClientRecvFrame(HdClient* c,
                        int* payload_len,
                        int buf_size)
     -> std::expected<void, Error<HdClientError>> {
-  uint8_t hdr[kHdFrameHeaderSize];
-  if (ReadAll(c, hdr, kHdFrameHeaderSize) < 0) {
-    return MakeError(HdClientError::IoFailed,
-                     "read frame header failed");
+  // Lazy-allocate recv buffer.
+  if (!c->recv_buf) {
+    c->recv_buf = new uint8_t[HdClient::kRecvBufSize];
+    c->recv_len = 0;
+    c->recv_pos = 0;
   }
 
-  *type = HdReadFrameType(hdr);
-  uint32_t len = HdReadPayloadLen(hdr);
-  if (static_cast<int>(len) > buf_size) {
-    return MakeError(HdClientError::BufferOverflow,
-                     "frame payload exceeds buffer");
-  }
+  // Try to parse a frame from buffered data first.
+  for (;;) {
+    int avail = c->recv_len - c->recv_pos;
 
-  if (len > 0) {
-    if (ReadAll(c, payload,
-                static_cast<int>(len)) < 0) {
-      return MakeError(HdClientError::IoFailed,
-                       "read frame payload failed");
+    // Need at least the header.
+    if (avail >= kHdFrameHeaderSize) {
+      uint8_t* hdr = c->recv_buf + c->recv_pos;
+      *type = HdReadFrameType(hdr);
+      uint32_t plen = HdReadPayloadLen(hdr);
+
+      if (!HdIsValidPayloadLen(plen)) {
+        return MakeError(HdClientError::BadPayloadLength,
+                         "invalid frame payload length");
+      }
+
+      int frame_len =
+          kHdFrameHeaderSize + static_cast<int>(plen);
+
+      // Complete frame in buffer?
+      if (avail >= frame_len) {
+        if (static_cast<int>(plen) > buf_size) {
+          return MakeError(
+              HdClientError::BufferOverflow,
+              "frame payload exceeds buffer");
+        }
+        if (plen > 0) {
+          memcpy(payload,
+                 hdr + kHdFrameHeaderSize, plen);
+        }
+        *payload_len = static_cast<int>(plen);
+        c->recv_pos += frame_len;
+        return {};
+      }
     }
+
+    // Not enough data. Compact buffer and read more.
+    if (c->recv_pos > 0) {
+      avail = c->recv_len - c->recv_pos;
+      if (avail > 0) {
+        memmove(c->recv_buf,
+                c->recv_buf + c->recv_pos, avail);
+      }
+      c->recv_len = avail;
+      c->recv_pos = 0;
+    }
+
+    // Read a large chunk.
+    int space = HdClient::kRecvBufSize - c->recv_len;
+    if (space <= 0) {
+      return MakeError(HdClientError::BufferOverflow,
+                       "recv buffer full");
+    }
+    int n;
+    if (c->ssl) {
+      n = SSL_read(c->ssl,
+                   c->recv_buf + c->recv_len, space);
+    } else {
+      n = read(c->fd,
+               c->recv_buf + c->recv_len, space);
+    }
+    if (n <= 0) {
+      return MakeError(HdClientError::IoFailed,
+                       "recv failed");
+    }
+    c->recv_len += n;
   }
-  *payload_len = static_cast<int>(len);
-  return {};
 }
 
 auto HdClientReconnect(HdClient* c)
@@ -555,6 +606,10 @@ void HdClientClose(HdClient* c) {
   }
   c->connected = false;
   c->approved = false;
+  delete[] c->recv_buf;
+  c->recv_buf = nullptr;
+  c->recv_len = 0;
+  c->recv_pos = 0;
 }
 
 auto HdClientSetTimeout(HdClient* c, int ms)

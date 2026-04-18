@@ -87,6 +87,13 @@ struct HdClient {
   // read/write.
   SSL* ssl = nullptr;
   SSL_CTX* ssl_ctx = nullptr;
+
+  // Recv reassembly buffer. Reads large chunks and
+  // parses multiple frames without per-frame syscalls.
+  static constexpr int kRecvBufSize = 65536;
+  uint8_t* recv_buf = nullptr;
+  int recv_len = 0;  // Valid bytes in recv_buf.
+  int recv_pos = 0;  // Parse position.
 };
 
 /// @brief Initialize client with random Curve25519 keys.
