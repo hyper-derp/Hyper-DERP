@@ -403,6 +403,55 @@ static void HandleConnection(Server* server, int fd) {
                      hp ? hp->peer_id : 0);
       }
 
+      // Notify existing HD peers about the new peer,
+      // and the new peer about existing HD peers.
+      // PeerInfo payload: [32B peer_key][2B peer_id]
+      {
+        std::lock_guard lock(server->hd_peers.mutex);
+        for (int i = 0; i < kHdMaxPeers; i++) {
+          auto& p = server->hd_peers.peers[i];
+          if (p.occupied != 1 ||
+              p.state != HdPeerState::kApproved) {
+            continue;
+          }
+          if (p.key == result.client_key) continue;
+
+          // Tell existing peer about new peer.
+          // PeerInfo payload: [32B peer_key][2B peer_id]
+          uint8_t info[kHdFrameHeaderSize + kKeySize + 2];
+          uint8_t pid_buf[2] = {
+              static_cast<uint8_t>(pid >> 8),
+              static_cast<uint8_t>(pid)};
+          int flen = HdBuildPeerInfo(info,
+              result.client_key, pid_buf, 2);
+          if (flen > 0) {
+            auto* buf = static_cast<uint8_t*>(
+                malloc(flen));
+            if (buf) {
+              std::memcpy(buf, info, flen);
+              DpWrite(&server->data_plane, p.key,
+                      buf, flen);
+            }
+          }
+
+          // Tell new peer about existing peer.
+          uint8_t opid_buf[2] = {
+              static_cast<uint8_t>(p.peer_id >> 8),
+              static_cast<uint8_t>(p.peer_id)};
+          flen = HdBuildPeerInfo(info,
+              p.key, opid_buf, 2);
+          if (flen > 0) {
+            auto* buf = static_cast<uint8_t*>(
+                malloc(flen));
+            if (buf) {
+              std::memcpy(buf, info, flen);
+              DpWrite(&server->data_plane,
+                      result.client_key, buf, flen);
+            }
+          }
+        }
+      }
+
       // Attempt Level 2 upgrade if enabled.
       if (server->level2_enabled) {
         TryIceUpgrade(server, result.client_key);

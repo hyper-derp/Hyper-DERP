@@ -1189,43 +1189,54 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
     if (payload_len < kHdMeshDstSize) return;
     uint16_t dst_id = HdReadMeshDst(payload);
 
-    // O(1) lookup via peer ID map.
+    // O(1) lookup via peer ID map (same-shard).
     Peer* dst = nullptr;
     if (w->peer_id_map && dst_id > 0) {
       dst = w->peer_id_map[dst_id];
     }
 
-    if (!dst || dst->occupied != 1) {
-      // Destination not on this worker (cross-shard
-      // mesh routing TBD).
-      return;
-    }
-
-    // Authorization: source must have a forwarding rule
-    // that includes this destination.
-    bool authorized = false;
-    for (int r = 0; r < peer->fwd_count; r++) {
-      if (peer->fwd[r].peer == dst) {
-        authorized = true;
-        break;
-      }
-    }
-    if (!authorized) return;
-
-    // Build a Data frame for the destination (strip
-    // the 2B mesh destination header).
-    int fwd_payload_len =
-        payload_len - kHdMeshDstSize;
+    // Build a MeshData frame for the destination.
+    // Keep the mesh header so the receiver knows the
+    // source peer ID (rewritten to sender's ID).
     int fwd_frame_len =
-        kHdFrameHeaderSize + fwd_payload_len;
+        kHdFrameHeaderSize + payload_len;
     uint8_t* buf = FrameAlloc(w, fwd_frame_len);
     if (!buf) return;
-    HdWriteFrameHeader(buf, HdFrameType::kData,
-        static_cast<uint32_t>(fwd_payload_len));
-    memcpy(buf + kHdFrameHeaderSize,
+    // Rewrite: set type=MeshData, replace dst_peer_id
+    // with src_peer_id so receiver knows who sent it.
+    HdWriteFrameHeader(buf, HdFrameType::kMeshData,
+        static_cast<uint32_t>(payload_len));
+    uint16_t src_id = peer->peer_id;
+    buf[kHdFrameHeaderSize] =
+        static_cast<uint8_t>(src_id >> 8);
+    buf[kHdFrameHeaderSize + 1] =
+        static_cast<uint8_t>(src_id);
+    memcpy(buf + kHdFrameHeaderSize + kHdMeshDstSize,
            payload + kHdMeshDstSize,
-           fwd_payload_len);
-    EnqueueSend(w, dst, buf, fwd_frame_len);
+           payload_len - kHdMeshDstSize);
+
+    if (dst && dst->occupied == 1) {
+      // Same-shard.
+      EnqueueSend(w, dst, buf, fwd_frame_len);
+    } else {
+      // Cross-shard: look up route by scanning all
+      // workers' peer_id_maps via the route table.
+      // For now, broadcast to all workers via xfer.
+      bool sent = false;
+      for (int wi = 0; wi < w->ctx->num_workers; wi++) {
+        if (wi == w->id) continue;
+        Worker* dw = w->ctx->workers[wi];
+        if (dw->peer_id_map &&
+            dw->peer_id_map[dst_id]) {
+          // Found the worker. Use xfer.
+          int dst_fd = dw->peer_id_map[dst_id]->fd;
+          XferPush(w, wi, dst_fd, buf, fwd_frame_len);
+          sent = true;
+          break;
+        }
+      }
+      if (!sent) FrameFree(w, buf);
+    }
     w->stats.hd_mesh_forwards++;
   } else if (hd_type == HdFrameType::kFleetData) {
     // FleetData: [4B header][2B relay_id][2B peer_id]

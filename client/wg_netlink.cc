@@ -190,11 +190,17 @@ auto WgNlCreateDevice(const char* ifname)
 
 // -- Device configuration ----------------------------------------------------
 
-static int AckCb(const struct nlmsghdr* nlh,
-                 void* /*data*/) {
+/// Context for passing netlink error code out of callback.
+struct NlAckCtx {
+  int error = 0;
+};
+
+static int AckCb(const struct nlmsghdr* nlh, void* data) {
+  auto* ctx = static_cast<NlAckCtx*>(data);
   if (nlh->nlmsg_type == NLMSG_ERROR) {
     auto* err = static_cast<struct nlmsgerr*>(
         mnl_nlmsg_get_payload(nlh));
+    ctx->error = err->error;
     if (err->error != 0) return MNL_CB_ERROR;
   }
   return MNL_CB_OK;
@@ -236,12 +242,14 @@ auto WgNlSetDevice(WgNetlink* wg, const char* ifname,
         "recvfrom: " + std::string(strerror(errno))));
   }
 
+  NlAckCtx ack_ctx{};
   ret = mnl_cb_run(buf, ret, wg->seq, wg->portid,
-                   AckCb, nullptr);
-  if (ret < 0) {
+                   AckCb, &ack_ctx);
+  if (ret < 0 && ack_ctx.error != 0) {
     return std::unexpected(MakeError(
         WgNlError::SetDeviceFailed,
-        "set device: " + std::string(strerror(errno))));
+        "set device: " +
+            std::string(strerror(-ack_ctx.error))));
   }
 
   spdlog::info("wireguard {} configured (port {})",
@@ -326,12 +334,14 @@ auto WgNlSetPeer(WgNetlink* wg, const char* ifname,
         "recvfrom: " + std::string(strerror(errno))));
   }
 
+  NlAckCtx ack_ctx{};
   ret = mnl_cb_run(buf, ret, wg->seq, wg->portid,
-                   AckCb, nullptr);
-  if (ret < 0) {
+                   AckCb, &ack_ctx);
+  if (ret < 0 && ack_ctx.error != 0) {
     return std::unexpected(MakeError(
         WgNlError::SetPeerFailed,
-        "set peer: " + std::string(strerror(errno))));
+        "set peer: " +
+            std::string(strerror(-ack_ctx.error))));
   }
 
   return {};
@@ -378,12 +388,14 @@ auto WgNlRemovePeer(WgNetlink* wg, const char* ifname,
         "recvfrom: " + std::string(strerror(errno))));
   }
 
+  NlAckCtx ack_ctx{};
   ret = mnl_cb_run(buf, ret, wg->seq, wg->portid,
-                   AckCb, nullptr);
-  if (ret < 0) {
+                   AckCb, &ack_ctx);
+  if (ret < 0 && ack_ctx.error != 0) {
     return std::unexpected(MakeError(
         WgNlError::RemovePeerFailed,
-        "remove peer: " + std::string(strerror(errno))));
+        "remove peer: " +
+            std::string(strerror(-ack_ctx.error))));
   }
 
   return {};
