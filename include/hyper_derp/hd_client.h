@@ -80,6 +80,8 @@ struct HdClient {
   bool approved = false;
   std::string host;
   uint16_t port = 0;
+  /// Peer ID assigned by relay during enrollment.
+  uint16_t peer_id = 0;
   // Userspace TLS (non-kTLS fallback). When set, all
   // I/O uses SSL_read/SSL_write instead of raw
   // read/write.
@@ -158,6 +160,19 @@ auto HdClientRecvFrame(HdClient* c,
                        uint8_t* payload,
                        int* payload_len,
                        int buf_size)
+    -> std::expected<void, Error<HdClientError>>;
+
+/// @brief Send an HD MeshData frame to a specific peer
+///   ID.
+/// Used for 1:N selective routing.
+/// @param c Enrolled client.
+/// @param dst_peer_id Local peer ID of the destination.
+/// @param data Packet payload.
+/// @param len Payload length.
+/// @returns void on success, or HdClientError.
+auto HdClientSendMeshData(HdClient* c,
+                          uint16_t dst_peer_id,
+                          const uint8_t* data, int len)
     -> std::expected<void, Error<HdClientError>>;
 
 /// @brief Close client connection and reset state.

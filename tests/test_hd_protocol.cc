@@ -45,6 +45,8 @@ TEST(HdProtocolTest, AllFrameTypesDistinct) {
       static_cast<uint8_t>(HdFrameType::kData),
       static_cast<uint8_t>(HdFrameType::kPing),
       static_cast<uint8_t>(HdFrameType::kPong),
+      static_cast<uint8_t>(HdFrameType::kMeshData),
+      static_cast<uint8_t>(HdFrameType::kFleetData),
       static_cast<uint8_t>(HdFrameType::kEnroll),
       static_cast<uint8_t>(HdFrameType::kApproved),
       static_cast<uint8_t>(HdFrameType::kDenied),
@@ -168,6 +170,71 @@ TEST(HdProtocolTest, BuildPeerGone) {
              kKeySize),
       0);
   EXPECT_EQ(buf[kHdFrameHeaderSize + kKeySize], reason);
+}
+
+TEST(HdProtocolTest, BuildMeshDataHeader) {
+  uint8_t buf[kHdFrameHeaderSize + kHdMeshDstSize];
+  int payload = 1400;
+  int n = HdBuildMeshDataHeader(buf, 0x1234, payload);
+
+  EXPECT_EQ(n, kHdFrameHeaderSize + kHdMeshDstSize);
+  EXPECT_EQ(HdReadFrameType(buf), HdFrameType::kMeshData);
+  EXPECT_EQ(HdReadPayloadLen(buf),
+            static_cast<uint32_t>(
+                kHdMeshDstSize + payload));
+  // Verify big-endian dst bytes.
+  EXPECT_EQ(buf[kHdFrameHeaderSize], 0x12);
+  EXPECT_EQ(buf[kHdFrameHeaderSize + 1], 0x34);
+}
+
+TEST(HdProtocolTest, ReadMeshDstRoundtrip) {
+  uint8_t buf[kHdFrameHeaderSize + kHdMeshDstSize];
+  HdBuildMeshDataHeader(buf, 0xABCD, 100);
+  uint16_t id = HdReadMeshDst(buf + kHdFrameHeaderSize);
+  EXPECT_EQ(id, 0xABCD);
+}
+
+TEST(HdProtocolTest, BuildFleetDataHeader) {
+  uint8_t buf[kHdFrameHeaderSize + kHdFleetDstSize];
+  int payload = 1400;
+  int n = HdBuildFleetDataHeader(
+      buf, 0x0102, 0x0304, payload);
+
+  EXPECT_EQ(n, kHdFrameHeaderSize + kHdFleetDstSize);
+  EXPECT_EQ(HdReadFrameType(buf),
+            HdFrameType::kFleetData);
+  EXPECT_EQ(HdReadPayloadLen(buf),
+            static_cast<uint32_t>(
+                kHdFleetDstSize + payload));
+  // Verify relay ID bytes.
+  EXPECT_EQ(buf[kHdFrameHeaderSize], 0x01);
+  EXPECT_EQ(buf[kHdFrameHeaderSize + 1], 0x02);
+  // Verify peer ID bytes.
+  EXPECT_EQ(buf[kHdFrameHeaderSize + 2], 0x03);
+  EXPECT_EQ(buf[kHdFrameHeaderSize + 3], 0x04);
+}
+
+TEST(HdProtocolTest, ReadFleetRelayAndPeerRoundtrip) {
+  uint8_t buf[kHdFrameHeaderSize + kHdFleetDstSize];
+  HdBuildFleetDataHeader(buf, 0xFEDC, 0xBA98, 200);
+
+  const uint8_t* payload = buf + kHdFrameHeaderSize;
+  EXPECT_EQ(HdReadFleetRelay(payload), 0xFEDC);
+  EXPECT_EQ(HdReadFleetPeer(payload), 0xBA98);
+}
+
+TEST(HdProtocolTest, MeshDataVsDataOverhead) {
+  // MeshData header = 4B frame header + 2B dst = 6B.
+  // Data header = 4B frame header = 4B.
+  uint8_t mesh_buf[kHdFrameHeaderSize + kHdMeshDstSize];
+  int mesh_n = HdBuildMeshDataHeader(mesh_buf, 1, 100);
+
+  uint8_t data_buf[kHdFrameHeaderSize];
+  int data_n = HdBuildDataHeader(data_buf, 100);
+
+  EXPECT_EQ(mesh_n, 6);
+  EXPECT_EQ(data_n, 4);
+  EXPECT_EQ(mesh_n - data_n, 2);
 }
 
 }  // namespace hyper_derp

@@ -349,6 +349,43 @@ auto HdClientSendData(HdClient* c,
   return {};
 }
 
+auto HdClientSendMeshData(HdClient* c,
+                          uint16_t dst_peer_id,
+                          const uint8_t* data, int len)
+    -> std::expected<void, Error<HdClientError>> {
+  int hdr_len = kHdFrameHeaderSize + kHdMeshDstSize;
+  int total = hdr_len + len;
+  if (total > kHdFrameHeaderSize + kHdMaxFramePayload) {
+    return MakeError(HdClientError::BufferOverflow,
+                     "MeshData frame too large");
+  }
+
+  // Single write for kTLS record coalescing.
+  uint8_t stack[kHdFrameHeaderSize + kHdMeshDstSize +
+                2048];
+  uint8_t* buf = stack;
+  bool heap = false;
+  if (total > static_cast<int>(sizeof(stack))) {
+    buf = new uint8_t[total];
+    heap = true;
+  }
+
+  HdBuildMeshDataHeader(buf, dst_peer_id, len);
+  if (len > 0) {
+    std::memcpy(buf + hdr_len, data, len);
+  }
+
+  int rc = WriteAll(c, buf, total);
+  if (heap) {
+    delete[] buf;
+  }
+  if (rc < 0) {
+    return MakeError(HdClientError::IoFailed,
+                     "write MeshData frame failed");
+  }
+  return {};
+}
+
 auto HdClientRecvFrame(HdClient* c,
                        HdFrameType* type,
                        uint8_t* payload,

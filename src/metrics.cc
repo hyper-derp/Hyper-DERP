@@ -342,6 +342,7 @@ static void RegisterHdRoutes(MetricsServer* ms) {
       return crow::response(400, "invalid key hex");
     }
     int fd = -1;
+    uint16_t pid = 0;
     {
       std::lock_guard lock(ms->hd_peers->mutex);
       if (!HdPeersApprove(ms->hd_peers, key.data())) {
@@ -349,7 +350,10 @@ static void RegisterHdRoutes(MetricsServer* ms) {
       }
       auto* p = HdPeersLookup(ms->hd_peers,
                                key.data());
-      if (p) fd = p->fd;
+      if (p) {
+        fd = p->fd;
+        pid = p->peer_id;
+      }
     }
     // I/O outside the lock.
     if (fd >= 0) {
@@ -360,7 +364,7 @@ static void RegisterHdRoutes(MetricsServer* ms) {
       setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
                  &tv, sizeof(tv));
       DpAddPeer(ms->ctx, fd, key,
-                PeerProtocol::kHd);
+                PeerProtocol::kHd, pid);
     }
     return crow::response(200, "approved");
   });

@@ -32,14 +32,20 @@ void DpDestroy(Ctx* ctx);
 /// @param fd The peer's socket file descriptor.
 /// @param key The peer's 32-byte public key.
 /// @param protocol Protocol type (DERP or HD).
+/// @param peer_id HD peer ID for MeshData routing (0 =
+///   none).
 void DpAddPeer(Ctx* ctx, int fd, const Key& key,
                PeerProtocol protocol =
-                   PeerProtocol::kDerp);
+                   PeerProtocol::kDerp,
+               uint16_t peer_id = 0);
 
 /// @brief Registers a peer on a specific worker.
 /// @param wid Worker index to place the peer on.
+/// @param peer_id HD peer ID for MeshData routing (0 =
+///   none).
 void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
-                       PeerProtocol protocol, int wid);
+                       PeerProtocol protocol, int wid,
+                       uint16_t peer_id = 0);
 
 /// @brief Removes a peer from the data plane.
 /// @param ctx Data plane context.

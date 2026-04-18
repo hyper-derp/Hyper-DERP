@@ -171,6 +171,7 @@ static int HtInsert(Worker* w, int fd,
   p->zc_draining = 0;
   p->poll_write_pending = 0;
   p->send_pending = 0;
+  p->peer_id = 0;
   return 0;
 }
 
@@ -614,13 +615,14 @@ static int EnqueueCmd(Worker* w, const Cmd* cmd) {
 }
 
 void DpAddPeer(Ctx* ctx, int fd, const Key& key,
-               PeerProtocol protocol) {
+               PeerProtocol protocol, uint16_t peer_id) {
   int wid = PeerWorker(ctx->num_workers, key);
-  DpAddPeerToWorker(ctx, fd, key, protocol, wid);
+  DpAddPeerToWorker(ctx, fd, key, protocol, wid, peer_id);
 }
 
 void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
-                       PeerProtocol protocol, int wid) {
+                       PeerProtocol protocol, int wid,
+                       uint16_t peer_id) {
   if (wid < 0 || wid >= ctx->num_workers) {
     wid = PeerWorker(ctx->num_workers, key);
   }
@@ -629,6 +631,7 @@ void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
   cmd.fd = fd;
   cmd.key = key;
   cmd.protocol = protocol;
+  cmd.peer_id = peer_id;
   EnqueueCmd(ctx->workers[wid], &cmd);
 }
 
@@ -1069,6 +1072,51 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       EnqueueSend(w, peer, buf,
                   static_cast<int>(sizeof(pong)));
     }
+  } else if (hd_type == HdFrameType::kMeshData) {
+    // MeshData: [4B header][2B dst_peer_id][payload]
+    // Route to a specific peer by local peer ID. The
+    // frame is converted to a plain Data frame for the
+    // receiver (strip mesh header, rewrite type).
+    if (payload_len < kHdMeshDstSize) return;
+    uint16_t dst_id = HdReadMeshDst(payload);
+
+    // O(1) lookup via peer ID map.
+    Peer* dst = nullptr;
+    if (w->peer_id_map && dst_id > 0) {
+      dst = w->peer_id_map[dst_id];
+    }
+
+    if (!dst || dst->occupied != 1) {
+      // Destination not on this worker (cross-shard
+      // mesh routing TBD).
+      return;
+    }
+
+    // Authorization: source must have a forwarding rule
+    // that includes this destination.
+    bool authorized = false;
+    for (int r = 0; r < peer->fwd_count; r++) {
+      if (peer->fwd_peers[r] == dst) {
+        authorized = true;
+        break;
+      }
+    }
+    if (!authorized) return;
+
+    // Build a Data frame for the destination (strip
+    // the 2B mesh destination header).
+    int fwd_payload_len =
+        payload_len - kHdMeshDstSize;
+    int fwd_frame_len =
+        kHdFrameHeaderSize + fwd_payload_len;
+    uint8_t* buf = FrameAlloc(w, fwd_frame_len);
+    if (!buf) return;
+    HdWriteFrameHeader(buf, HdFrameType::kData,
+        static_cast<uint32_t>(fwd_payload_len));
+    memcpy(buf + kHdFrameHeaderSize,
+           payload + kHdMeshDstSize,
+           fwd_payload_len);
+    EnqueueSend(w, dst, buf, fwd_frame_len);
   } else if (hd_type == HdFrameType::kPeerInfo) {
     // Forward PeerInfo to control plane for ICE
     // processing. Pipe format: [4B fd BE][1B type]
@@ -1794,9 +1842,22 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
     return;
   }
   p->protocol = cmd->protocol;
+  p->peer_id = cmd->peer_id;
   w->fd_map[cmd->fd] = p;
   w->fd_gen[cmd->fd]++;
   w->peer_count++;
+
+  // Register in peer ID lookup table for MeshData routing.
+  if (cmd->protocol == PeerProtocol::kHd &&
+      cmd->peer_id > 0) {
+    if (!w->peer_id_map) {
+      w->peer_id_map = static_cast<Peer**>(
+          calloc(65536, sizeof(Peer*)));
+    }
+    if (w->peer_id_map) {
+      w->peer_id_map[cmd->peer_id] = p;
+    }
+  }
 
   BroadcastRouteAdd(w->ctx, cmd->key, w->id, cmd->fd);
 
@@ -1836,6 +1897,10 @@ static void ProcessCmdRemove(Worker* w, Cmd* cmd) {
   Peer* p = HtLookup(w, cmd->key.data());
   if (!p) {
     return;
+  }
+  // Clear peer ID map entry before removal.
+  if (p->peer_id > 0 && w->peer_id_map) {
+    w->peer_id_map[p->peer_id] = nullptr;
   }
   int fd = p->fd;
   if (fd >= 0 && fd < kMaxFd) {
@@ -1931,6 +1996,10 @@ static void ProcessCommands(Worker* w) {
         // the fd. Used for same-shard migration.
         Peer* p = HtLookup(w, cmd.key.data());
         if (p) {
+          // Clear peer ID map entry before removal.
+          if (p->peer_id > 0 && w->peer_id_map) {
+            w->peer_id_map[p->peer_id] = nullptr;
+          }
           int fd = p->fd;
           if (fd >= 0 && fd < kMaxFd) {
             w->fd_map[fd] = nullptr;
@@ -2443,6 +2512,9 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
       w->xfer_inbox[i] = nullptr;
     }
   }
+
+  free(w->peer_id_map);
+  w->peer_id_map = nullptr;
 
   FramePoolDestroy(w);
   SlabDestroy(w);

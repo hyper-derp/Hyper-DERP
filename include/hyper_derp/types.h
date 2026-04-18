@@ -183,6 +183,7 @@ struct Peer {
   int rbuf_len;
   uint8_t occupied;  // 0=empty, 1=live, 2=tombstone
   PeerProtocol protocol = PeerProtocol::kDerp;
+  uint16_t peer_id = 0;  // HD peer ID for MeshData routing.
 
   // Warm: accessed on send path.
   SendItem* send_head;
@@ -230,6 +231,7 @@ struct Cmd {
   uint8_t* data;
   int data_len;
   PeerProtocol protocol = PeerProtocol::kDerp;
+  uint16_t peer_id = 0;  // HD peer ID for MeshData routing.
   Key dst_key;  // For kCmdSetFwdRule.
 };
 
@@ -301,6 +303,10 @@ struct Worker {
 
   // fd → Peer* map for O(1) lookup by fd.
   Peer* fd_map[kMaxFd];
+
+  // HD peer ID → Peer* for MeshData O(1) routing.
+  // Allocated lazily on first HD peer (65536 × 8 = 512 KB).
+  Peer** peer_id_map = nullptr;
 
   // Per-fd generation counter (guards against fd reuse
   // races in cross-shard transfers).

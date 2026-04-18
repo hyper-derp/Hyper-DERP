@@ -44,6 +44,7 @@ struct HdForwardRule {
 struct HdPeer {
   Key key{};
   int fd = -1;
+  uint16_t peer_id = 0;  // Local peer ID (1-65535).
   HdPeerState state = HdPeerState::kPending;
   // 0=empty, 1=live, 2=tombstone
   uint8_t occupied = 0;
@@ -58,6 +59,8 @@ struct HdPeerRegistry {
   int peer_count = 0;
   HdEnrollMode enroll_mode = HdEnrollMode::kManual;
   Key relay_key{};
+  uint16_t next_peer_id = 1;  // Monotonic peer ID counter.
+  uint16_t relay_id = 0;      // This relay's ID.
   std::recursive_mutex mutex;
 };
 
@@ -75,6 +78,13 @@ void HdPeersInit(HdPeerRegistry* reg,
 /// @returns Pointer to the peer, or nullptr if not found.
 HdPeer* HdPeersLookup(HdPeerRegistry* reg,
                        const uint8_t* key);
+
+/// Find an HD peer by peer ID (O(n) scan, not hot path).
+/// @param reg Registry to search.
+/// @param peer_id Local peer ID to look up.
+/// @returns Pointer to the peer, or nullptr if not found.
+HdPeer* HdPeersLookupById(HdPeerRegistry* reg,
+                           uint16_t peer_id);
 
 /// Insert a new peer in pending state.
 /// @param reg Registry to insert into.

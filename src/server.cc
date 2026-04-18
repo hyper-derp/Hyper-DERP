@@ -370,9 +370,15 @@ static void HandleConnection(Server* server, int fd) {
       setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv,
                  sizeof(tv));
 
+      // Look up peer ID from the HD registry.
+      auto* hp = HdPeersLookup(&server->hd_peers,
+                               result.client_key.data());
+      uint16_t pid = hp ? hp->peer_id : 0;
+
       // Hand to data plane as HD peer.
       DpAddPeer(&server->data_plane, fd,
-                result.client_key, PeerProtocol::kHd);
+                result.client_key, PeerProtocol::kHd,
+                pid);
       CpOnPeerConnect(&server->control_plane,
                       result.client_key, fd);
 

@@ -22,6 +22,12 @@ inline constexpr int kHdMaxFramePayload = 64 * 1024;
 /// Ping/pong data size.
 inline constexpr int kHdPingDataSize = 8;
 
+/// MeshData destination header size.
+inline constexpr int kHdMeshDstSize = 2;
+
+/// FleetData destination header size.
+inline constexpr int kHdFleetDstSize = 4;
+
 // -- Frame types -------------------------------------------------------------
 
 /// HD frame type identifiers (wire values).
@@ -29,6 +35,8 @@ enum class HdFrameType : uint8_t {
   kData = 0x01,
   kPing = 0x02,
   kPong = 0x03,
+  kMeshData = 0x04,   // Local 1:N with 2B peer ID
+  kFleetData = 0x05,  // Cross-relay with 2B relay + 2B peer
   kEnroll = 0x10,
   kApproved = 0x11,
   kDenied = 0x12,
@@ -154,6 +162,61 @@ int HdBuildPeerInfo(uint8_t* buf,
                     const Key& peer_key,
                     const uint8_t* candidate_data,
                     int candidate_len);
+
+/// @brief Builds a MeshData frame header + 2-byte
+///   destination.
+/// @param buf Output buffer (at least kHdFrameHeaderSize +
+///   kHdMeshDstSize bytes).
+/// @param dst_peer_id Local peer ID of the destination.
+/// @param payload_len Length of the data payload to follow.
+/// @returns Total header bytes written (6).
+int HdBuildMeshDataHeader(uint8_t* buf,
+                          uint16_t dst_peer_id,
+                          int payload_len);
+
+/// @brief Reads the 2-byte destination peer ID from a
+///   MeshData frame's payload.
+/// @param payload Pointer to the MeshData payload start.
+/// @returns The destination peer ID.
+/// @pre Caller must verify payload_len >= 2.
+inline uint16_t HdReadMeshDst(const uint8_t* payload) {
+  return static_cast<uint16_t>(
+      (payload[0] << 8) | payload[1]);
+}
+
+/// @brief Builds a FleetData frame header + 4-byte
+///   destination.
+/// @param buf Output buffer (at least kHdFrameHeaderSize +
+///   kHdFleetDstSize bytes).
+/// @param dst_relay_id Destination relay ID.
+/// @param dst_peer_id Destination peer ID on that relay.
+/// @param payload_len Length of the data payload to follow.
+/// @returns Total header bytes written (8).
+int HdBuildFleetDataHeader(uint8_t* buf,
+                           uint16_t dst_relay_id,
+                           uint16_t dst_peer_id,
+                           int payload_len);
+
+/// @brief Reads relay ID from FleetData payload.
+/// @param payload Pointer to the FleetData payload start.
+/// @returns The destination relay ID.
+/// @pre Caller must verify payload_len >= 2.
+inline uint16_t HdReadFleetRelay(
+    const uint8_t* payload) {
+  return static_cast<uint16_t>(
+      (payload[0] << 8) | payload[1]);
+}
+
+/// @brief Reads peer ID from FleetData payload (after
+///   relay ID).
+/// @param payload Pointer to the FleetData payload start.
+/// @returns The destination peer ID.
+/// @pre Caller must verify payload_len >= 4.
+inline uint16_t HdReadFleetPeer(
+    const uint8_t* payload) {
+  return static_cast<uint16_t>(
+      (payload[2] << 8) | payload[3]);
+}
 
 }  // namespace hyper_derp
 

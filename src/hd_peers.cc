@@ -33,6 +33,16 @@ HdPeer* HdPeersLookup(HdPeerRegistry* reg,
   return nullptr;
 }
 
+HdPeer* HdPeersLookupById(HdPeerRegistry* reg,
+                           uint16_t peer_id) {
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    HdPeer& p = reg->peers[i];
+    if (p.occupied != 1) continue;
+    if (p.peer_id == peer_id) return &p;
+  }
+  return nullptr;
+}
+
 HdPeer* HdPeersInsert(HdPeerRegistry* reg,
                        const Key& key,
                        int fd) {
@@ -52,6 +62,8 @@ HdPeer* HdPeersInsert(HdPeerRegistry* reg,
     if (p.occupied == 1) continue;
     p.key = key;
     p.fd = fd;
+    p.peer_id = reg->next_peer_id++;
+    if (reg->next_peer_id == 0) reg->next_peer_id = 1;
     p.state = (reg->enroll_mode == HdEnrollMode::kAutoApprove)
                   ? HdPeerState::kApproved
                   : HdPeerState::kPending;

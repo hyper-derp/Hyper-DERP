@@ -93,4 +93,35 @@ int HdBuildPeerInfo(uint8_t* buf,
   return kHdFrameHeaderSize + payload_len;
 }
 
+int HdBuildMeshDataHeader(uint8_t* buf,
+                          uint16_t dst_peer_id,
+                          int payload_len) {
+  // Total payload = 2B dst + actual payload.
+  HdWriteFrameHeader(buf, HdFrameType::kMeshData,
+      static_cast<uint32_t>(kHdMeshDstSize + payload_len));
+  buf[kHdFrameHeaderSize] =
+      static_cast<uint8_t>(dst_peer_id >> 8);
+  buf[kHdFrameHeaderSize + 1] =
+      static_cast<uint8_t>(dst_peer_id);
+  return kHdFrameHeaderSize + kHdMeshDstSize;
+}
+
+int HdBuildFleetDataHeader(uint8_t* buf,
+                           uint16_t dst_relay_id,
+                           uint16_t dst_peer_id,
+                           int payload_len) {
+  HdWriteFrameHeader(buf, HdFrameType::kFleetData,
+      static_cast<uint32_t>(
+          kHdFleetDstSize + payload_len));
+  buf[kHdFrameHeaderSize] =
+      static_cast<uint8_t>(dst_relay_id >> 8);
+  buf[kHdFrameHeaderSize + 1] =
+      static_cast<uint8_t>(dst_relay_id);
+  buf[kHdFrameHeaderSize + 2] =
+      static_cast<uint8_t>(dst_peer_id >> 8);
+  buf[kHdFrameHeaderSize + 3] =
+      static_cast<uint8_t>(dst_peer_id);
+  return kHdFrameHeaderSize + kHdFleetDstSize;
+}
+
 }  // namespace hyper_derp
