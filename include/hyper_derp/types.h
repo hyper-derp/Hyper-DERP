@@ -269,6 +269,9 @@ struct WorkerStats {
   uint64_t hd_mesh_forwards;
   uint64_t hd_fleet_forwards;
   uint64_t rate_limit_drops;
+  uint64_t hd_fwd_no_rule;
+  uint64_t hd_fwd_no_route;
+  uint64_t hd_fwd_same_worker;
 };
 
 /// SPSC ring buffer for commands to a worker.

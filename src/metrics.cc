@@ -90,6 +90,9 @@ struct AggregatedStats {
   uint64_t hd_mesh_forwards = 0;
   uint64_t hd_fleet_forwards = 0;
   uint64_t rate_limit_drops = 0;
+  uint64_t hd_fwd_no_rule = 0;
+  uint64_t hd_fwd_no_route = 0;
+  uint64_t hd_fwd_same_worker = 0;
   int64_t peers_active = 0;
   int64_t hd_peers_active = 0;
   int num_workers = 0;
@@ -131,6 +134,12 @@ static AggregatedStats CollectStats(Ctx* ctx) {
         &w->stats.hd_fleet_forwards, __ATOMIC_RELAXED);
     s.rate_limit_drops += __atomic_load_n(
         &w->stats.rate_limit_drops, __ATOMIC_RELAXED);
+    s.hd_fwd_no_rule += __atomic_load_n(
+        &w->stats.hd_fwd_no_rule, __ATOMIC_RELAXED);
+    s.hd_fwd_no_route += __atomic_load_n(
+        &w->stats.hd_fwd_no_route, __ATOMIC_RELAXED);
+    s.hd_fwd_same_worker += __atomic_load_n(
+        &w->stats.hd_fwd_same_worker, __ATOMIC_RELAXED);
     // Count active peers from hash table.
     for (int j = 0; j < kHtCapacity; j++) {
       if (w->ht[j].occupied == 1) {
@@ -274,6 +283,12 @@ static void RegisterRoutes(MetricsServer* ms,
           &w->stats.send_econnreset, __ATOMIC_RELAXED);
       wj["send_eagain"] = __atomic_load_n(
           &w->stats.send_eagain, __ATOMIC_RELAXED);
+      wj["hd_fwd_no_route"] = __atomic_load_n(
+          &w->stats.hd_fwd_no_route, __ATOMIC_RELAXED);
+      wj["hd_fwd_same_worker"] = __atomic_load_n(
+          &w->stats.hd_fwd_same_worker, __ATOMIC_RELAXED);
+      wj["send_queue_drops"] = __atomic_load_n(
+          &w->stats.send_queue_drops, __ATOMIC_RELAXED);
       // Count peers.
       int peers = 0;
       for (int j = 0; j < kHtCapacity; j++) {

@@ -1095,11 +1095,20 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
         // Same-shard: direct enqueue.
         EnqueueSend(w, dst, buf, frame_len);
       } else {
+        // Lazy resolution: if the cached pointer or
+        // route is stale/missing, re-resolve now.
+        if (!dst || dst->occupied != 1) {
+          // Try same-shard lookup first.
+          dst = HtLookup(w, peer->fwd_keys[0].data());
+          if (dst) {
+            peer->fwd_peers[0] = dst;
+            EnqueueSend(w, dst, buf, frame_len);
+            return;
+          }
+        }
         // Cross-shard: xfer ring to destination worker.
         int dst_fd = peer->fwd_dst_fd[0];
         int dst_id = peer->fwd_dst_worker[0];
-        // Lazy route resolution: if the route wasn't
-        // cached at rule setup (race), resolve now.
         if (dst_fd < 0) {
           Route* rt = RouteLookup(w->routes,
               peer->fwd_keys[0].data());
@@ -1110,8 +1119,14 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
             dst_id = rt->worker_id;
           }
         }
-        if (dst_fd < 0 || dst_id == w->id ||
+        if (dst_fd < 0) {
+          w->stats.hd_fwd_no_route++;
+          FrameFree(w, buf);
+          return;
+        }
+        if (dst_id == w->id ||
             dst_id >= w->ctx->num_workers) {
+          w->stats.hd_fwd_same_worker++;
           FrameFree(w, buf);
           return;
         }
@@ -1326,6 +1341,15 @@ static void ForwardHdData(Worker* w, Peer* src,
     if (dst && dst->occupied == 1) {
       EnqueueSend(w, dst, buf, frame_len);
       continue;
+    }
+    // Lazy same-shard re-resolve.
+    if (!dst || dst->occupied != 1) {
+      dst = HtLookup(w, src->fwd_keys[r].data());
+      if (dst) {
+        src->fwd_peers[r] = dst;
+        EnqueueSend(w, dst, buf, frame_len);
+        continue;
+      }
     }
 
     // Cross-shard: cached or lazy-resolved route.
