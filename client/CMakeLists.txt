@@ -14,3 +14,6 @@ target_link_libraries(wg_client PUBLIC
 
 add_executable(hd-wg hd_wg.cc)
 target_link_libraries(hd-wg PRIVATE wg_client)
+
+add_executable(hdctl hdctl.cc)
+target_link_libraries(hdctl PRIVATE libderp)
