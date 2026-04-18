@@ -42,3 +42,20 @@ target_link_libraries(hd_wg PUBLIC
 
 # HdPolicy: header-only (policy.h).
 # No library target needed.
+
+# HdFleet: fleet topology view.
+add_library(hd_fleet STATIC
+  libs/hd_fleet/fleet_view.cc)
+target_include_directories(hd_fleet PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(hd_fleet PUBLIC hd_sdk)
+
+# C ABI wrapper.
+add_library(hd_sdk_c STATIC
+  bindings/c/hd_sdk_c.cc)
+target_include_directories(hd_sdk_c PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/bindings/c
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(hd_sdk_c PUBLIC hd_sdk)
