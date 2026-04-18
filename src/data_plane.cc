@@ -1093,9 +1093,9 @@ static inline void DispatchFrame(Worker* w, Peer* peer,
 
 // -- Forwarding (HD protocol) ------------------------------------------------
 
-/// Forward a complete HD frame using cached forwarding
-/// rules. No per-packet hash lookup. No header rebuild.
-/// The incoming frame is forwarded as-is for HD→HD.
+/// Forward a complete HD frame. Mirrors ForwardMsg's
+/// inline pattern: one alloc, one lookup, one send.
+/// No per-packet hash. No header rebuild.
 static void ForwardHdData(Worker* w, Peer* src,
                           const uint8_t* frame,
                           int frame_len) {
@@ -1113,24 +1113,29 @@ static void ForwardHdData(Worker* w, Peer* src,
     return;
   }
 
+  // Rule-based: one alloc + send per rule, same pattern
+  // as ForwardMsg.
   for (int r = 0; r < src->fwd_count; r++) {
+    uint8_t* buf = FrameAlloc(w, frame_len);
+    if (!buf) return;
+    memcpy(buf, frame, frame_len);
+
+    // Same-shard fast path (cached pointer).
     Peer* dst = src->fwd_peers[r];
     if (dst && dst->occupied == 1) {
-      // Same-shard: copy frame and enqueue.
-      uint8_t* buf = FrameAlloc(w, frame_len);
-      if (!buf) continue;
-      memcpy(buf, frame, frame_len);
       EnqueueSend(w, dst, buf, frame_len);
       continue;
     }
-    // Cross-shard: use cached worker/fd.
-    int dst_id = src->fwd_dst_worker[r];
+
+    // Cross-shard: cached route (same as ForwardMsg).
     int dst_fd = src->fwd_dst_fd[r];
-    if (dst_fd < 0 || dst_id == w->id) continue;
+    int dst_id = src->fwd_dst_worker[r];
+    if (dst_fd < 0 || dst_id == w->id ||
+        dst_id >= w->ctx->num_workers) {
+      FrameFree(w, buf);
+      continue;
+    }
     Worker* dst_w = w->ctx->workers[dst_id];
-    uint8_t* buf = FrameAlloc(w, frame_len);
-    if (!buf) continue;
-    memcpy(buf, frame, frame_len);
     Xfer x{};
     x.dst_fd = dst_fd;
     x.frame = buf;
@@ -1139,16 +1144,18 @@ static void ForwardHdData(Worker* w, Peer* src,
         &dst_w->fd_gen[dst_fd], __ATOMIC_ACQUIRE);
     int rc = XferSpscPush(
         dst_w->xfer_inbox[w->id], &x);
-    if (rc < 0) {
-      FrameFree(w, buf);
-    } else {
+    if (rc >= 0) {
       __atomic_fetch_or(
           &dst_w->pending_sources,
           1u << static_cast<unsigned>(w->id),
           __ATOMIC_RELEASE);
       if (rc == 1) {
-        w->xfer_signal_pending |= (1u << dst_id);
+        w->xfer_signal_pending |=
+            (1u << static_cast<unsigned>(dst_id));
       }
+    } else {
+      FrameFree(w, buf);
+      w->stats.xfer_drops++;
     }
   }
 
