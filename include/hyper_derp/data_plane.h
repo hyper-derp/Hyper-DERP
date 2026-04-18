@@ -36,6 +36,11 @@ void DpAddPeer(Ctx* ctx, int fd, const Key& key,
                PeerProtocol protocol =
                    PeerProtocol::kDerp);
 
+/// @brief Registers a peer on a specific worker.
+/// @param wid Worker index to place the peer on.
+void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
+                       PeerProtocol protocol, int wid);
+
 /// @brief Removes a peer from the data plane.
 /// @param ctx Data plane context.
 /// @param key The peer's 32-byte public key.

@@ -616,6 +616,14 @@ static int EnqueueCmd(Worker* w, const Cmd* cmd) {
 void DpAddPeer(Ctx* ctx, int fd, const Key& key,
                PeerProtocol protocol) {
   int wid = PeerWorker(ctx->num_workers, key);
+  DpAddPeerToWorker(ctx, fd, key, protocol, wid);
+}
+
+void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
+                       PeerProtocol protocol, int wid) {
+  if (wid < 0 || wid >= ctx->num_workers) {
+    wid = PeerWorker(ctx->num_workers, key);
+  }
   Cmd cmd{};
   cmd.type = kCmdAddPeer;
   cmd.fd = fd;
@@ -634,12 +642,47 @@ void DpRemovePeer(Ctx* ctx, const Key& key) {
 
 void DpAddFwdRule(Ctx* ctx, const Key& peer_key,
                   const Key& dst_key) {
-  int wid = PeerWorker(ctx->num_workers, peer_key);
+  int src_wid = PeerWorker(ctx->num_workers, peer_key);
+  int dst_wid = PeerWorker(ctx->num_workers, dst_key);
+
+  // Migrate destination to source's worker for
+  // same-shard forwarding (no xfer overhead).
+  if (src_wid != dst_wid) {
+    // Find the destination's fd from the route table.
+    int dst_fd = -1;
+    for (int i = 0; i < kHtCapacity; i++) {
+      Route* r = &ctx->workers[src_wid]->routes[i];
+      if (__atomic_load_n(&r->occupied,
+                          __ATOMIC_ACQUIRE) == 1 &&
+          memcmp(r->key.data(), dst_key.data(),
+                 kKeySize) == 0) {
+        dst_fd = r->fd;
+        break;
+      }
+    }
+    if (dst_fd >= 0) {
+      // Remove from old worker (don't close fd).
+      Cmd mv{};
+      mv.type = kCmdMovePeerOut;
+      mv.key = dst_key;
+      EnqueueCmd(ctx->workers[dst_wid], &mv);
+
+      // Re-add to source's worker.
+      Cmd add{};
+      add.type = kCmdAddPeer;
+      add.fd = dst_fd;
+      add.key = dst_key;
+      add.protocol = PeerProtocol::kHd;
+      EnqueueCmd(ctx->workers[src_wid], &add);
+    }
+  }
+
+  // Set the forwarding rule on the source's worker.
   Cmd cmd{};
   cmd.type = kCmdSetFwdRule;
   cmd.key = peer_key;
   cmd.dst_key = dst_key;
-  EnqueueCmd(ctx->workers[wid], &cmd);
+  EnqueueCmd(ctx->workers[src_wid], &cmd);
 }
 
 void DpWrite(Ctx* ctx, const Key& key,
@@ -1876,6 +1919,22 @@ static void ProcessCommands(Worker* w) {
               p->fwd_dst_fd[idx] = rt->fd;
             }
           }
+        }
+        break;
+      }
+      case kCmdMovePeerOut: {
+        // Remove peer from this worker without closing
+        // the fd. Used for same-shard migration.
+        Peer* p = HtLookup(w, cmd.key.data());
+        if (p) {
+          int fd = p->fd;
+          if (fd >= 0 && fd < kMaxFd) {
+            w->fd_map[fd] = nullptr;
+          }
+          HtRemove(w, cmd.key);
+          // Don't broadcast route remove — the re-add
+          // on the new worker will update the route.
+          if (w->peer_count > 0) w->peer_count--;
         }
         break;
       }

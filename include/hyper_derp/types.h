@@ -155,6 +155,7 @@ enum CmdType : uint8_t {
   kCmdWrite = 3,
   kCmdStop = 4,
   kCmdSetFwdRule = 5,
+  kCmdMovePeerOut = 6,
 };
 
 // -- Data-oriented structs ---------------------------------------------------
