@@ -44,6 +44,8 @@
 #include <ryml.hpp>
 #include <ryml_std.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <hd/sdk.hpp>
 
 using namespace std::string_view_literals;
@@ -357,6 +359,10 @@ int main(int argc, char** argv) {
   signal(SIGINT, SigHandler);
   signal(SIGTERM, SigHandler);
   signal(SIGPIPE, SIG_IGN);
+
+  // Suppress spdlog output in pipe mode to keep stdout
+  // clean. Logging goes to stderr via the process.
+  spdlog::set_level(spdlog::level::off);
 
   // Connect to relay.
   hd::sdk::ClientConfig cfg;
