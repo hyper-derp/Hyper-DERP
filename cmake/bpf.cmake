@@ -21,6 +21,25 @@ add_custom_command(
   COMMENT "Compiling XDP program"
 )
 
+set(BPF_AF_XDP_SRC
+  "${CMAKE_SOURCE_DIR}/bpf/hd_af_xdp.bpf.c")
+set(BPF_AF_XDP_OUT
+  "${CMAKE_BINARY_DIR}/bpf/hd_af_xdp.bpf.o")
+
+add_custom_command(
+  OUTPUT ${BPF_AF_XDP_OUT}
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+    ${CMAKE_BINARY_DIR}/bpf
+  COMMAND ${CLANG_BPF} -O2 -g -target bpf
+    -D__TARGET_ARCH_x86
+    -I/usr/include/x86_64-linux-gnu
+    -I${CMAKE_SOURCE_DIR}/bpf
+    -c ${BPF_AF_XDP_SRC}
+    -o ${BPF_AF_XDP_OUT}
+  DEPENDS ${BPF_AF_XDP_SRC}
+  COMMENT "Compiling AF_XDP redirect program"
+)
+
 add_custom_target(xdp_program ALL
-  DEPENDS ${BPF_OUT}
+  DEPENDS ${BPF_OUT} ${BPF_AF_XDP_OUT}
 )

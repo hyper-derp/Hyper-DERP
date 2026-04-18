@@ -20,3 +20,8 @@ target_link_libraries(hd-scale-test PRIVATE libderp)
 
 add_executable(hd-scale-test-uring hd_scale_test_uring.cc)
 target_link_libraries(hd-scale-test-uring PRIVATE libderp)
+
+add_executable(af-xdp-relay af_xdp_relay.cc)
+target_link_libraries(af-xdp-relay PRIVATE libderp)
+target_compile_definitions(af-xdp-relay PRIVATE
+  _GNU_SOURCE)
