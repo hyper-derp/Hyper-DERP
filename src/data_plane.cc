@@ -1074,6 +1074,40 @@ static void ForwardHdData(Worker* w, Peer* src,
                           const uint8_t* frame,
                           int frame_len);
 
+/// Push a frame to another worker via the xfer ring.
+static inline void XferPush(Worker* w, int dst_id,
+                            int dst_fd,
+                            uint8_t* buf, int len) {
+  if (dst_id == w->id ||
+      dst_id >= w->ctx->num_workers) {
+    FrameFree(w, buf);
+    return;
+  }
+  Worker* dst_w = w->ctx->workers[dst_id];
+  Xfer x{};
+  x.dst_fd = dst_fd;
+  x.frame = buf;
+  x.frame_len = len;
+  x.dst_gen = __atomic_load_n(
+      &dst_w->fd_gen[dst_fd], __ATOMIC_ACQUIRE);
+  int rc = XferSpscPush(
+      dst_w->xfer_inbox[w->id], &x);
+  if (rc >= 0) {
+    __atomic_fetch_or(
+        &dst_w->pending_sources,
+        1u << static_cast<unsigned>(w->id),
+        __ATOMIC_RELEASE);
+    if (rc == 1) {
+      w->xfer_signal_pending |=
+          (1u << static_cast<unsigned>(dst_id));
+    }
+  } else {
+    FrameFree(w, buf);
+    w->stats.xfer_drops++;
+    w->send_pressure++;
+  }
+}
+
 /// Dispatch a complete HD frame.
 static void DispatchHdFrame(Worker* w, Peer* peer,
                             const uint8_t* hdr,
@@ -1091,70 +1125,35 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
 
       Peer* dst = peer->fwd_peers[0];
       if (dst && dst->occupied == 1) {
-        // Same-shard: direct enqueue.
         EnqueueSend(w, dst, buf, frame_len);
       } else {
-        // Lazy resolution: if the cached pointer or
-        // route is stale/missing, re-resolve now.
-        if (!dst || dst->occupied != 1) {
-          // Try same-shard lookup first.
-          dst = HtLookup(w, peer->fwd_keys[0].data());
+        // Resolve destination if not cached.
+        int dst_fd = peer->fwd_dst_fd[0];
+        int dst_id = peer->fwd_dst_worker[0];
+        if (dst_fd < 0) {
+          // First frame: try same-shard, then route.
+          dst = HtLookup(w,
+              peer->fwd_keys[0].data());
           if (dst) {
             peer->fwd_peers[0] = dst;
             EnqueueSend(w, dst, buf, frame_len);
             return;
           }
-        }
-        // Cross-shard: xfer ring to destination worker.
-        int dst_fd = peer->fwd_dst_fd[0];
-        int dst_id = peer->fwd_dst_worker[0];
-        if (dst_fd < 0) {
           Route* rt = RouteLookup(w->routes,
               peer->fwd_keys[0].data());
-          if (rt) {
-            peer->fwd_dst_worker[0] = rt->worker_id;
-            peer->fwd_dst_fd[0] = rt->fd;
-            dst_fd = rt->fd;
-            dst_id = rt->worker_id;
+          if (!rt) {
+            w->stats.hd_fwd_no_route++;
+            FrameFree(w, buf);
+            return;
           }
+          dst_fd = rt->fd;
+          dst_id = rt->worker_id;
+          peer->fwd_dst_fd[0] = dst_fd;
+          peer->fwd_dst_worker[0] = dst_id;
         }
-        if (dst_fd < 0) {
-          w->stats.hd_fwd_no_route++;
-          FrameFree(w, buf);
-          return;
-        }
-        if (dst_id == w->id ||
-            dst_id >= w->ctx->num_workers) {
-          w->stats.hd_fwd_same_worker++;
-          FrameFree(w, buf);
-          return;
-        }
-        Worker* dst_w = w->ctx->workers[dst_id];
-        Xfer x{};
-        x.dst_fd = dst_fd;
-        x.frame = buf;
-        x.frame_len = frame_len;
-        x.dst_gen = __atomic_load_n(
-            &dst_w->fd_gen[dst_fd],
-            __ATOMIC_ACQUIRE);
-        int rc = XferSpscPush(
-            dst_w->xfer_inbox[w->id], &x);
-        if (rc >= 0) {
-          __atomic_fetch_or(
-              &dst_w->pending_sources,
-              1u << static_cast<unsigned>(w->id),
-              __ATOMIC_RELEASE);
-          if (rc == 1) {
-            w->xfer_signal_pending |=
-                (1u << static_cast<unsigned>(dst_id));
-          }
-        } else {
-          FrameFree(w, buf);
-          w->stats.xfer_drops++;
-          // Count xfer drops as send pressure so
-          // recv pauses when cross-shard can't keep up.
-          w->send_pressure++;
-        }
+        // Cross-shard xfer.
+        XferPush(w, dst_id, dst_fd,
+                 buf, frame_len);
       }
       return;
     }
@@ -1338,26 +1337,20 @@ static void ForwardHdData(Worker* w, Peer* src,
     if (!buf) return;
     memcpy(buf, frame, frame_len);
 
-    // Same-shard fast path (cached pointer).
     Peer* dst = src->fwd_peers[r];
     if (dst && dst->occupied == 1) {
       EnqueueSend(w, dst, buf, frame_len);
       continue;
     }
-    // Lazy same-shard re-resolve.
-    if (!dst || dst->occupied != 1) {
+    int dst_fd = src->fwd_dst_fd[r];
+    int dst_id = src->fwd_dst_worker[r];
+    if (dst_fd < 0) {
       dst = HtLookup(w, src->fwd_keys[r].data());
       if (dst) {
         src->fwd_peers[r] = dst;
         EnqueueSend(w, dst, buf, frame_len);
         continue;
       }
-    }
-
-    // Cross-shard: cached or lazy-resolved route.
-    int dst_fd = src->fwd_dst_fd[r];
-    int dst_id = src->fwd_dst_worker[r];
-    if (dst_fd < 0) {
       Route* rt = RouteLookup(w->routes,
           src->fwd_keys[r].data());
       if (rt) {
@@ -1367,34 +1360,11 @@ static void ForwardHdData(Worker* w, Peer* src,
         dst_id = rt->worker_id;
       }
     }
-    if (dst_fd < 0 || dst_id == w->id ||
-        dst_id >= w->ctx->num_workers) {
+    if (dst_fd < 0) {
       FrameFree(w, buf);
       continue;
     }
-    Worker* dst_w = w->ctx->workers[dst_id];
-    Xfer x{};
-    x.dst_fd = dst_fd;
-    x.frame = buf;
-    x.frame_len = frame_len;
-    x.dst_gen = __atomic_load_n(
-        &dst_w->fd_gen[dst_fd], __ATOMIC_ACQUIRE);
-    int rc = XferSpscPush(
-        dst_w->xfer_inbox[w->id], &x);
-    if (rc >= 0) {
-      __atomic_fetch_or(
-          &dst_w->pending_sources,
-          1u << static_cast<unsigned>(w->id),
-          __ATOMIC_RELEASE);
-      if (rc == 1) {
-        w->xfer_signal_pending |=
-            (1u << static_cast<unsigned>(dst_id));
-      }
-    } else {
-      FrameFree(w, buf);
-      w->stats.xfer_drops++;
-      w->send_pressure++;
-    }
+    XferPush(w, dst_id, dst_fd, buf, frame_len);
   }
 
   // Forward to same-shard DERP peers via bridge.
