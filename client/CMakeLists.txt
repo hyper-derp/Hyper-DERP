@@ -16,4 +16,5 @@ add_executable(hd-wg hd_wg.cc)
 target_link_libraries(hd-wg PRIVATE wg_client)
 
 add_executable(hdctl hdctl.cc)
-target_link_libraries(hdctl PRIVATE libderp)
+target_link_libraries(hdctl PRIVATE libderp ${ZMQ_LIB})
+target_include_directories(hdctl PRIVATE ${ZMQ_INCLUDE_DIR})

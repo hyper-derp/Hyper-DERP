@@ -12,6 +12,7 @@
 #include <string_view>
 
 #include "hyper_derp/config.h"
+#include "hyper_derp/ctl_channel.h"
 #include "hyper_derp/server.h"
 
 static std::atomic<int> g_stop_flag{0};
@@ -325,6 +326,13 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
+  // Start ZMQ control channel.
+  auto* ctl = hyper_derp::CtlChannelStart(
+      "ipc:///tmp/hyper-derp.sock",
+      &server.data_plane,
+      config.hd_relay_key.empty()
+          ? nullptr : &server.hd_peers);
+
   // Install signal handlers. Only set the atomic flag;
   // ServerRun polls it and calls ServerStop from a safe
   // context.
@@ -338,6 +346,7 @@ int main(int argc, char* argv[]) {
 
   auto run = hyper_derp::ServerRun(&server, &g_stop_flag);
 
+  hyper_derp::CtlChannelStop(ctl);
   hyper_derp::ServerDestroy(&server);
   spdlog::info("hyper-derp exiting");
   return run.has_value() ? EXIT_SUCCESS : EXIT_FAILURE;
