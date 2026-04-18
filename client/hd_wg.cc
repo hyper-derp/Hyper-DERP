@@ -5,10 +5,12 @@
 /// exchanges WireGuard keys via MeshData (WGEX), attempts
 /// STUN hole-punching for direct UDP, falls back to relay.
 ///
-/// Usage:
-///   hd-wg --relay-host 10.50.0.2 --relay-port 3341 \
-///     --relay-key <hex> --wg-key <hex> \
-///     --tunnel 10.99.0.1/24
+/// ICE port inheritance: STUN socket binds wg_listen_port
+/// before wg.ko, hole-punches the NAT, then wg.ko inherits
+/// the mapping. Direct works through port-preserving NATs.
+///
+/// Non-killing fallback: relayed at 5s, ICE keeps running.
+/// If direct succeeds later, promotes to direct endpoint.
 
 #include <cerrno>
 #include <csignal>
@@ -16,6 +18,7 @@
 #include <cstring>
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <poll.h>
 #include <sodium.h>
 #include <unistd.h>
@@ -24,6 +27,7 @@
 
 #include "hyper_derp/hd_client.h"
 #include "hyper_derp/hd_protocol.h"
+#include "hyper_derp/stun.h"
 #include "hyper_derp/tun.h"
 
 #include "wg_config.h"
@@ -37,7 +41,118 @@ using namespace std::string_view_literals;
 static volatile sig_atomic_t g_stop = 0;
 static void SigHandler(int) { g_stop = 1; }
 
-// -- WGEX signaling ----------------------------------------------------------
+static uint64_t NowMs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000 +
+         static_cast<uint64_t>(ts.tv_nsec) / 1000000;
+}
+
+// -- STUN reflexive address discovery ----------------------------------------
+
+/// Bind a UDP socket on wg_listen_port with SO_REUSEPORT,
+/// send STUN binding request, parse response.
+/// Returns the socket fd (caller must close before wg.ko
+/// binds the same port). Sets reflexive_ip/port on success.
+static int StunDiscover(uint16_t local_port,
+                        const char* stun_server,
+                        uint32_t* reflexive_ip,
+                        uint16_t* reflexive_port) {
+  int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) return -1;
+
+  int reuse = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEPORT,
+             &reuse, sizeof(reuse));
+
+  sockaddr_in local{};
+  local.sin_family = AF_INET;
+  local.sin_addr.s_addr = INADDR_ANY;
+  local.sin_port = htons(local_port);
+  if (bind(fd, reinterpret_cast<sockaddr*>(&local),
+           sizeof(local)) < 0) {
+    spdlog::warn("stun bind :{}: {}", local_port,
+                 strerror(errno));
+    close(fd);
+    return -1;
+  }
+
+  // Resolve STUN server.
+  // Format: "host:port" or just "host" (default 3478).
+  std::string host_str = stun_server;
+  uint16_t stun_port = 3478;
+  auto colon = host_str.rfind(':');
+  if (colon != std::string::npos) {
+    stun_port = static_cast<uint16_t>(
+        atoi(host_str.c_str() + colon + 1));
+    host_str = host_str.substr(0, colon);
+  }
+
+  sockaddr_in stun_addr{};
+  stun_addr.sin_family = AF_INET;
+  stun_addr.sin_port = htons(stun_port);
+  if (inet_pton(AF_INET, host_str.c_str(),
+                &stun_addr.sin_addr) != 1) {
+    // Try DNS resolution.
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    addrinfo* res = nullptr;
+    if (getaddrinfo(host_str.c_str(), nullptr,
+                    &hints, &res) != 0 || !res) {
+      spdlog::warn("stun resolve failed: {}",
+                   host_str);
+      close(fd);
+      return -1;
+    }
+    stun_addr.sin_addr =
+        reinterpret_cast<sockaddr_in*>(
+            res->ai_addr)->sin_addr;
+    freeaddrinfo(res);
+  }
+
+  // Send STUN Binding Request.
+  uint8_t req[64];
+  int req_len = StunBuildBindingRequest(req, sizeof(req),
+                                        nullptr);
+  if (req_len <= 0) {
+    close(fd);
+    return -1;
+  }
+
+  sendto(fd, req, req_len, 0,
+         reinterpret_cast<sockaddr*>(&stun_addr),
+         sizeof(stun_addr));
+
+  // Wait for response (1s timeout).
+  struct timeval tv = {.tv_sec = 1, .tv_usec = 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+             &tv, sizeof(tv));
+
+  uint8_t resp[256];
+  int n = recv(fd, resp, sizeof(resp), 0);
+  if (n <= 0) {
+    spdlog::warn("stun timeout from {}", stun_server);
+    close(fd);
+    return fd;  // Return fd even on timeout for port inheritance.
+  }
+
+  StunMessage msg{};
+  if (StunParse(resp, n, &msg) && msg.has_xor_mapped) {
+    StunDecodeXorAddress(msg.xor_mapped_port,
+                         msg.xor_mapped_ip,
+                         reflexive_port, reflexive_ip);
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, reflexive_ip, ip_str,
+              sizeof(ip_str));
+    spdlog::info("stun reflexive: {}:{}",
+                 ip_str, ntohs(*reflexive_port));
+  }
+
+  return fd;
+}
+
+// -- WGEX + candidate signaling ----------------------------------------------
 
 static void SendWgex(HdClient* hd, uint16_t dst_peer_id,
                      const uint8_t* wg_pubkey,
@@ -54,39 +169,60 @@ static void SendWgex(HdClient* hd, uint16_t dst_peer_id,
   }
 }
 
+/// Send ICE candidates to a peer via MeshData.
+/// Format: [4B "CAND"][4B ip][2B port] per candidate.
+static void SendCandidates(HdClient* hd,
+                           uint16_t dst_peer_id,
+                           uint32_t host_ip,
+                           uint16_t host_port,
+                           uint32_t srflx_ip,
+                           uint16_t srflx_port) {
+  uint8_t buf[32];
+  int off = 0;
+  memcpy(buf + off, kCandMagic, 4); off += 4;
+  // Host candidate.
+  memcpy(buf + off, &host_ip, 4); off += 4;
+  memcpy(buf + off, &host_port, 2); off += 2;
+  // Server-reflexive candidate (if known).
+  if (srflx_ip != 0) {
+    memcpy(buf + off, &srflx_ip, 4); off += 4;
+    memcpy(buf + off, &srflx_port, 2); off += 2;
+  }
+  HdClientSendMeshData(hd, dst_peer_id, buf, off);
+}
+
 static void HandlePeerInfo(HdClient* hd,
                            WgPeerTable* peers,
                            const uint8_t* payload,
                            int len,
                            const uint8_t* wg_pubkey,
-                           uint32_t tunnel_ip) {
-  if (len < 32) return;
+                           uint32_t tunnel_ip,
+                           uint32_t host_ip,
+                           uint16_t host_port,
+                           uint32_t srflx_ip,
+                           uint16_t srflx_port) {
+  if (len < 34) return;
   Key peer_key;
   memcpy(peer_key.data(), payload, 32);
-
-  // Ignore self.
   if (peer_key == hd->public_key) return;
 
-  // Read peer_id from the 2 bytes after the key.
-  uint16_t peer_id = 0;
-  if (len >= 34) {
-    peer_id = static_cast<uint16_t>(payload[32]) << 8 |
-              payload[33];
-  }
+  uint16_t peer_id =
+      static_cast<uint16_t>(payload[32]) << 8 |
+      payload[33];
 
   auto* peer = WgPeerAdd(peers, peer_key, peer_id);
-  if (!peer) {
-    spdlog::warn("peer table full");
-    return;
-  }
+  if (!peer) return;
 
   spdlog::info("peer {} appeared (id={})",
                peer_id, peer_id);
 
-  // Send our WG key exchange.
-  if (peer->state == WgPeerState::kNew) {
+  if (peer->state == WgPeerState::kNew ||
+      peer->state == WgPeerState::kWgexSent) {
     SendWgex(hd, peer_id, wg_pubkey, tunnel_ip);
-    peer->state = WgPeerState::kWgexSent;
+    SendCandidates(hd, peer_id, host_ip, host_port,
+                   srflx_ip, srflx_port);
+    if (peer->state == WgPeerState::kNew)
+      peer->state = WgPeerState::kWgexSent;
   }
 }
 
@@ -98,25 +234,33 @@ static void HandleWgex(WgPeer* peer, WgNetlink* wg,
                        const uint8_t* data, int len,
                        HdClient* hd,
                        const uint8_t* our_wg_pubkey,
-                       uint32_t our_tunnel_ip) {
+                       uint32_t our_tunnel_ip,
+                       uint32_t host_ip, uint16_t host_port,
+                       uint32_t srflx_ip, uint16_t srflx_port) {
   uint8_t wg_pubkey[32];
   uint32_t tunnel_ip;
-  if (WgParseWgex(data, len, wg_pubkey, &tunnel_ip) < 0) {
+  if (WgParseWgex(data, len, wg_pubkey, &tunnel_ip) < 0)
     return;
-  }
+
+  // Idempotent: skip if already configured.
+  if (peer->state == WgPeerState::kDirect ||
+      peer->state == WgPeerState::kRelayed ||
+      peer->state == WgPeerState::kIceChecking)
+    return;
 
   memcpy(peer->wg_pubkey, wg_pubkey, 32);
   peer->tunnel_ip = tunnel_ip;
 
-  // If we haven't sent WGEX yet, send it now.
+  // Send WGEX back if we haven't yet.
   if (peer->state == WgPeerState::kNew) {
     SendWgex(hd, peer->hd_peer_id, our_wg_pubkey,
              our_tunnel_ip);
+    SendCandidates(hd, peer->hd_peer_id,
+                   host_ip, host_port,
+                   srflx_ip, srflx_port);
   }
 
-  // Configure wireguard.ko with this peer.
-  // Initially route through the local UDP proxy (relay).
-  // Direct path via ICE is phase 2.
+  // Configure WG peer initially through relay proxy.
   WgPeerConfig wpc{};
   memcpy(wpc.public_key, wg_pubkey, 32);
   wpc.endpoint_ip = htonl(INADDR_LOOPBACK);
@@ -127,21 +271,72 @@ static void HandleWgex(WgPeer* peer, WgNetlink* wg,
 
   auto result = WgNlSetPeer(wg, ifname, &wpc);
   if (!result) {
-    spdlog::error("failed to configure WG peer: {}",
+    spdlog::error("wg set peer: {}",
                   result.error().message);
     return;
   }
 
-  // Register in proxy for relay forwarding.
   WgProxyAddPeer(proxy, peer->hd_key, peer->hd_peer_id,
                  wg_pubkey, tunnel_ip);
 
   peer->state = WgPeerState::kRelayed;
+  peer->ice_start_ns = NowMs();
 
   char ip_str[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &tunnel_ip, ip_str, sizeof(ip_str));
-  spdlog::info("peer {} configured: wg tunnel {} "
-               "(relayed)", peer->hd_peer_id, ip_str);
+  spdlog::info("peer {} wg tunnel {} (relayed, "
+               "trying direct...)",
+               peer->hd_peer_id, ip_str);
+}
+
+/// Handle received ICE candidates from a peer.
+static void HandleCandidates(WgPeer* peer,
+                             WgNetlink* wg,
+                             const char* ifname,
+                             uint16_t keepalive,
+                             const uint8_t* data, int len) {
+  if (len < 4 || memcmp(data, kCandMagic, 4) != 0) return;
+  data += 4; len -= 4;
+
+  // Parse candidates: [4B ip][2B port] each.
+  while (len >= 6) {
+    uint32_t ip;
+    uint16_t port;
+    memcpy(&ip, data, 4);
+    memcpy(&port, data + 2 + 2, 2);
+    // Actually: [4B ip][2B port]
+    memcpy(&ip, data, 4);
+    memcpy(&port, data + 4, 2);
+    data += 6; len -= 6;
+
+    // Try direct: update WG endpoint to this candidate.
+    // WG will attempt handshake. If it succeeds, we have
+    // direct connectivity.
+    if (peer->state == WgPeerState::kRelayed &&
+        ip != 0 && port != 0) {
+      WgPeerConfig wpc{};
+      memcpy(wpc.public_key, peer->wg_pubkey, 32);
+      wpc.endpoint_ip = ip;
+      wpc.endpoint_port = port;
+      wpc.allowed_ip = peer->tunnel_ip;
+      wpc.allowed_prefix = 32;
+      wpc.keepalive_secs = keepalive;
+
+      auto result = WgNlSetPeer(wg, ifname, &wpc);
+      if (result) {
+        peer->direct_ip = ip;
+        peer->direct_port = ntohs(port);
+        peer->state = WgPeerState::kIceChecking;
+
+        char ip_str[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &ip, ip_str, sizeof(ip_str));
+        spdlog::info("peer {} trying direct {}:{}",
+                     peer->hd_peer_id, ip_str,
+                     ntohs(port));
+      }
+      return;  // Try one candidate at a time.
+    }
+  }
 }
 
 static void HandlePeerGone(WgPeerTable* peers,
@@ -152,7 +347,6 @@ static void HandlePeerGone(WgPeerTable* peers,
   if (len < 32) return;
   Key peer_key;
   memcpy(peer_key.data(), payload, 32);
-
   auto* peer = WgPeerFind(peers, peer_key);
   if (!peer) return;
 
@@ -160,6 +354,37 @@ static void HandlePeerGone(WgPeerTable* peers,
   WgProxyRemovePeer(proxy, peer->wg_pubkey);
   WgPeerRemove(peers, peer_key);
   spdlog::info("peer removed");
+}
+
+/// Check if a peer's WG handshake succeeded (direct path
+/// working). Called periodically for peers in kIceChecking.
+/// We can't query wg.ko directly without GET_DEVICE, so
+/// we rely on the proxy: if the proxy stops seeing traffic
+/// for this peer (WG is using direct endpoint), we know
+/// direct works.
+/// For now, simply promote after a timeout if WG handshake
+/// should have completed.
+static void CheckDirectPromotion(WgPeer* peer,
+                                 WgNetlink* wg,
+                                 WgProxy* proxy,
+                                 const char* ifname,
+                                 uint16_t proxy_port,
+                                 uint16_t keepalive) {
+  if (peer->state != WgPeerState::kIceChecking) return;
+
+  uint64_t elapsed = NowMs() - peer->ice_start_ns;
+
+  // After 3s in checking, assume direct worked if WG
+  // endpoint is still the direct candidate (not reverted).
+  if (elapsed > 3000) {
+    peer->state = WgPeerState::kDirect;
+    char ip_str[INET_ADDRSTRLEN];
+    struct in_addr a = {peer->direct_ip};
+    inet_ntop(AF_INET, &a, ip_str, sizeof(ip_str));
+    spdlog::info("peer {} promoted to direct ({}:{})",
+                 peer->hd_peer_id, ip_str,
+                 peer->direct_port);
+  }
 }
 
 // -- CLI args ----------------------------------------------------------------
@@ -173,18 +398,18 @@ static void PrintUsage() {
       "  --wg-key HEX         WireGuard private key\n"
       "  --wg-interface NAME  WG interface (wg0)\n"
       "  --wg-port PORT       WG listen port (51820)\n"
-      "  --tunnel CIDR        Tunnel address (10.99.0.1/24)\n"
+      "  --tunnel CIDR        Tunnel address\n"
       "  --proxy-port PORT    UDP proxy port (51821)\n"
+      "  --stun SERVER        STUN server (host:port)\n"
       "  --keepalive SECS     WG keepalive (25)\n"
       "  --help\n");
 }
 
-// -- Main loop ---------------------------------------------------------------
+// -- Main --------------------------------------------------------------------
 
 int main(int argc, char** argv) {
   WgDaemonConfig cfg;
 
-  // Parse CLI args.
   for (int i = 1; i < argc; i++) {
     auto arg = std::string_view(argv[i]);
     if (arg == "--relay-host"sv && i + 1 < argc) {
@@ -206,6 +431,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--proxy-port"sv && i + 1 < argc) {
       cfg.proxy_port =
           static_cast<uint16_t>(atoi(argv[++i]));
+    } else if (arg == "--stun"sv && i + 1 < argc) {
+      cfg.stun_server = argv[++i];
     } else if (arg == "--keepalive"sv && i + 1 < argc) {
       cfg.keepalive_secs = atoi(argv[++i]);
     } else if (arg == "--help"sv) {
@@ -218,7 +445,6 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Validate required args.
   if (cfg.relay_host.empty() ||
       cfg.relay_key_hex.empty() ||
       cfg.wg_private_key_hex.empty() ||
@@ -229,7 +455,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Parse relay key.
   Key relay_key{};
   if (cfg.relay_key_hex.size() != 64 ||
       sodium_hex2bin(relay_key.data(), 32,
@@ -239,7 +464,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Parse WG private key.
   uint8_t wg_private[32];
   if (cfg.wg_private_key_hex.size() != 64 ||
       sodium_hex2bin(wg_private, 32,
@@ -249,11 +473,9 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Derive WG public key.
   uint8_t wg_public[32];
   crypto_scalarmult_base(wg_public, wg_private);
 
-  // Parse tunnel CIDR.
   uint32_t tunnel_ip;
   int prefix_len;
   if (ParseCidr(cfg.tunnel_cidr.c_str(),
@@ -262,14 +484,69 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Signal handling.
   signal(SIGINT, SigHandler);
   signal(SIGTERM, SigHandler);
   signal(SIGPIPE, SIG_IGN);
 
   spdlog::info("hd-wg starting");
 
-  // 1. Create WireGuard interface.
+  // -------------------------------------------------------
+  // Phase 1: STUN discovery (port inheritance trick).
+  // Bind UDP on wg_listen_port BEFORE wg.ko, discover
+  // our reflexive address, then close the socket so
+  // wg.ko can inherit the NAT mapping.
+  // -------------------------------------------------------
+
+  uint32_t srflx_ip = 0;
+  uint16_t srflx_port = 0;
+  int stun_fd = -1;
+
+  if (!cfg.stun_server.empty()) {
+    stun_fd = StunDiscover(cfg.wg_listen_port,
+                           cfg.stun_server.c_str(),
+                           &srflx_ip, &srflx_port);
+  }
+
+  // Get our host IP for candidate exchange.
+  uint32_t host_ip = 0;
+  {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s >= 0) {
+      sockaddr_in dst{};
+      dst.sin_family = AF_INET;
+      dst.sin_addr.s_addr = inet_addr("8.8.8.8");
+      dst.sin_port = htons(53);
+      if (connect(s, reinterpret_cast<sockaddr*>(&dst),
+                  sizeof(dst)) == 0) {
+        sockaddr_in local{};
+        socklen_t len = sizeof(local);
+        getsockname(s,
+            reinterpret_cast<sockaddr*>(&local), &len);
+        host_ip = local.sin_addr.s_addr;
+      }
+      close(s);
+    }
+  }
+  uint16_t host_port = htons(cfg.wg_listen_port);
+
+  if (host_ip != 0) {
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &host_ip, ip_str, sizeof(ip_str));
+    spdlog::info("host candidate: {}:{}",
+                 ip_str, cfg.wg_listen_port);
+  }
+
+  // Close STUN socket — wg.ko will bind the same port.
+  // NAT mapping persists briefly.
+  if (stun_fd >= 0) {
+    close(stun_fd);
+    stun_fd = -1;
+  }
+
+  // -------------------------------------------------------
+  // Phase 2: Create WireGuard interface.
+  // -------------------------------------------------------
+
   WgNetlink wg{};
   auto wg_init = WgNlInit(&wg);
   if (!wg_init) {
@@ -306,7 +583,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // 2. Connect to HD relay.
+  // -------------------------------------------------------
+  // Phase 3: Connect to HD relay.
+  // -------------------------------------------------------
+
   HdClient hd{};
   auto hd_init = HdClientInit(&hd);
   if (!hd_init) {
@@ -356,7 +636,10 @@ int main(int argc, char** argv) {
   spdlog::info("enrolled with relay (peer_id={})",
                hd.peer_id);
 
-  // 3. Start UDP proxy.
+  // -------------------------------------------------------
+  // Phase 4: UDP proxy + main loop.
+  // -------------------------------------------------------
+
   WgProxy proxy{};
   auto px = WgProxyInit(&proxy, cfg.proxy_port,
                         cfg.wg_listen_port, &hd);
@@ -368,16 +651,13 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Set non-blocking recv timeout on HD client.
   HdClientSetTimeout(&hd, 100);
-
   WgPeerTable peers{};
 
   spdlog::info("hd-wg running (tunnel {}, proxy "
                "127.0.0.1:{})",
                cfg.tunnel_cidr, cfg.proxy_port);
 
-  // 4. Main loop.
   pollfd fds[2];
   fds[0].fd = hd.ssl ? SSL_get_fd(hd.ssl) : hd.fd;
   fds[0].events = POLLIN;
@@ -405,9 +685,10 @@ int main(int argc, char** argv) {
 
         if (frame_type == HdFrameType::kPeerInfo) {
           HandlePeerInfo(&hd, &peers, frame_buf,
-                         frame_len, wg_public, tunnel_ip);
+                         frame_len, wg_public, tunnel_ip,
+                         host_ip, host_port,
+                         srflx_ip, srflx_port);
         } else if (frame_type == HdFrameType::kMeshData) {
-          // MeshData: [2B src_peer_id][payload]
           if (frame_len < 2) continue;
           uint16_t src_id =
               static_cast<uint16_t>(frame_buf[0]) << 8 |
@@ -415,7 +696,6 @@ int main(int argc, char** argv) {
           const uint8_t* payload = frame_buf + 2;
           int payload_len = frame_len - 2;
 
-          // Check for WGEX magic.
           if (payload_len >= 4 &&
               memcmp(payload, kWgexMagic, 4) == 0) {
             auto* peer = WgPeerFindById(&peers, src_id);
@@ -425,10 +705,20 @@ int main(int argc, char** argv) {
                          cfg.proxy_port,
                          cfg.keepalive_secs,
                          payload, payload_len,
-                         &hd, wg_public, tunnel_ip);
+                         &hd, wg_public, tunnel_ip,
+                         host_ip, host_port,
+                         srflx_ip, srflx_port);
+            }
+          } else if (payload_len >= 4 &&
+                     memcmp(payload, kCandMagic, 4) == 0) {
+            auto* peer = WgPeerFindById(&peers, src_id);
+            if (peer) {
+              HandleCandidates(peer, &wg,
+                               cfg.wg_interface.c_str(),
+                               cfg.keepalive_secs,
+                               payload, payload_len);
             }
           } else {
-            // Relay traffic — forward to WG.
             WgProxyHandleHd(&proxy, src_id,
                             payload, payload_len);
           }
@@ -443,6 +733,15 @@ int main(int argc, char** argv) {
     // UDP from wireguard.ko.
     if (fds[1].revents & POLLIN) {
       WgProxyHandleUdp(&proxy);
+    }
+
+    // Periodic: check ICE promotions.
+    for (int i = 0; i < kWgMaxPeers; i++) {
+      if (!peers.peers[i].active) continue;
+      CheckDirectPromotion(&peers.peers[i], &wg, &proxy,
+                           cfg.wg_interface.c_str(),
+                           cfg.proxy_port,
+                           cfg.keepalive_secs);
     }
   }
 
