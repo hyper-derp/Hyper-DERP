@@ -1043,10 +1043,22 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
   const uint8_t* payload = hdr + kHdFrameHeaderSize;
 
   if (hd_type == HdFrameType::kData) {
-    // Pass the complete frame (header + payload) so
-    // HD→HD forwarding can skip the header rebuild.
-    ForwardHdData(w, peer, hdr,
-                  kHdFrameHeaderSize + payload_len);
+    int frame_len = kHdFrameHeaderSize + payload_len;
+    // Fast path: 1 rule, same-shard destination cached.
+    // No function call, no loop, no branch.
+    if (__builtin_expect(
+            peer->fwd_count == 1 &&
+            peer->fwd_peers[0] != nullptr &&
+            peer->fwd_peers[0]->occupied == 1, 1)) {
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (buf) {
+        memcpy(buf, hdr, frame_len);
+        EnqueueSend(w, peer->fwd_peers[0],
+                    buf, frame_len);
+      }
+      return;
+    }
+    ForwardHdData(w, peer, hdr, frame_len);
   } else if (hd_type == HdFrameType::kPing &&
              payload_len == kHdPingDataSize) {
     uint8_t pong[kHdFrameHeaderSize + kHdPingDataSize];
@@ -1881,30 +1893,23 @@ static void ProcessCommands(Worker* w) {
         // Check if destination is on this worker.
         Peer* dst = HtLookup(w, cmd.dst_key.data());
         if (!dst) {
-          // Destination on another worker. Migrate it
-          // here for same-shard forwarding.
+          // Migrate destination here for same-shard.
           Route* rt = RouteLookup(w->routes,
               cmd.dst_key.data());
           if (rt && rt->worker_id != w->id) {
-            int dst_fd = rt->fd;
             Worker* old_w =
                 w->ctx->workers[rt->worker_id];
-
-            // Release from old worker (async, no fd
-            // close).
             Cmd mv{};
             mv.type = kCmdMovePeerOut;
             mv.key = cmd.dst_key;
             EnqueueCmd(old_w, &mv);
 
-            // Add to this worker inline.
             Cmd add{};
             add.type = kCmdAddPeer;
-            add.fd = dst_fd;
+            add.fd = rt->fd;
             add.key = cmd.dst_key;
             add.protocol = PeerProtocol::kHd;
             ProcessCmdAdd(w, &add);
-
             dst = HtLookup(w, cmd.dst_key.data());
           }
         }
