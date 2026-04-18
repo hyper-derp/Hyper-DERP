@@ -15,6 +15,8 @@ list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_hd_peerinfo\\.cc")
 list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_hd_reconnect\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_hd_sdk\\.cc")
 
 foreach(test_source ${UNIT_TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
@@ -100,4 +102,11 @@ add_executable(test_hd_reconnect test_hd_reconnect.cc harness.cc)
 target_link_libraries(test_hd_reconnect PRIVATE
   libderp GTest::gtest_main)
 gtest_discover_tests(test_hd_reconnect
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 60)
+
+# HD SDK e2e.
+add_executable(test_hd_sdk test_hd_sdk.cc harness.cc)
+target_link_libraries(test_hd_sdk PRIVATE
+  hd_sdk GTest::gtest_main)
+gtest_discover_tests(test_hd_sdk
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 60)

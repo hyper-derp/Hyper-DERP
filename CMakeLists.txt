@@ -136,6 +136,9 @@ if(ENABLE_FUZZING)
   add_subdirectory(tests/fuzz)
 endif()
 
+# SDK library.
+add_subdirectory(sdk)
+
 # Client daemon.
 add_subdirectory(client)
 
