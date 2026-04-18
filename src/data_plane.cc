@@ -1881,24 +1881,23 @@ static void ProcessCommands(Worker* w) {
         // Check if destination is on this worker.
         Peer* dst = HtLookup(w, cmd.dst_key.data());
         if (!dst) {
-          // Destination is on another worker. Migrate
-          // it here for same-shard forwarding.
+          // Destination on another worker. Migrate it
+          // here for same-shard forwarding.
           Route* rt = RouteLookup(w->routes,
               cmd.dst_key.data());
           if (rt && rt->worker_id != w->id) {
-            int old_wid = rt->worker_id;
             int dst_fd = rt->fd;
+            Worker* old_w =
+                w->ctx->workers[rt->worker_id];
 
-            // Tell old worker to release the peer
-            // (don't close fd).
+            // Release from old worker (async, no fd
+            // close).
             Cmd mv{};
             mv.type = kCmdMovePeerOut;
             mv.key = cmd.dst_key;
-            EnqueueCmd(w->ctx->workers[old_wid], &mv);
+            EnqueueCmd(old_w, &mv);
 
-            // Add to this worker directly. We're on
-            // the worker thread so we can call
-            // ProcessCmdAdd inline via a synthetic cmd.
+            // Add to this worker inline.
             Cmd add{};
             add.type = kCmdAddPeer;
             add.fd = dst_fd;
@@ -1909,11 +1908,9 @@ static void ProcessCommands(Worker* w) {
             dst = HtLookup(w, cmd.dst_key.data());
           }
         }
-
         p->fwd_keys[idx] = cmd.dst_key;
         p->fwd_peers[idx] = dst;
         if (!dst) {
-          // Fallback: cache route for cross-shard.
           Route* rt = RouteLookup(w->routes,
               cmd.dst_key.data());
           if (rt) {
