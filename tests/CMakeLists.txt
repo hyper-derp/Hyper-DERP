@@ -19,6 +19,10 @@ list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_hd_sdk\\.cc")
 list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_frame_pool\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_policy\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_ice_agent\\.cc")
 
 foreach(test_source ${UNIT_TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
@@ -118,4 +122,18 @@ add_executable(test_frame_pool test_frame_pool.cc)
 target_link_libraries(test_frame_pool PRIVATE
   hd_sdk GTest::gtest_main)
 gtest_discover_tests(test_frame_pool
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
+
+# Policy unit test (header-only, links sdk for config types).
+add_executable(test_policy test_policy.cc)
+target_link_libraries(test_policy PRIVATE
+  hd_sdk GTest::gtest_main)
+gtest_discover_tests(test_policy
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
+
+# ICE agent test.
+add_executable(test_ice_agent test_ice_agent.cc)
+target_link_libraries(test_ice_agent PRIVATE
+  hd_ice GTest::gtest_main)
+gtest_discover_tests(test_ice_agent
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
