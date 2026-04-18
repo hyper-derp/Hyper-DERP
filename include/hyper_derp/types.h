@@ -178,34 +178,42 @@ enum class PeerProtocol : uint8_t {
 /// rbuf is allocated separately to keep the hot struct
 /// small for hash table probing (~96 bytes vs ~1540).
 struct Peer {
-  // Hot: accessed every packet.
+  // --- Cache line 0: recv + forwarding hot path ---
+  // Recv: touched on every received frame.
   int fd;
   int rbuf_len;
   uint8_t occupied;  // 0=empty, 1=live, 2=tombstone
   PeerProtocol protocol = PeerProtocol::kDerp;
-  uint16_t peer_id = 0;  // HD peer ID for MeshData routing.
+  uint16_t peer_id = 0;
+  // HD 1:1 forwarding: touched on every forwarded HD
+  // Data frame. Same cache line as fd/occupied — zero
+  // additional cache misses for the common case.
+  int fwd_count = 0;
+  int fwd1_dst_fd = -1;
+  int fwd1_dst_worker = -1;
+  Peer* fwd1_peer = nullptr;
+  // Remaining line 0 space: send-path fields that fit.
+  int send_inflight;
+  int send_queued;
+  int send_pending;  // Queued items await first submit.
 
-  // Warm: accessed on send path.
+  // --- Cache line 1: send path ---
   SendItem* send_head;
   SendItem* send_tail;
   SendItem* send_next;
-  int send_inflight;
-  int send_queued;
   int no_zc;
   int zc_draining;
   int poll_write_pending;
-  int send_pending;  // Queued items await first submit.
 
-  // HD forwarding: cached destination pointers.
-  // Set once via kCmdSetFwdRule command. Looked up at
-  // rule-set time (not per-packet). Invalidated on
-  // peer disconnect.
+  // Full rule table for multi-rule/MeshData paths.
   static constexpr int kMaxPeerRules = 16;
-  Key fwd_keys[kMaxPeerRules];
-  Peer* fwd_peers[kMaxPeerRules]{};
-  int fwd_dst_worker[kMaxPeerRules];
-  int fwd_dst_fd[kMaxPeerRules];
-  int fwd_count = 0;
+  struct FwdRule {
+    Peer* peer;
+    Key key;
+    int dst_fd;
+    int dst_worker;
+  };
+  FwdRule fwd[kMaxPeerRules]{};
 
   // Cold: accessed on connect/disconnect.
   Key key;

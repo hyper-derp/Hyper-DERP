@@ -182,10 +182,13 @@ static int HtInsert(Worker* w, int fd,
   p->send_pending = 0;
   p->peer_id = 0;
   p->fwd_count = 0;
+  p->fwd1_dst_fd = -1;
+  p->fwd1_dst_worker = -1;
+  p->fwd1_peer = nullptr;
   for (int i = 0; i < Peer::kMaxPeerRules; i++) {
-    p->fwd_peers[i] = nullptr;
-    p->fwd_dst_worker[i] = -1;
-    p->fwd_dst_fd[i] = -1;
+    p->fwd[i].peer = nullptr;
+    p->fwd[i].dst_worker = -1;
+    p->fwd[i].dst_fd = -1;
   }
   p->recv_bytes_window = 0;
   p->window_start_ns = 0;
@@ -1108,6 +1111,52 @@ static inline void XferPush(Worker* w, int dst_id,
   }
 }
 
+/// Hot path: forward a single HD Data frame (1:1 rule).
+/// Small function — all forwarding state on cache line 0
+/// of the source Peer (no additional cache misses).
+/// noinline: keep instruction footprint separate from the
+/// multi-type DispatchHdFrame to avoid icache pollution.
+__attribute__((noinline))
+static void ForwardHdData1(Worker* w, Peer* peer,
+                           const uint8_t* hdr,
+                           int frame_len) {
+  uint8_t* buf = FrameAlloc(w, frame_len);
+  if (!buf) return;
+  memcpy(buf, hdr, frame_len);
+
+  Peer* dst = peer->fwd1_peer;
+  if (dst && dst->occupied == 1) {
+    EnqueueSend(w, dst, buf, frame_len);
+    return;
+  }
+  if (peer->fwd1_dst_fd >= 0) {
+    XferPush(w, peer->fwd1_dst_worker,
+             peer->fwd1_dst_fd, buf, frame_len);
+    return;
+  }
+  // First frame: lazy resolve via fwd[0].key.
+  dst = HtLookup(w, peer->fwd[0].key.data());
+  if (dst) {
+    peer->fwd1_peer = dst;
+    peer->fwd[0].peer = dst;
+    EnqueueSend(w, dst, buf, frame_len);
+    return;
+  }
+  Route* rt = RouteLookup(w->routes,
+      peer->fwd[0].key.data());
+  if (!rt) {
+    w->stats.hd_fwd_no_route++;
+    FrameFree(w, buf);
+    return;
+  }
+  peer->fwd1_dst_fd = rt->fd;
+  peer->fwd1_dst_worker = rt->worker_id;
+  peer->fwd[0].dst_fd = rt->fd;
+  peer->fwd[0].dst_worker = rt->worker_id;
+  XferPush(w, rt->worker_id, rt->fd,
+           buf, frame_len);
+}
+
 /// Dispatch a complete HD frame.
 static void DispatchHdFrame(Worker* w, Peer* peer,
                             const uint8_t* hdr,
@@ -1117,44 +1166,8 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
 
   if (hd_type == HdFrameType::kData) {
     int frame_len = kHdFrameHeaderSize + payload_len;
-    // Fast path: 1 rule. Same code path as ForwardMsg.
     if (__builtin_expect(peer->fwd_count == 1, 1)) {
-      uint8_t* buf = FrameAlloc(w, frame_len);
-      if (!buf) return;
-      memcpy(buf, hdr, frame_len);
-
-      Peer* dst = peer->fwd_peers[0];
-      if (dst && dst->occupied == 1) {
-        EnqueueSend(w, dst, buf, frame_len);
-      } else {
-        // Resolve destination if not cached.
-        int dst_fd = peer->fwd_dst_fd[0];
-        int dst_id = peer->fwd_dst_worker[0];
-        if (dst_fd < 0) {
-          // First frame: try same-shard, then route.
-          dst = HtLookup(w,
-              peer->fwd_keys[0].data());
-          if (dst) {
-            peer->fwd_peers[0] = dst;
-            EnqueueSend(w, dst, buf, frame_len);
-            return;
-          }
-          Route* rt = RouteLookup(w->routes,
-              peer->fwd_keys[0].data());
-          if (!rt) {
-            w->stats.hd_fwd_no_route++;
-            FrameFree(w, buf);
-            return;
-          }
-          dst_fd = rt->fd;
-          dst_id = rt->worker_id;
-          peer->fwd_dst_fd[0] = dst_fd;
-          peer->fwd_dst_worker[0] = dst_id;
-        }
-        // Cross-shard xfer.
-        XferPush(w, dst_id, dst_fd,
-                 buf, frame_len);
-      }
+      ForwardHdData1(w, peer, hdr, frame_len);
       return;
     }
     ForwardHdData(w, peer, hdr, frame_len);
@@ -1192,7 +1205,7 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
     // that includes this destination.
     bool authorized = false;
     for (int r = 0; r < peer->fwd_count; r++) {
-      if (peer->fwd_peers[r] == dst) {
+      if (peer->fwd[r].peer == dst) {
         authorized = true;
         break;
       }
@@ -1337,25 +1350,25 @@ static void ForwardHdData(Worker* w, Peer* src,
     if (!buf) return;
     memcpy(buf, frame, frame_len);
 
-    Peer* dst = src->fwd_peers[r];
+    Peer* dst = src->fwd[r].peer;
     if (dst && dst->occupied == 1) {
       EnqueueSend(w, dst, buf, frame_len);
       continue;
     }
-    int dst_fd = src->fwd_dst_fd[r];
-    int dst_id = src->fwd_dst_worker[r];
+    int dst_fd = src->fwd[r].dst_fd;
+    int dst_id = src->fwd[r].dst_worker;
     if (dst_fd < 0) {
-      dst = HtLookup(w, src->fwd_keys[r].data());
+      dst = HtLookup(w, src->fwd[r].key.data());
       if (dst) {
-        src->fwd_peers[r] = dst;
+        src->fwd[r].peer = dst;
         EnqueueSend(w, dst, buf, frame_len);
         continue;
       }
       Route* rt = RouteLookup(w->routes,
-          src->fwd_keys[r].data());
+          src->fwd[r].key.data());
       if (rt) {
-        src->fwd_dst_worker[r] = rt->worker_id;
-        src->fwd_dst_fd[r] = rt->fd;
+        src->fwd[r].dst_worker = rt->worker_id;
+        src->fwd[r].dst_fd = rt->fd;
         dst_fd = rt->fd;
         dst_id = rt->worker_id;
       }
@@ -2107,20 +2120,24 @@ static void ProcessCommands(Worker* w) {
           break;
         }
         int idx = p->fwd_count;
-        p->fwd_keys[idx] = cmd.dst_key;
+        p->fwd[idx].key = cmd.dst_key;
 
-        // Check if destination is on this worker.
         Peer* dst = HtLookup(w, cmd.dst_key.data());
-        p->fwd_peers[idx] = dst;
+        p->fwd[idx].peer = dst;
         if (!dst) {
-          // Cross-shard: try to cache route now.
-          // If route isn't broadcast yet, leave fd=-1;
-          // the forwarding path does lazy lookup.
           Route* rt = RouteLookup(w->routes,
               cmd.dst_key.data());
           if (rt) {
-            p->fwd_dst_worker[idx] = rt->worker_id;
-            p->fwd_dst_fd[idx] = rt->fd;
+            p->fwd[idx].dst_worker = rt->worker_id;
+            p->fwd[idx].dst_fd = rt->fd;
+          }
+        }
+        // Populate hot 1:1 fields for the first rule.
+        if (idx == 0) {
+          p->fwd1_peer = dst;
+          if (!dst) {
+            p->fwd1_dst_fd = p->fwd[0].dst_fd;
+            p->fwd1_dst_worker = p->fwd[0].dst_worker;
           }
         }
         p->fwd_count++;
