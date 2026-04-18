@@ -315,6 +315,72 @@ auto HdClientEnroll(HdClient* c)
                    "expected Approved or Denied frame");
 }
 
+auto HdClientEnrollAsRelay(HdClient* c,
+                           uint16_t relay_id)
+    -> std::expected<void, Error<HdClientError>> {
+  // Compute HMAC over client public key using relay key.
+  uint8_t hmac[kHdHmacSize];
+  crypto_auth(hmac, c->public_key.data(), kKeySize,
+              c->relay_key.data());
+
+  // Build and send relay Enroll frame.
+  uint8_t enroll_buf[kHdFrameHeaderSize + kKeySize +
+                     kHdHmacSize + kHdRelayExtSize];
+  int frame_len = HdBuildRelayEnroll(
+      enroll_buf, c->public_key, hmac, kHdHmacSize,
+      relay_id);
+  if (WriteAll(c, enroll_buf, frame_len) < 0) {
+    return MakeError(HdClientError::IoFailed,
+                     "write relay Enroll frame failed");
+  }
+
+  // Read response header.
+  uint8_t hdr[kHdFrameHeaderSize];
+  if (ReadAll(c, hdr, kHdFrameHeaderSize) < 0) {
+    return MakeError(HdClientError::IoFailed,
+                     "read relay enrollment response "
+                     "failed");
+  }
+
+  HdFrameType type = HdReadFrameType(hdr);
+  uint32_t plen = HdReadPayloadLen(hdr);
+
+  if (!HdIsValidPayloadLen(plen)) {
+    return MakeError(HdClientError::BadPayloadLength,
+                     "relay enrollment response payload "
+                     "too large");
+  }
+
+  // Read payload.
+  uint8_t payload[kKeySize + 256];
+  if (plen > sizeof(payload)) {
+    return MakeError(HdClientError::BufferOverflow,
+                     "relay enrollment response exceeds "
+                     "buffer");
+  }
+  if (plen > 0) {
+    if (ReadAll(c, payload,
+                static_cast<int>(plen)) < 0) {
+      return MakeError(HdClientError::IoFailed,
+                       "read relay enrollment payload "
+                       "failed");
+    }
+  }
+
+  if (type == HdFrameType::kApproved) {
+    c->approved = true;
+    return {};
+  }
+
+  if (type == HdFrameType::kDenied) {
+    return MakeError(HdClientError::EnrollmentDenied,
+                     "relay enrollment denied");
+  }
+
+  return MakeError(HdClientError::UnexpectedFrame,
+                   "expected Approved or Denied frame");
+}
+
 auto HdClientSendData(HdClient* c,
                       const uint8_t* data, int len)
     -> std::expected<void, Error<HdClientError>> {

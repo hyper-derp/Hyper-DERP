@@ -160,4 +160,26 @@ int HdParseRouteAnnounce(const uint8_t* payload,
   return entry_count;
 }
 
+int HdBuildRelayEnroll(uint8_t* buf,
+                       const Key& client_key,
+                       const uint8_t* hmac,
+                       int hmac_len,
+                       uint16_t relay_id) {
+  int payload_len =
+      kKeySize + hmac_len + kHdRelayExtSize;
+  HdWriteFrameHeader(buf, HdFrameType::kEnroll,
+                     static_cast<uint32_t>(payload_len));
+  int off = kHdFrameHeaderSize;
+  std::memcpy(buf + off, client_key.data(), kKeySize);
+  off += kKeySize;
+  std::memcpy(buf + off, hmac, hmac_len);
+  off += hmac_len;
+  buf[off] = static_cast<uint8_t>(relay_id >> 8);
+  buf[off + 1] = static_cast<uint8_t>(relay_id);
+  off += 2;
+  std::memcpy(buf + off, kHdRelayMagic, 5);
+  off += 5;
+  return kHdFrameHeaderSize + payload_len;
+}
+
 }  // namespace hyper_derp

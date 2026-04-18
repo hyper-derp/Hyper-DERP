@@ -29,6 +29,13 @@ against Go derper v1.96.4.
 Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark)
 | [hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/)
 
+### HD Protocol (native, zero-copy relay)
+
+| Test | HD | Go derper | Ratio |
+|------|---:|----------:|------:|
+| TCP relay (8w, 25GbE) | 19,880 Mbps | 7,800 Mbps | **2.55x** |
+| AF_XDP relay (25GbE) | 24,600 Mbps | 7,800 Mbps | **3.15x** |
+
 ## Quick Start
 
 ```sh

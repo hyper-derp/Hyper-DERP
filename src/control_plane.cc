@@ -281,11 +281,13 @@ static void HandleClosePeer(ControlPlane* cp, int fd,
 
 /// epoll data tags for non-pipe sources.
 /// Worker pipes use data.u32 = [0, kMaxWorkers).
-/// Level 2 sources use higher values.
+/// Level 2 and fleet routing sources use higher values.
 static constexpr uint32_t kEpollTagIceTimer =
     kMaxWorkers;
 static constexpr uint32_t kEpollTagStunUdp =
     kMaxWorkers + 1;
+static constexpr uint32_t kEpollTagRouteAnnounce =
+    kMaxWorkers + 2;
 
 /// Process STUN responses received on the UDP socket.
 static void HandleStunResponse(ControlPlane* cp) {
@@ -357,6 +359,53 @@ static void HandleIceTimer(ControlPlane* cp) {
   }
 }
 
+// -- Fleet routing helpers --------------------------
+
+/// Build and send route announcements to all direct
+/// neighbor relays (hops == 1).
+static void HandleRouteAnnounce(ControlPlane* cp) {
+  uint64_t expirations = 0;
+  (void)read(cp->route_announce_fd, &expirations,
+             sizeof(expirations));
+
+  if (!cp->relay_table) return;
+
+  // Build announcement from the relay table.
+  uint16_t ids[kMaxRelays];
+  uint8_t hops[kMaxRelays];
+  int count = RelayTableList(cp->relay_table,
+                             ids, hops, kMaxRelays);
+
+  // Always include ourselves at hop 0.
+  bool has_self = false;
+  for (int i = 0; i < count; i++) {
+    if (ids[i] == cp->relay_table->self_id) {
+      has_self = true;
+      break;
+    }
+  }
+  if (!has_self && count < kMaxRelays) {
+    ids[count] = cp->relay_table->self_id;
+    hops[count] = 0;
+    count++;
+  }
+
+  uint8_t buf[kHdFrameHeaderSize +
+              kMaxRelays * kHdRouteEntrySize];
+  int frame_len = HdBuildRouteAnnounce(
+      buf, static_cast<int>(sizeof(buf)),
+      ids, hops, count);
+  if (frame_len <= 0) return;
+
+  // Send to all direct neighbor relays.
+  std::lock_guard lock(cp->relay_table->mutex);
+  for (int i = 0; i < kMaxRelays; i++) {
+    auto& e = cp->relay_table->entries[i];
+    if (e.occupied != 1 || e.hops != 1) continue;
+    CpSendFrame(cp, e.key, buf, frame_len);
+  }
+}
+
 // -- Public API -------------------------------------
 
 void CpInit(ControlPlane* cp, Ctx* dp) {
@@ -367,6 +416,10 @@ void CpInit(ControlPlane* cp, Ctx* dp) {
 }
 
 void CpDestroy(ControlPlane* cp) {
+  if (cp->route_announce_fd >= 0) {
+    close(cp->route_announce_fd);
+    cp->route_announce_fd = -1;
+  }
   if (cp->ice_timer_fd >= 0) {
     close(cp->ice_timer_fd);
     cp->ice_timer_fd = -1;
@@ -400,11 +453,16 @@ void CpProcessFrame(ControlPlane* cp, int fd,
                     int payload_len) {
   std::lock_guard lock(cp->mutex);
 
-  // HD PeerInfo frames arrive with type byte 0x20 from
-  // the data plane pipe (not a FrameType enum member).
+  // HD frames arrive with their type byte from the data
+  // plane pipe (not a FrameType enum member).
   if (static_cast<uint8_t>(type) ==
       static_cast<uint8_t>(HdFrameType::kPeerInfo)) {
     CpHandleHdPeerInfo(cp, fd, payload, payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(HdFrameType::kRouteAnnounce)) {
+    CpHandleRouteAnnounce(cp, fd, payload, payload_len);
     return;
   }
 

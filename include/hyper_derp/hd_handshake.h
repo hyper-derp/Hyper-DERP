@@ -51,6 +51,8 @@ constexpr auto HdHandshakeErrorName(HdHandshakeError e)
 struct HdEnrollResult {
   Key client_key{};
   bool auto_approved = false;
+  bool is_relay = false;
+  uint16_t relay_id = 0;
 };
 
 /// @brief Server-side HD enrollment handshake.

@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <mutex>
 
+#include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/protocol.h"
 #include "hyper_derp/types.h"
@@ -82,6 +83,12 @@ struct ControlPlane {
   int stun_udp_fd = -1;
   // Level 2 enabled flag.
   bool level2_enabled = false;
+
+  // -- Fleet routing --------------------------------
+  // 30-second periodic timerfd for route announcements.
+  int route_announce_fd = -1;
+  // Relay routing table (owned by Server).
+  RelayTable* relay_table = nullptr;
 };
 
 /// @brief Initialize the control plane.
@@ -162,6 +169,28 @@ int CpEnableLevel2(ControlPlane* cp,
 void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
                         const uint8_t* payload,
                         int payload_len);
+
+/// @brief Enable fleet routing in the control plane.
+///
+/// Creates a 30-second periodic timerfd for route
+/// announcements and registers it with epoll. Must be
+/// called before CpRunLoop.
+/// @param cp Control plane.
+/// @param rt Relay routing table (owned by Server).
+void CpEnableFleetRouting(ControlPlane* cp,
+                          RelayTable* rt);
+
+/// @brief Process a RouteAnnounce from a neighbor relay.
+///
+/// Parses the announcement, identifies the source relay,
+/// and updates the routing table with improved routes.
+/// @param cp Control plane.
+/// @param fd Source peer's socket fd.
+/// @param payload RouteAnnounce payload (after HD header).
+/// @param payload_len Payload length.
+void CpHandleRouteAnnounce(ControlPlane* cp, int fd,
+                           const uint8_t* payload,
+                           int payload_len);
 
 }  // namespace hyper_derp
 

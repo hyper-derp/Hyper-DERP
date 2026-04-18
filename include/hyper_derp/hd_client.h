@@ -139,6 +139,17 @@ auto HdClientUpgrade(HdClient* c)
 auto HdClientEnroll(HdClient* c)
     -> std::expected<void, Error<HdClientError>>;
 
+/// @brief Perform HD enrollment as a relay peer.
+///
+/// Sends an extended Enroll frame (client key + HMAC +
+/// relay_id + "RELAY" magic), waits for Approved or Denied.
+/// @param c Upgraded client.
+/// @param relay_id This relay's ID in the fleet.
+/// @returns void on success, or HdClientError.
+auto HdClientEnrollAsRelay(HdClient* c,
+                           uint16_t relay_id)
+    -> std::expected<void, Error<HdClientError>>;
+
 /// @brief Send an HD Data frame.
 /// @param c Enrolled client.
 /// @param data Packet payload.

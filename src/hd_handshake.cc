@@ -110,6 +110,20 @@ auto HdPerformHandshake(int fd,
                      "enrollment HMAC verification failed");
   }
 
+  // Step 6.5: Detect relay enrollment extension.
+  // Relay Enroll: [32B key][32B hmac][2B relay_id]
+  //   ["RELAY"].
+  int ext_offset = kKeySize + kHdHmacSize;
+  if (static_cast<int>(payload_len) >=
+      ext_offset + kHdRelayExtSize &&
+      std::memcmp(payload.get() + ext_offset + 2,
+                  kHdRelayMagic, 5) == 0) {
+    result->is_relay = true;
+    result->relay_id = static_cast<uint16_t>(
+        (payload[ext_offset] << 8) |
+        payload[ext_offset + 1]);
+  }
+
   // Step 7: Insert peer into registry.
   HdPeersInsert(reg, client_key, fd);
 

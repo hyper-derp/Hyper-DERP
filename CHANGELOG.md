@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] -- HD Protocol
+
+### Added
+- HD Protocol: native relay with connection-time auth,
+  zero per-packet header rewrite
+- MeshData: 1:N selective routing with 2-byte peer IDs
+- FleetData: cross-relay routing with 2-byte relay +
+  peer IDs (4.3B addressable endpoints)
+- Relay table with distance-vector route announcements
+- DERP-to-HD bridge for mixed networks
+- HD client SDK with Send, SendTo, SendMeshData
+- REST API: /api/v1/peers, /api/v1/relay
+- STUN/TURN/ICE for Level 2 direct path
+- XDP STUN binding + TURN channel forwarding
+- AF_XDP dual-port relay (24.6 Gbps, 98% line rate)
+- HD scale test tools (pthread + io_uring variants)
+- UDP blaster for AF_XDP benchmarking
+
+### Performance
+- HD Protocol: 19,880 Mbps (2.55x Go derper)
+- AF_XDP relay: 24,600 Mbps (3.15x Go derper, zero loss)
+- HD beats DERP by 6.5% with 37% less loss at saturation
+- Relay at 3% CPU forwarding 6 Gbps (client-bottlenecked)
+
 ## [0.1.5] - 2026-04-13
 
 ### Fixed

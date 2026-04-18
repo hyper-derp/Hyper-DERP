@@ -251,6 +251,28 @@ int HdParseRouteAnnounce(const uint8_t* payload,
                          uint8_t* out_hops,
                          int max_out);
 
+/// Relay enrollment extension magic bytes.
+inline constexpr char kHdRelayMagic[] = "RELAY";
+
+/// Relay enrollment extension size (2B relay_id + 5B magic).
+inline constexpr int kHdRelayExtSize = 7;
+
+/// @brief Builds an Enroll frame with relay extension.
+///
+/// Layout: [4B hdr][32B key][32B hmac][2B relay_id]
+///   ["RELAY"].
+/// @param buf Output buffer.
+/// @param client_key Client's 32-byte public key.
+/// @param hmac HMAC data.
+/// @param hmac_len Length of HMAC data.
+/// @param relay_id This relay's ID.
+/// @returns Total frame size written.
+int HdBuildRelayEnroll(uint8_t* buf,
+                       const Key& client_key,
+                       const uint8_t* hmac,
+                       int hmac_len,
+                       uint16_t relay_id);
+
 }  // namespace hyper_derp
 
 #endif  // INCLUDE_HYPER_DERP_HD_PROTOCOL_H_
