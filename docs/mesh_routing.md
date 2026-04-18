@@ -177,7 +177,7 @@ See `RelayEntry` in `hd_relay_table.h:21`.
 
 Relays exchange reachability information using
 RouteAnnounce frames (`HdFrameType::kRouteAnnounce = 0x30`
-in `hd_protocol.h:49`).
+in `hd_protocol.h:48`).
 
 ### Announcement Format
 

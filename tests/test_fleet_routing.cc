@@ -1,6 +1,7 @@
 /// @file test_fleet_routing.cc
 /// @brief Unit tests for fleet relay-to-relay routing.
 
+#include "hyper_derp/hd_handshake.h"
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/types.h"
@@ -383,6 +384,213 @@ TEST(CtxRelayMapTest, SetAndRead) {
   ctx.relay_peer_map[5] = 42;
   EXPECT_EQ(ctx.relay_peer_map[5], 42);
   EXPECT_EQ(ctx.relay_peer_map[6], 0);
+}
+
+// -- RouteAnnounce send/receive roundtrip ---------------
+
+TEST(RouteAnnounceTest, SendReceiveRoundtrip) {
+  // Simulate a relay with self + 2 neighbors.
+  uint16_t ids[] = {1, 3, 7};
+  uint8_t hops[] = {0, 1, 2};
+  int count = 3;
+
+  // Build the announcement.
+  uint8_t buf[256];
+  int frame_len = HdBuildRouteAnnounce(
+      buf, sizeof(buf), ids, hops, count);
+  ASSERT_GT(frame_len, 0);
+
+  // Parse the payload (simulating receiving it).
+  uint16_t recv_ids[10];
+  uint8_t recv_hops[10];
+  int parsed = HdParseRouteAnnounce(
+      buf + kHdFrameHeaderSize,
+      frame_len - kHdFrameHeaderSize,
+      recv_ids, recv_hops, 10);
+  EXPECT_EQ(parsed, count);
+
+  // Simulate route update: each received hop +1.
+  RelayTable rt;
+  RelayTableInit(&rt, 5);
+
+  for (int i = 0; i < parsed; i++) {
+    if (recv_ids[i] == rt.self_id) continue;
+    uint8_t new_hops =
+        static_cast<uint8_t>(recv_hops[i] + 1);
+    RelayTableUpdateRoute(
+        &rt, recv_ids[i], new_hops, 3, 100);
+  }
+
+  // Relay 1 should be reachable at hop 1.
+  auto* e1 = RelayTableLookup(&rt, 1);
+  ASSERT_NE(e1, nullptr);
+  EXPECT_EQ(e1->hops, 1);
+  EXPECT_EQ(e1->next_hop, 3);
+
+  // Relay 3 should be reachable at hop 2.
+  auto* e3 = RelayTableLookup(&rt, 3);
+  ASSERT_NE(e3, nullptr);
+  EXPECT_EQ(e3->hops, 2);
+
+  // Relay 7 should be reachable at hop 3.
+  auto* e7 = RelayTableLookup(&rt, 7);
+  ASSERT_NE(e7, nullptr);
+  EXPECT_EQ(e7->hops, 3);
+}
+
+// -- Relay enrollment extension tests -------------------
+
+TEST(RelayEnrollTest, BuildRelayEnrollFrame) {
+  Key key{};
+  std::memset(key.data(), 0xAB, kKeySize);
+  uint8_t hmac[kHdHmacSize];
+  std::memset(hmac, 0xCD, kHdHmacSize);
+  uint16_t relay_id = 42;
+
+  uint8_t buf[kHdFrameHeaderSize + kKeySize +
+              kHdHmacSize + kHdRelayExtSize];
+  int n = HdBuildRelayEnroll(
+      buf, key, hmac, kHdHmacSize, relay_id);
+
+  int expected_len = kHdFrameHeaderSize + kKeySize +
+                     kHdHmacSize + kHdRelayExtSize;
+  EXPECT_EQ(n, expected_len);
+
+  // Verify header.
+  EXPECT_EQ(HdReadFrameType(buf), HdFrameType::kEnroll);
+  int payload_len = static_cast<int>(
+      HdReadPayloadLen(buf));
+  EXPECT_EQ(payload_len,
+            kKeySize + kHdHmacSize + kHdRelayExtSize);
+
+  // Verify relay extension fields.
+  const uint8_t* payload = buf + kHdFrameHeaderSize;
+  int ext_offset = kKeySize + kHdHmacSize;
+  uint16_t parsed_id = static_cast<uint16_t>(
+      (payload[ext_offset] << 8) |
+      payload[ext_offset + 1]);
+  EXPECT_EQ(parsed_id, relay_id);
+  EXPECT_EQ(std::memcmp(payload + ext_offset + 2,
+                         kHdRelayMagic, 5),
+            0);
+}
+
+TEST(RelayEnrollTest, DetectRelayExtension) {
+  // Build a relay Enroll payload and verify the
+  // detection logic from hd_handshake.cc.
+  Key key{};
+  std::memset(key.data(), 0x11, kKeySize);
+  uint8_t hmac[kHdHmacSize];
+  std::memset(hmac, 0x22, kHdHmacSize);
+  uint16_t relay_id = 1337;
+
+  uint8_t buf[kHdFrameHeaderSize + kKeySize +
+              kHdHmacSize + kHdRelayExtSize];
+  int n = HdBuildRelayEnroll(
+      buf, key, hmac, kHdHmacSize, relay_id);
+  ASSERT_GT(n, 0);
+
+  // Extract payload (skip header).
+  const uint8_t* payload = buf + kHdFrameHeaderSize;
+  int payload_len = n - kHdFrameHeaderSize;
+
+  // Same detection logic as hd_handshake.cc.
+  int ext_offset = kKeySize + kHdHmacSize;
+  bool is_relay = false;
+  uint16_t detected_id = 0;
+
+  if (payload_len >= ext_offset + kHdRelayExtSize &&
+      std::memcmp(payload + ext_offset + 2,
+                  kHdRelayMagic, 5) == 0) {
+    is_relay = true;
+    detected_id = static_cast<uint16_t>(
+        (payload[ext_offset] << 8) |
+        payload[ext_offset + 1]);
+  }
+
+  EXPECT_TRUE(is_relay);
+  EXPECT_EQ(detected_id, relay_id);
+}
+
+TEST(RelayEnrollTest, StandardEnrollNotRelay) {
+  // A standard Enroll frame should NOT be detected as
+  // relay.
+  Key key{};
+  std::memset(key.data(), 0x33, kKeySize);
+  uint8_t hmac[kHdHmacSize];
+  std::memset(hmac, 0x44, kHdHmacSize);
+
+  uint8_t buf[kHdFrameHeaderSize + kKeySize +
+              kHdHmacSize];
+  int n = HdBuildEnroll(buf, key, hmac, kHdHmacSize);
+  ASSERT_GT(n, 0);
+
+  const uint8_t* payload = buf + kHdFrameHeaderSize;
+  int payload_len = n - kHdFrameHeaderSize;
+
+  int ext_offset = kKeySize + kHdHmacSize;
+  bool is_relay = false;
+
+  if (payload_len >= ext_offset + kHdRelayExtSize &&
+      std::memcmp(payload + ext_offset + 2,
+                  kHdRelayMagic, 5) == 0) {
+    is_relay = true;
+  }
+
+  EXPECT_FALSE(is_relay);
+}
+
+// -- Route update convergence test ----------------------
+
+TEST(RouteUpdateTest, BetterRouteWins) {
+  RelayTable rt;
+  RelayTableInit(&rt, 1);
+
+  // First: relay 10 at 3 hops via relay 5.
+  RelayTableUpdateRoute(&rt, 10, 3, 5, 100);
+  auto* e = RelayTableLookup(&rt, 10);
+  ASSERT_NE(e, nullptr);
+  EXPECT_EQ(e->hops, 3);
+  EXPECT_EQ(e->next_hop, 5);
+
+  // Second: relay 10 at 2 hops via relay 7.
+  RelayTableUpdateRoute(&rt, 10, 2, 7, 200);
+  e = RelayTableLookup(&rt, 10);
+  EXPECT_EQ(e->hops, 2);
+  EXPECT_EQ(e->next_hop, 7);
+  EXPECT_EQ(e->fd, 200);
+
+  // Third: relay 10 at 4 hops via relay 3 (worse).
+  RelayTableUpdateRoute(&rt, 10, 4, 3, 300);
+  e = RelayTableLookup(&rt, 10);
+  // Should not have changed.
+  EXPECT_EQ(e->hops, 2);
+  EXPECT_EQ(e->next_hop, 7);
+  EXPECT_EQ(e->fd, 200);
+}
+
+TEST(RouteUpdateTest, PoisonHopIgnored) {
+  RelayTable rt;
+  RelayTableInit(&rt, 1);
+
+  // Hop count 254 + 1 = 255 should be ignored.
+  // The processing logic skips new_hops >= 255.
+  // Here we test the table directly with 255.
+  RelayTableUpdateRoute(&rt, 10, 255, 5, 100);
+  // Should still create the entry since the table
+  // doesn't enforce the poison limit itself.
+  auto* e = RelayTableLookup(&rt, 10);
+  ASSERT_NE(e, nullptr);
+  EXPECT_EQ(e->hops, 255);
+}
+
+// -- HdEnrollResult fields test -------------------------
+
+TEST(HdEnrollResultTest, DefaultFields) {
+  HdEnrollResult result{};
+  EXPECT_FALSE(result.auto_approved);
+  EXPECT_FALSE(result.is_relay);
+  EXPECT_EQ(result.relay_id, 0);
 }
 
 }  // namespace hyper_derp

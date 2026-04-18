@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
@@ -109,6 +110,8 @@ struct ServerConfig {
   HdEnrollMode hd_enroll_mode = HdEnrollMode::kManual;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
+  /// Seed relays for fleet bootstrapping ("host:port").
+  std::vector<std::string> seed_relays;
   std::array<int, kMaxWorkers> pin_cores{};
 
   /// Level 2 (direct path) configuration.
@@ -140,6 +143,7 @@ struct Server {
   std::atomic<int> running{0};
   std::thread accept_thread;
   std::thread control_thread;
+  std::thread seed_thread;
   MetricsServer* metrics_server = nullptr;
 
   // Level 2 (direct path) subsystems.

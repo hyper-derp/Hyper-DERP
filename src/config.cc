@@ -236,6 +236,18 @@ auto LoadConfig(const char* path, ServerConfig* config)
           return std::unexpected(err);
         config->hd_relay_id = static_cast<uint16_t>(v);
       }
+      if (h.has_child("seed_relays")) {
+        auto sr = h["seed_relays"];
+        if (sr.is_seq()) {
+          for (auto child : sr.children()) {
+            if (child.has_val()) {
+              auto val = child.val();
+              config->seed_relays.emplace_back(
+                  val.data(), val.len);
+            }
+          }
+        }
+      }
       if (h.has_child("enroll_mode")) {
         auto val = h["enroll_mode"].val();
         std::string_view mode(val.data(), val.len);

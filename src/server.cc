@@ -20,9 +20,11 @@
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
+#include "hyper_derp/hd_client.h"
 #include "hyper_derp/hd_handshake.h"
 #include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_protocol.h"
+#include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/http.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/turn.h"
@@ -382,6 +384,21 @@ static void HandleConnection(Server* server, int fd) {
       CpOnPeerConnect(&server->control_plane,
                       result.client_key, fd);
 
+      // Handle relay enrollment.
+      if (result.is_relay && result.relay_id > 0) {
+        RelayTableAdd(&server->relay_table,
+                      result.relay_id, fd,
+                      result.client_key, nullptr);
+        // Map relay_id to peer_id in the data plane.
+        if (hp) {
+          server->data_plane.relay_peer_map[
+              result.relay_id] = hp->peer_id;
+        }
+        spdlog::info("relay {} enrolled (peer_id={})",
+                     result.relay_id,
+                     hp ? hp->peer_id : 0);
+      }
+
       // Attempt Level 2 upgrade if enabled.
       if (server->level2_enabled) {
         TryIceUpgrade(server, result.client_key);
@@ -634,6 +651,9 @@ auto ServerInit(Server* server,
     if (config->hd_relay_id > 0) {
       RelayTableInit(&server->relay_table,
                      config->hd_relay_id);
+      // Enable fleet routing in the control plane.
+      CpEnableFleetRouting(&server->control_plane,
+                           &server->relay_table);
       spdlog::info("relay table initialized (self_id={})",
                    config->hd_relay_id);
     }
@@ -783,6 +803,83 @@ auto ServerRun(Server* server,
       server->config.metrics, &server->data_plane,
       server->hd_enabled ? &server->hd_peers : nullptr);
 
+  // Connect to seed relays in a background thread.
+  if (!server->config.seed_relays.empty() &&
+      server->hd_enabled &&
+      server->config.hd_relay_id > 0) {
+    server->seed_thread = std::thread([server]() {
+      for (const auto& seed : server->config.seed_relays) {
+        // Parse host:port.
+        auto colon = seed.rfind(':');
+        if (colon == std::string::npos) {
+          spdlog::warn("seed relay '{}': missing port",
+                       seed);
+          continue;
+        }
+        std::string host = seed.substr(0, colon);
+        uint16_t port = static_cast<uint16_t>(
+            std::stoi(seed.substr(colon + 1)));
+
+        HdClient client;
+        HdClientInitWithKeys(
+            &client,
+            server->keys.public_key.data(),
+            server->keys.private_key.data(),
+            server->hd_peers.relay_key);
+
+        auto conn = HdClientConnect(
+            &client, host.c_str(), port);
+        if (!conn) {
+          spdlog::warn(
+              "seed relay {}: connect failed: {}",
+              seed, conn.error().message);
+          HdClientClose(&client);
+          continue;
+        }
+
+        auto up = HdClientUpgrade(&client);
+        if (!up) {
+          spdlog::warn(
+              "seed relay {}: upgrade failed: {}",
+              seed, up.error().message);
+          HdClientClose(&client);
+          continue;
+        }
+
+        auto enroll = HdClientEnrollAsRelay(
+            &client, server->config.hd_relay_id);
+        if (!enroll) {
+          spdlog::warn(
+              "seed relay {}: enrollment failed: {}",
+              seed, enroll.error().message);
+          HdClientClose(&client);
+          continue;
+        }
+
+        // Enrolled. Add to relay table and data plane.
+        // We don't know the seed's relay_id yet; it will
+        // arrive in the first RouteAnnounce. For now we
+        // register the fd with a temporary relay_id of 0
+        // and wait for the announce.
+        int fd = client.fd;
+        Key peer_key = client.public_key;
+
+        // Detach the fd from the client (prevent close).
+        client.fd = -1;
+        client.connected = false;
+
+        // Hand the fd to the data plane as an HD peer.
+        DpAddPeer(&server->data_plane, fd,
+                  peer_key, PeerProtocol::kHd, 0);
+        CpOnPeerConnect(&server->control_plane,
+                        peer_key, fd);
+
+        spdlog::info("connected to seed relay {} (fd={})",
+                     seed, fd);
+      }
+    });
+  }
+
   // Poll for external stop signal in a background
   // thread. This bridges the async-signal-safe flag
   // into the normal shutdown path.
@@ -821,6 +918,9 @@ auto ServerRun(Server* server,
   }
   if (server->accept_thread.joinable()) {
     server->accept_thread.join();
+  }
+  if (server->seed_thread.joinable()) {
+    server->seed_thread.join();
   }
 
   // Stop and join the control thread.

@@ -1163,17 +1163,17 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       memcpy(buf, hdr, frame_len);
       EnqueueSend(w, relay_peer, buf, frame_len);
     }
-  } else if (hd_type == HdFrameType::kPeerInfo) {
-    // Forward PeerInfo to control plane for ICE
-    // processing. Pipe format: [4B fd BE][1B type]
-    // [4B len BE][payload].
+  } else if (hd_type == HdFrameType::kPeerInfo ||
+             hd_type == HdFrameType::kRouteAnnounce) {
+    // Forward PeerInfo and RouteAnnounce to control
+    // plane for processing. Pipe format: [4B fd BE]
+    // [1B type][4B len BE][payload].
     uint8_t fd_buf[4];
     fd_buf[0] = static_cast<uint8_t>(peer->fd >> 24);
     fd_buf[1] = static_cast<uint8_t>(peer->fd >> 16);
     fd_buf[2] = static_cast<uint8_t>(peer->fd >> 8);
     fd_buf[3] = static_cast<uint8_t>(peer->fd);
-    uint8_t tag = static_cast<uint8_t>(
-        HdFrameType::kPeerInfo);
+    uint8_t tag = static_cast<uint8_t>(hd_type);
     uint8_t len_buf[4];
     len_buf[0] =
         static_cast<uint8_t>(payload_len >> 24);

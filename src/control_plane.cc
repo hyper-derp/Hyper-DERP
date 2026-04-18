@@ -551,12 +551,24 @@ void CpRunLoop(ControlPlane* cp) {
     }
   }
 
+  // Register fleet routing timer if enabled.
+  if (cp->route_announce_fd >= 0) {
+    epoll_event rav{};
+    rav.events = EPOLLIN;
+    rav.data.u32 = kEpollTagRouteAnnounce;
+    if (epoll_ctl(cp->epoll_fd, EPOLL_CTL_ADD,
+                  cp->route_announce_fd, &rav) < 0) {
+      spdlog::error("epoll_ctl ADD route_announce: {}",
+                    strerror(errno));
+    }
+  }
+
   cp->running.store(1, std::memory_order_release);
   spdlog::info("control plane running ({} pipes)",
                nworkers);
 
-  // Extra slots for ICE timer + STUN UDP.
-  constexpr int kMaxEpollEvents = kMaxWorkers + 2;
+  // Extra slots for ICE timer + STUN UDP + route timer.
+  constexpr int kMaxEpollEvents = kMaxWorkers + 3;
   epoll_event events[kMaxEpollEvents];
 
   while (cp->running.load(std::memory_order_acquire)) {
@@ -580,6 +592,10 @@ void CpRunLoop(ControlPlane* cp) {
       }
       if (tag == kEpollTagStunUdp) {
         HandleStunResponse(cp);
+        continue;
+      }
+      if (tag == kEpollTagRouteAnnounce) {
+        HandleRouteAnnounce(cp);
         continue;
       }
 
@@ -712,6 +728,78 @@ int CpEnableLevel2(ControlPlane* cp,
   spdlog::info("Level 2 control plane enabled "
                "(STUN port {})", stun_port);
   return 0;
+}
+
+void CpEnableFleetRouting(ControlPlane* cp,
+                          RelayTable* rt) {
+  cp->relay_table = rt;
+
+  // Create 30-second periodic timerfd.
+  cp->route_announce_fd = timerfd_create(
+      CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+  if (cp->route_announce_fd < 0) {
+    spdlog::error("route announce timerfd_create: {}",
+                  strerror(errno));
+    return;
+  }
+  itimerspec its{};
+  its.it_interval = {.tv_sec = 30, .tv_nsec = 0};
+  // First announcement after 5 seconds.
+  its.it_value = {.tv_sec = 5, .tv_nsec = 0};
+  if (timerfd_settime(cp->route_announce_fd, 0, &its,
+                      nullptr) < 0) {
+    spdlog::error("route announce timerfd_settime: {}",
+                  strerror(errno));
+    close(cp->route_announce_fd);
+    cp->route_announce_fd = -1;
+    return;
+  }
+
+  spdlog::info("fleet routing enabled (30s announce)");
+}
+
+void CpHandleRouteAnnounce(ControlPlane* cp, int fd,
+                           const uint8_t* payload,
+                           int payload_len) {
+  if (!cp->relay_table) return;
+
+  uint16_t ids[256];
+  uint8_t hops[256];
+  int count = HdParseRouteAnnounce(
+      payload, payload_len, ids, hops, 256);
+
+  // Find which relay sent this announcement by fd.
+  uint16_t src_relay = 0;
+  {
+    std::lock_guard lock(cp->relay_table->mutex);
+    for (int i = 0; i < kMaxRelays; i++) {
+      auto& e = cp->relay_table->entries[i];
+      if (e.occupied == 1 && e.fd == fd) {
+        src_relay = e.relay_id;
+        break;
+      }
+    }
+  }
+  if (src_relay == 0) {
+    spdlog::debug("RouteAnnounce from unknown fd {}",
+                  fd);
+    return;
+  }
+
+  // Update routes: for each announced relay, if
+  // hops+1 is better than our current route, update.
+  for (int i = 0; i < count; i++) {
+    if (ids[i] == cp->relay_table->self_id) continue;
+    uint8_t new_hops =
+        static_cast<uint8_t>(hops[i] + 1);
+    if (new_hops >= 255) continue;  // Poison.
+    RelayTableUpdateRoute(cp->relay_table, ids[i],
+                          new_hops, src_relay, fd);
+  }
+
+  spdlog::debug(
+      "processed RouteAnnounce from relay {} ({} entries)",
+      src_relay, count);
 }
 
 void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
