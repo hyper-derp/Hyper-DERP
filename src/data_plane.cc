@@ -181,6 +181,12 @@ static int HtInsert(Worker* w, int fd,
   p->poll_write_pending = 0;
   p->send_pending = 0;
   p->peer_id = 0;
+  p->fwd_count = 0;
+  for (int i = 0; i < Peer::kMaxPeerRules; i++) {
+    p->fwd_peers[i] = nullptr;
+    p->fwd_dst_worker[i] = -1;
+    p->fwd_dst_fd[i] = -1;
+  }
   p->recv_bytes_window = 0;
   p->window_start_ns = 0;
   return 0;
@@ -1058,17 +1064,50 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
 
   if (hd_type == HdFrameType::kData) {
     int frame_len = kHdFrameHeaderSize + payload_len;
-    // Fast path: 1 rule, same-shard destination cached.
-    // No function call, no loop, no branch.
-    if (__builtin_expect(
-            peer->fwd_count == 1 &&
-            peer->fwd_peers[0] != nullptr &&
-            peer->fwd_peers[0]->occupied == 1, 1)) {
+    // Fast path: 1 rule. Same code path as ForwardMsg.
+    if (__builtin_expect(peer->fwd_count == 1, 1)) {
       uint8_t* buf = FrameAlloc(w, frame_len);
-      if (buf) {
-        memcpy(buf, hdr, frame_len);
-        EnqueueSend(w, peer->fwd_peers[0],
-                    buf, frame_len);
+      if (!buf) return;
+      memcpy(buf, hdr, frame_len);
+
+      Peer* dst = peer->fwd_peers[0];
+      if (dst && dst->occupied == 1) {
+        // Same-shard: direct enqueue.
+        EnqueueSend(w, dst, buf, frame_len);
+      } else {
+        // Cross-shard: xfer to destination worker.
+        // Same pattern as DERP's ForwardMsg.
+        int dst_fd = peer->fwd_dst_fd[0];
+        int dst_id = peer->fwd_dst_worker[0];
+        if (dst_fd < 0 || dst_id < 0 ||
+            dst_id == w->id ||
+            dst_id >= w->ctx->num_workers) {
+          FrameFree(w, buf);
+          return;
+        }
+        Worker* dst_w = w->ctx->workers[dst_id];
+        Xfer x{};
+        x.dst_fd = dst_fd;
+        x.frame = buf;
+        x.frame_len = frame_len;
+        x.dst_gen = __atomic_load_n(
+            &dst_w->fd_gen[dst_fd],
+            __ATOMIC_ACQUIRE);
+        int rc = XferSpscPush(
+            dst_w->xfer_inbox[w->id], &x);
+        if (rc >= 0) {
+          __atomic_fetch_or(
+              &dst_w->pending_sources,
+              1u << static_cast<unsigned>(w->id),
+              __ATOMIC_RELEASE);
+          if (rc == 1) {
+            w->xfer_signal_pending |=
+                (1u << static_cast<unsigned>(dst_id));
+          }
+        } else {
+          FrameFree(w, buf);
+          w->stats.xfer_drops++;
+        }
       }
       return;
     }
