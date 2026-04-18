@@ -41,6 +41,9 @@
 #include <string_view>
 #include <thread>
 
+#include <ryml.hpp>
+#include <ryml_std.hpp>
+
 #include <hd/sdk.hpp>
 
 using namespace std::string_view_literals;
@@ -210,11 +213,75 @@ static void StdioPump(hd::sdk::Tunnel& tunnel) {
   tunnel.Close();
 }
 
+// -- YAML config loader ------------------------------------------------------
+
+struct HdcatConfig {
+  std::string relay_url;
+  std::string relay_key;
+  std::string peer;
+  std::string listen;
+  std::string connect;
+  std::string key_path;
+  bool tls = true;
+};
+
+static std::string YamlStr(ryml::ConstNodeRef node,
+                           const char* key,
+                           const char* def = "") {
+  if (!node.has_child(ryml::to_csubstr(key))) return def;
+  auto child = node[ryml::to_csubstr(key)];
+  if (!child.has_val()) return def;
+  std::string val;
+  child >> val;
+  return val;
+}
+
+static bool LoadConfig(const char* path,
+                       HdcatConfig* out) {
+  FILE* f = fopen(path, "r");
+  if (!f) {
+    fprintf(stderr, "error: cannot open %s\n", path);
+    return false;
+  }
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (size <= 0 || size > 65536) { fclose(f); return false; }
+  std::string buf(size, '\0');
+  if (fread(buf.data(), 1, size, f) !=
+      static_cast<size_t>(size)) {
+    fclose(f);
+    return false;
+  }
+  fclose(f);
+
+  ryml::Tree tree = ryml::parse_in_arena(
+      ryml::to_csubstr(buf));
+  auto root = tree.rootref();
+
+  if (root.has_child("relay")) {
+    auto r = root["relay"];
+    out->relay_url = YamlStr(r, "url");
+    if (out->relay_url.empty())
+      out->relay_url = YamlStr(r, "host");
+    out->relay_key = YamlStr(r, "key");
+    out->key_path = YamlStr(r, "key_path");
+    std::string tls_str = YamlStr(r, "tls", "true");
+    out->tls = (tls_str != "false" && tls_str != "0");
+  }
+
+  out->peer = YamlStr(root, "peer");
+  out->listen = YamlStr(root, "listen");
+  out->connect = YamlStr(root, "connect");
+  return true;
+}
+
 // -- Main --------------------------------------------------------------------
 
 static void PrintUsage() {
   fprintf(stderr,
       "Usage: hdcat [options]\n"
+      "  --config FILE   YAML config file\n"
       "  -r HOST:PORT    Relay address\n"
       "  -k KEY          Relay key (hex)\n"
       "  -p PEER         Peer name or ID\n"
@@ -223,6 +290,13 @@ static void PrintUsage() {
       "  -c SPEC         Connect: tcp:HOST:PORT\n"
       "  --no-tls        Disable TLS\n"
       "  -h              Help\n"
+      "\n"
+      "Config YAML:\n"
+      "  relay:\n"
+      "    url: \"hd://relay:3341\"\n"
+      "    key: \"aabbcc...\"\n"
+      "  peer: \"camera-01\"\n"
+      "  listen: \"tcp:8080\"\n"
       "\n"
       "Modes:\n"
       "  (no -l/-c)      Pipe stdin/stdout to peer\n"
@@ -233,38 +307,52 @@ static void PrintUsage() {
 }
 
 int main(int argc, char** argv) {
-  const char* relay = nullptr;
-  const char* key = nullptr;
-  const char* peer = nullptr;
-  const char* listen_spec = nullptr;
-  const char* connect_spec = nullptr;
-  bool tls = true;
+  HdcatConfig hc;
 
+  // Load config file first if specified.
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+      if (!LoadConfig(argv[i + 1], &hc)) return 1;
+      break;
+    }
+  }
+
+  // CLI flags override config.
   for (int i = 1; i < argc; i++) {
     auto a = std::string_view(argv[i]);
-    if (a == "-r"sv && i + 1 < argc)
-      relay = argv[++i];
-    else if (a == "-k"sv && i + 1 < argc)
-      key = argv[++i];
-    else if (a == "-p"sv && i + 1 < argc)
-      peer = argv[++i];
-    else if (a == "-l"sv && i + 1 < argc)
-      listen_spec = argv[++i];
-    else if (a == "-c"sv && i + 1 < argc)
-      connect_spec = argv[++i];
-    else if (a == "--no-tls"sv)
-      tls = false;
-    else if (a == "-h"sv || a == "--help"sv) {
+    if (a == "--config"sv && i + 1 < argc) {
+      i++;
+    } else if (a == "-r"sv && i + 1 < argc) {
+      hc.relay_url = argv[++i];
+    } else if (a == "-k"sv && i + 1 < argc) {
+      hc.relay_key = argv[++i];
+    } else if (a == "-p"sv && i + 1 < argc) {
+      hc.peer = argv[++i];
+    } else if (a == "-l"sv && i + 1 < argc) {
+      hc.listen = argv[++i];
+    } else if (a == "-c"sv && i + 1 < argc) {
+      hc.connect = argv[++i];
+    } else if (a == "--no-tls"sv) {
+      hc.tls = false;
+    } else if (a == "-h"sv || a == "--help"sv) {
       PrintUsage();
       return 0;
     }
   }
 
-  if (!relay || !key || !peer) {
-    fprintf(stderr, "error: -r, -k, -p required\n");
+  if (hc.relay_url.empty() || hc.relay_key.empty() ||
+      hc.peer.empty()) {
+    fprintf(stderr, "error: relay url, key, and peer "
+            "required (via --config or -r/-k/-p)\n");
     PrintUsage();
     return 1;
   }
+
+  const char* peer = hc.peer.c_str();
+  const char* listen_spec =
+      hc.listen.empty() ? nullptr : hc.listen.c_str();
+  const char* connect_spec =
+      hc.connect.empty() ? nullptr : hc.connect.c_str();
 
   signal(SIGINT, SigHandler);
   signal(SIGTERM, SigHandler);
@@ -272,9 +360,10 @@ int main(int argc, char** argv) {
 
   // Connect to relay.
   hd::sdk::ClientConfig cfg;
-  cfg.relay_url = relay;
-  cfg.relay_key = key;
-  cfg.tls = tls;
+  cfg.relay_url = hc.relay_url;
+  cfg.relay_key = hc.relay_key;
+  cfg.key_path = hc.key_path;
+  cfg.tls = hc.tls;
 
   auto result = hd::sdk::Client::Create(cfg);
   if (!result) {
@@ -286,14 +375,23 @@ int main(int argc, char** argv) {
   client.Start();
 
   // Wait for peer discovery.
+  // peer can be: "*" (first peer), numeric ID, name, or
+  // hex key prefix.
+  bool wildcard = (strcmp(peer, "*") == 0);
   fprintf(stderr, "hdcat: waiting for peer '%s'...\n",
           peer);
+  std::string matched_name;
   for (int i = 0; i < 100 && !g_stop.load(); i++) {
     usleep(100000);
     auto peers = client.ListPeers();
     for (auto& p : peers) {
-      if (p.name == peer ||
-          std::to_string(p.peer_id) == peer) {
+      if (wildcard ||
+          p.name == peer ||
+          std::to_string(p.peer_id) == peer ||
+          p.name.starts_with(peer)) {
+        matched_name = p.name.empty()
+            ? std::to_string(p.peer_id) : p.name;
+        peer = matched_name.c_str();
         goto found;
       }
     }
