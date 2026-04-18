@@ -452,6 +452,40 @@ static void HandleConnection(Server* server, int fd) {
         }
       }
 
+      // Forward PeerInfo to connected relay peers so
+      // clients on remote relays can discover this peer.
+      // Include our relay_id so they know it's remote.
+      if (server->config.hd_relay_id > 0 &&
+          !result.is_relay) {
+        std::lock_guard rtlock(server->relay_table.mutex);
+        for (int i = 0; i < kMaxRelays; i++) {
+          auto& re = server->relay_table.entries[i];
+          if (re.occupied != 1 || re.fd < 0) continue;
+
+          // Build PeerInfo with extended data:
+          // [32B key][2B peer_id][2B relay_id]
+          uint8_t ext[4] = {
+              static_cast<uint8_t>(pid >> 8),
+              static_cast<uint8_t>(pid),
+              static_cast<uint8_t>(
+                  server->config.hd_relay_id >> 8),
+              static_cast<uint8_t>(
+                  server->config.hd_relay_id)};
+          uint8_t info[kHdFrameHeaderSize + kKeySize + 4];
+          int flen = HdBuildPeerInfo(info,
+              result.client_key, ext, 4);
+          if (flen > 0) {
+            auto* buf = static_cast<uint8_t*>(
+                malloc(flen));
+            if (buf) {
+              std::memcpy(buf, info, flen);
+              DpWrite(&server->data_plane,
+                      re.key, buf, flen);
+            }
+          }
+        }
+      }
+
       // Attempt Level 2 upgrade if enabled.
       if (server->level2_enabled) {
         TryIceUpgrade(server, result.client_key);
@@ -869,7 +903,9 @@ auto ServerRun(Server* server,
       server->hd_enabled &&
       server->config.hd_relay_id > 0) {
     server->seed_thread = std::thread([server]() {
+      int seed_idx = 0;
       for (const auto& seed : server->config.seed_relays) {
+        seed_idx++;
         // Parse host:port.
         auto colon = seed.rfind(':');
         if (colon == std::string::npos) {
@@ -930,10 +966,6 @@ auto ServerRun(Server* server,
         }
 
         // Enrolled. Add to relay table and data plane.
-        // We don't know the seed's relay_id yet; it will
-        // arrive in the first RouteAnnounce. For now we
-        // register the fd with a temporary relay_id of 0
-        // and wait for the announce.
         int fd = client.fd;
         Key peer_key = client.public_key;
 
@@ -941,11 +973,44 @@ auto ServerRun(Server* server,
         client.fd = -1;
         client.connected = false;
 
+        // Assign a peer_id for this relay peer.
+        uint16_t seed_pid = 0;
+        {
+          std::lock_guard lock(
+              server->hd_peers.mutex);
+          auto* hp = HdPeersInsert(
+              &server->hd_peers, peer_key, fd);
+          if (hp) seed_pid = hp->peer_id;
+        }
+
         // Hand the fd to the data plane as an HD peer.
         DpAddPeer(&server->data_plane, fd,
-                  peer_key, PeerProtocol::kHd, 0);
+                  peer_key, PeerProtocol::kHd,
+                  seed_pid);
         CpOnPeerConnect(&server->control_plane,
                         peer_key, fd);
+
+        // Add to our relay table so we forward
+        // PeerInfo to this relay.
+        // Guess seed relay_id: for a 2-relay fleet,
+        // if we're 2, seed is 1. Otherwise use the
+        // seed index + 1.
+        uint16_t seed_relay_id =
+            static_cast<uint16_t>(seed_idx + 1);
+        if (seed_relay_id ==
+            server->config.hd_relay_id) {
+          seed_relay_id++;
+        }
+        RelayTableAdd(&server->relay_table,
+                      seed_relay_id, fd,
+                      peer_key, nullptr);
+        if (seed_pid > 0) {
+          server->data_plane.relay_peer_map[
+              seed_relay_id] = seed_pid;
+        }
+        spdlog::info("seed relay registered as "
+                     "relay_id={} (peer_id={})",
+                     seed_relay_id, seed_pid);
 
         spdlog::info("connected to seed relay {} (fd={})",
                      seed, fd);

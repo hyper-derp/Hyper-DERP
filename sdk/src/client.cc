@@ -348,6 +348,11 @@ void Client::DispatchFrame(Impl* impl,
     std::memcpy(pi.public_key.data(), buf, 32);
     pi.peer_id = static_cast<uint16_t>(buf[32]) << 8 |
                  buf[33];
+    // Extended format: [2B peer_id][2B relay_id]
+    if (buf_len >= 36) {
+      pi.relay_id = static_cast<uint16_t>(buf[34]) << 8 |
+                    buf[35];
+    }
     pi.connected = true;
     char hex[17];
     sodium_bin2hex(hex, sizeof(hex), buf, 8);
@@ -475,9 +480,20 @@ Result<Tunnel> Client::Open(const std::string& peer_name,
                   "peer not found: " + peer_name));
   }
 
+  // Look up relay_id for cross-relay routing.
+  uint16_t relay_id = 0;
+  {
+    std::lock_guard lock(impl_->peers_mutex);
+    auto it = impl_->peers.find(peer_id);
+    if (it != impl_->peers.end()) {
+      relay_id = it->second.relay_id;
+    }
+  }
+
   Tunnel t;
   t.impl_->peer_name = peer_name;
   t.impl_->peer_id = peer_id;
+  t.impl_->relay_id = relay_id;
   t.impl_->hd = &impl_->hd;
   t.impl_->send_mutex = &impl_->send_mutex;
   t.impl_->mode.store(Mode::Relayed);

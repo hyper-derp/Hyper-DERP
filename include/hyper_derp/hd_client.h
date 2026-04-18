@@ -193,6 +193,20 @@ auto HdClientSendMeshData(HdClient* c,
                           const uint8_t* data, int len)
     -> std::expected<void, Error<HdClientError>>;
 
+/// @brief Send an HD FleetData frame to a peer on a
+///   remote relay.
+/// @param c Enrolled client.
+/// @param dst_relay_id Target relay ID.
+/// @param dst_peer_id Target peer ID on that relay.
+/// @param data Packet payload.
+/// @param len Payload length.
+/// @returns void on success, or HdClientError.
+auto HdClientSendFleetData(HdClient* c,
+                           uint16_t dst_relay_id,
+                           uint16_t dst_peer_id,
+                           const uint8_t* data, int len)
+    -> std::expected<void, Error<HdClientError>>;
+
 /// @brief Reconnect to the relay after a connection drop.
 ///
 /// Closes the old connection, reconnects via TCP, performs

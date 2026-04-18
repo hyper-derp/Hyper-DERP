@@ -1254,16 +1254,24 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       }
       if (!dst || dst->occupied != 1) return;
 
-      // Strip fleet header, deliver as Data.
-      int fwd_len = payload_len - kHdFleetDstSize;
+      // Convert to MeshData with source peer_id so the
+      // receiving client can dispatch to the right tunnel.
+      int fwd_payload = payload_len - kHdFleetDstSize;
+      int mesh_payload = kHdMeshDstSize + fwd_payload;
       int frame_len =
-          kHdFrameHeaderSize + fwd_len;
+          kHdFrameHeaderSize + mesh_payload;
       uint8_t* buf = FrameAlloc(w, frame_len);
       if (!buf) return;
-      HdWriteFrameHeader(buf, HdFrameType::kData,
-          static_cast<uint32_t>(fwd_len));
-      memcpy(buf + kHdFrameHeaderSize,
-             payload + kHdFleetDstSize, fwd_len);
+      HdWriteFrameHeader(buf, HdFrameType::kMeshData,
+          static_cast<uint32_t>(mesh_payload));
+      // Set src_peer_id from the sending peer.
+      uint16_t src_id = peer->peer_id;
+      buf[kHdFrameHeaderSize] =
+          static_cast<uint8_t>(src_id >> 8);
+      buf[kHdFrameHeaderSize + 1] =
+          static_cast<uint8_t>(src_id);
+      memcpy(buf + kHdFrameHeaderSize + kHdMeshDstSize,
+             payload + kHdFleetDstSize, fwd_payload);
       EnqueueSend(w, dst, buf, frame_len);
       w->stats.hd_fleet_forwards++;
     } else {
@@ -1286,11 +1294,24 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       EnqueueSend(w, relay_peer, buf, frame_len);
       w->stats.hd_fleet_forwards++;
     }
-  } else if (hd_type == HdFrameType::kPeerInfo ||
-             hd_type == HdFrameType::kRouteAnnounce) {
-    // Forward PeerInfo and RouteAnnounce to control
-    // plane for processing. Pipe format: [4B fd BE]
-    // [1B type][4B len BE][payload].
+  } else if (hd_type == HdFrameType::kPeerInfo) {
+    // If from a relay peer, broadcast to all local HD
+    // peers (cross-relay peer discovery).
+    if (peer->peer_id > 0 && w->ctx->relay_id > 0) {
+      int frame_len = kHdFrameHeaderSize + payload_len;
+      for (int i = 0; i < kHtCapacity; i++) {
+        Peer* dst = &w->ht[i];
+        if (dst->occupied != 1 || dst == peer) continue;
+        if (dst->protocol != PeerProtocol::kHd) continue;
+        uint8_t* buf = FrameAlloc(w, frame_len);
+        if (!buf) continue;
+        memcpy(buf, hdr, frame_len);
+        EnqueueSend(w, dst, buf, frame_len);
+      }
+    }
+  } else if (hd_type == HdFrameType::kRouteAnnounce) {
+    // Forward RouteAnnounce to control plane.
+    // Pipe format: [4B fd BE][1B type][4B len BE][payload].
     uint8_t fd_buf[4];
     fd_buf[0] = static_cast<uint8_t>(peer->fd >> 24);
     fd_buf[1] = static_cast<uint8_t>(peer->fd >> 16);

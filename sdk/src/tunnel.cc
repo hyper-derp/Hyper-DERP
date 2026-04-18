@@ -39,9 +39,17 @@ Result<> Tunnel::Send(std::span<const uint8_t> data) {
         MakeError(ErrorCode::kNotConnected, "no client"));
   }
   std::lock_guard lock(*impl_->send_mutex);
-  auto r = hyper_derp::HdClientSendMeshData(
-      impl_->hd, impl_->peer_id,
-      data.data(), static_cast<int>(data.size()));
+  std::expected<void, hyper_derp::Error<
+      hyper_derp::HdClientError>> r;
+  if (impl_->relay_id > 0) {
+    r = hyper_derp::HdClientSendFleetData(
+        impl_->hd, impl_->relay_id, impl_->peer_id,
+        data.data(), static_cast<int>(data.size()));
+  } else {
+    r = hyper_derp::HdClientSendMeshData(
+        impl_->hd, impl_->peer_id,
+        data.data(), static_cast<int>(data.size()));
+  }
   if (!r) {
     return std::unexpected(
         MakeError(ErrorCode::kSendFailed,
