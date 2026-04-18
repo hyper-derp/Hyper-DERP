@@ -481,6 +481,10 @@ int main(int argc, char** argv) {
   fprintf(stderr, "Connected %d/%d in %.0f ms\n\n",
           connected, g_num_peers, connect_ms);
 
+  // Let workers process peer add commands and broadcast
+  // routes before setting forwarding rules.
+  usleep(100000);
+
   // Phase 2: Set forwarding rules via REST API.
   fprintf(stderr,
           "=== Phase 2: Setting forwarding rules ===\n");
@@ -515,6 +519,9 @@ int main(int argc, char** argv) {
 
   fprintf(stderr, "Rules set: %d, failed: %d\n\n",
           rules_set, rules_failed);
+
+  // Give workers time to process rule commands.
+  usleep(100000);
 
   // Phase 3: Traffic.
   uint64_t total_sent = 0, total_recv = 0;

@@ -725,6 +725,8 @@ static int WriteAllBlocking(int fd, const uint8_t* buf,
   return 0;
 }
 
+// -- Direct cross-shard send --------------------------------------------------
+
 // -- io_uring SQE helpers ----------------------------------------------------
 
 /// Get an SQE, flushing the submission queue if full.
@@ -742,6 +744,24 @@ static inline struct io_uring_sqe* GetSqe(Worker* w) {
     w->stats.sq_overflow++;
   }
   return sqe;
+}
+
+/// Submit a send SQE for a fd not owned by this worker.
+/// Used for HD cross-shard forwarding. The buffer is
+/// freed on completion via the bit-63 check in the CQE
+/// loop (no Peer needed).
+static void EnqueueSendDirect(Worker* w, int fd,
+                              uint8_t* buf, int len) {
+  struct io_uring_sqe* sqe = GetSqe(w);
+  if (!sqe) {
+    FrameFree(w, buf);
+    return;
+  }
+  io_uring_prep_send(sqe, fd, buf, len,
+                     MSG_DONTWAIT | MSG_NOSIGNAL);
+  sqe->user_data = reinterpret_cast<uint64_t>(buf) |
+                   (1ULL << 63);
+  w->stats.send_bytes += len;
 }
 
 static void DeferRecv(Worker* w, int fd) {
@@ -1075,12 +1095,12 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
         // Same-shard: direct enqueue.
         EnqueueSend(w, dst, buf, frame_len);
       } else {
-        // Cross-shard: xfer to destination worker.
-        // Same pattern as DERP's ForwardMsg.
+        // Cross-shard: xfer ring to destination worker
+        // (same path as DERP ForwardMsg — distributes
+        // send load to the owning worker).
         int dst_fd = peer->fwd_dst_fd[0];
         int dst_id = peer->fwd_dst_worker[0];
-        if (dst_fd < 0 || dst_id < 0 ||
-            dst_id == w->id ||
+        if (dst_fd < 0 || dst_id == w->id ||
             dst_id >= w->ctx->num_workers) {
           FrameFree(w, buf);
           return;
@@ -2243,6 +2263,15 @@ static void* WorkerRun(void* arg) {
       int nr = 0;
       io_uring_for_each_cqe(&w->ring, head, c) {
         if (nr >= kMaxCqeBatch) break;
+        // Direct send completion: bit 63 marks a
+        // cross-shard send with an embedded buffer ptr.
+        if (c->user_data & (1ULL << 63)) {
+          auto* buf = reinterpret_cast<uint8_t*>(
+              c->user_data & ~(1ULL << 63));
+          FrameFree(w, buf);
+          nr++;
+          continue;
+        }
         uint8_t op = UdOp(c->user_data);
         switch (op) {
           case kOpRecv:
@@ -2320,6 +2349,12 @@ static void* WorkerRun(void* arg) {
       int dnr = 0;
       io_uring_for_each_cqe(&w->ring, dhead, dcqe) {
         dnr++;
+        if (dcqe->user_data & (1ULL << 63)) {
+          auto* buf = reinterpret_cast<uint8_t*>(
+              dcqe->user_data & ~(1ULL << 63));
+          FrameFree(w, buf);
+          continue;
+        }
         uint8_t dop = UdOp(dcqe->user_data);
         if (dop == kOpSend) {
           HandleSendCqe(w, dcqe);
