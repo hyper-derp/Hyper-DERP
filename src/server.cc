@@ -898,6 +898,18 @@ auto ServerRun(Server* server,
           continue;
         }
 
+        // TLS if the server has it enabled.
+        if (!server->config.tls_cert.empty()) {
+          auto tls = HdClientTlsConnect(&client);
+          if (!tls) {
+            spdlog::warn(
+                "seed relay {}: tls failed: {}",
+                seed, tls.error().message);
+            HdClientClose(&client);
+            continue;
+          }
+        }
+
         auto up = HdClientUpgrade(&client);
         if (!up) {
           spdlog::warn(

@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <print>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "hyper_derp/config.h"
 #include "hyper_derp/ctl_channel.h"
@@ -49,6 +51,9 @@ static void PrintUsage(const char* prog) {
       "(enables HD)\n"
       "  --hd-enroll-mode <m>  HD enrollment mode "
       "(manual|auto)\n"
+      "  --hd-relay-id <id>    This relay's fleet ID "
+      "(enables fleet)\n"
+      "  --hd-seed-relay <h:p> Seed relay to connect to\n"
       "  --level2              Enable Level 2 direct "
       "path (ICE/TURN/XDP)\n"
       "  --stun-port <port>    STUN listen port "
@@ -116,6 +121,8 @@ int main(int argc, char* argv[]) {
   const char* hd_enroll_mode = nullptr;
   const char* xdp_interface = nullptr;
   int stun_port = -1;
+  int hd_relay_id = -1;
+  std::vector<std::string> seed_relays;
   bool debug_endpoints = false;
   bool sqpoll = false;
   bool level2 = false;
@@ -192,6 +199,12 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--hd-enroll-mode"sv &&
                i + 1 < argc) {
       hd_enroll_mode = argv[++i];
+    } else if (arg == "--hd-relay-id"sv &&
+               i + 1 < argc) {
+      hd_relay_id = atoi(argv[++i]);
+    } else if (arg == "--hd-seed-relay"sv &&
+               i + 1 < argc) {
+      seed_relays.emplace_back(argv[++i]);
     } else if (arg == "--level2"sv) {
       level2 = true;
       level2_set = true;
@@ -294,6 +307,12 @@ int main(int argc, char* argv[]) {
       return EXIT_FAILURE;
     }
   }
+
+  if (hd_relay_id >= 0)
+    config.hd_relay_id =
+        static_cast<uint16_t>(hd_relay_id);
+  if (!seed_relays.empty())
+    config.seed_relays = std::move(seed_relays);
 
   if (level2_set)
     config.level2.enabled = level2;
