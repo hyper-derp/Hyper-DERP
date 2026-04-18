@@ -482,6 +482,62 @@ auto HdClientRecvFrame(HdClient* c,
   return {};
 }
 
+auto HdClientReconnect(HdClient* c)
+    -> std::expected<void, Error<HdClientError>> {
+  // Close old connection.
+  if (c->ssl) {
+    SSL_set_quiet_shutdown(c->ssl, 1);
+    SSL_shutdown(c->ssl);
+    SSL_free(c->ssl);
+    c->ssl = nullptr;
+  }
+  if (c->ssl_ctx) {
+    SSL_CTX_free(c->ssl_ctx);
+    c->ssl_ctx = nullptr;
+  }
+  if (c->fd >= 0) {
+    close(c->fd);
+    c->fd = -1;
+  }
+  c->connected = false;
+  c->approved = false;
+
+  // Reconnect.
+  auto conn = HdClientConnect(c, c->host.c_str(),
+                               c->port);
+  if (!conn) return conn;
+
+  // Re-upgrade.
+  auto up = HdClientUpgrade(c);
+  if (!up) return std::unexpected(
+      Error<HdClientError>{
+          HdClientError::UpgradeFailed,
+          up.error().message});
+
+  // Re-enroll with same keys.
+  auto enroll = HdClientEnroll(c);
+  if (!enroll) return std::unexpected(
+      Error<HdClientError>{
+          HdClientError::EnrollmentDenied,
+          enroll.error().message});
+
+  return {};
+}
+
+auto HdClientSendPing(HdClient* c)
+    -> std::expected<void, Error<HdClientError>> {
+  uint8_t frame[kHdFrameHeaderSize + kHdPingDataSize];
+  // Generate 8 bytes of random ping data.
+  randombytes_buf(frame + kHdFrameHeaderSize,
+                  kHdPingDataSize);
+  HdBuildPing(frame, frame + kHdFrameHeaderSize);
+  if (WriteAll(c, frame, sizeof(frame)) < 0) {
+    return MakeError(HdClientError::IoFailed,
+                     "write Ping frame failed");
+  }
+  return {};
+}
+
 void HdClientClose(HdClient* c) {
   if (c->ssl) {
     SSL_set_quiet_shutdown(c->ssl, 1);

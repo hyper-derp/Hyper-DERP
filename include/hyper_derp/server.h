@@ -113,6 +113,8 @@ struct ServerConfig {
   /// Seed relays for fleet bootstrapping ("host:port").
   std::vector<std::string> seed_relays;
   std::array<int, kMaxWorkers> pin_cores{};
+  /// Per-peer receive rate limit in bytes/sec. 0 = unlimited.
+  uint64_t peer_rate_limit = 0;
 
   /// Level 2 (direct path) configuration.
   struct Level2Config {
@@ -151,6 +153,11 @@ struct Server {
   TurnManager* turn_manager = nullptr;
   XdpContext xdp_ctx{};
   bool level2_enabled = false;
+
+  // Server-level HD counters (incremented from accept
+  // thread, read with relaxed atomics).
+  std::atomic<uint64_t> hd_enrollments{0};
+  std::atomic<uint64_t> hd_auth_failures{0};
 };
 
 /// @brief Initializes the server.
@@ -174,6 +181,13 @@ auto ServerRun(Server* server,
 /// @brief Signals the server to stop.
 /// @param server Running server.
 void ServerStop(Server* server);
+
+/// @brief Drains in-flight connections before shutdown.
+///
+/// Closes the listen socket to stop new connections, then
+/// waits up to 5 seconds for in-flight sends to complete.
+/// @param server Running server.
+void ServerDrain(Server* server);
 
 /// @brief Tears down the server, freeing all resources.
 /// @param server Server to destroy.

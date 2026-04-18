@@ -210,6 +210,10 @@ struct Peer {
   // Cold: accessed on connect/disconnect.
   Key key;
 
+  // Per-peer rate limiting.
+  uint64_t recv_bytes_window = 0;  // Bytes in current window.
+  uint64_t window_start_ns = 0;   // Window start time.
+
   // Per-peer read buffer for frame reassembly (heap).
   uint8_t* rbuf;
 };
@@ -261,6 +265,9 @@ struct WorkerStats {
   uint64_t recv_pauses;
   uint64_t frame_pool_hits;
   uint64_t frame_pool_misses;
+  uint64_t hd_mesh_forwards;
+  uint64_t hd_fleet_forwards;
+  uint64_t rate_limit_drops;
 };
 
 /// SPSC ring buffer for commands to a worker.
@@ -391,6 +398,10 @@ struct Worker {
   pthread_t thread;
 };
 
+/// Per-peer receive rate limit (bytes/sec). 0 = unlimited.
+/// Configurable via ServerConfig.
+inline constexpr uint64_t kDefaultPeerRateLimit = 0;
+
 /// Top-level data plane context.
 struct Ctx {
   Worker* workers[kMaxWorkers];
@@ -401,6 +412,8 @@ struct Ctx {
   int sockbuf_size;
   /// SQPOLL mode: kernel thread polls SQ on our behalf.
   int sqpoll;
+  /// Per-peer receive rate limit (bytes/sec, 0 = unlimited).
+  uint64_t peer_rate_limit = kDefaultPeerRateLimit;
   /// This relay's fleet ID (0 = standalone).
   uint16_t relay_id = 0;
   /// Relay-to-relay routing: relay_id -> peer_id of the

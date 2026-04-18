@@ -47,6 +47,15 @@
 
 namespace hyper_derp {
 
+// -- Inline timing -----------------------------------------------------------
+
+static inline uint64_t NowNsRelaxed() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
+         static_cast<uint64_t>(ts.tv_nsec);
+}
+
 // -- Internal forward declarations -------------------------------------------
 
 static void SlabFreeItem(Worker* w, SendItem* item);
@@ -172,6 +181,8 @@ static int HtInsert(Worker* w, int fd,
   p->poll_write_pending = 0;
   p->send_pending = 0;
   p->peer_id = 0;
+  p->recv_bytes_window = 0;
+  p->window_start_ns = 0;
   return 0;
 }
 
@@ -1117,6 +1128,7 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
            payload + kHdMeshDstSize,
            fwd_payload_len);
     EnqueueSend(w, dst, buf, fwd_frame_len);
+    w->stats.hd_mesh_forwards++;
   } else if (hd_type == HdFrameType::kFleetData) {
     // FleetData: [4B header][2B relay_id][2B peer_id]
     // [payload]
@@ -1144,6 +1156,7 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       memcpy(buf + kHdFrameHeaderSize,
              payload + kHdFleetDstSize, fwd_len);
       EnqueueSend(w, dst, buf, frame_len);
+      w->stats.hd_fleet_forwards++;
     } else {
       // Remote delivery: forward to next-hop relay
       // peer via relay_peer_map.
@@ -1162,6 +1175,7 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
       if (!buf) return;
       memcpy(buf, hdr, frame_len);
       EnqueueSend(w, relay_peer, buf, frame_len);
+      w->stats.hd_fleet_forwards++;
     }
   } else if (hd_type == HdFrameType::kPeerInfo ||
              hd_type == HdFrameType::kRouteAnnounce) {
@@ -1468,6 +1482,22 @@ static void HandleRecvProvided(Worker* w,
 
     int n = cqe->res;
     w->stats.recv_bytes += n;
+
+    // Per-peer rate limiting.
+    if (w->ctx->peer_rate_limit > 0) {
+      uint64_t now = NowNsRelaxed();
+      if (now - peer->window_start_ns > 1000000000ULL) {
+        peer->recv_bytes_window = 0;
+        peer->window_start_ns = now;
+      }
+      peer->recv_bytes_window += n;
+      if (peer->recv_bytes_window >
+          w->ctx->peer_rate_limit) {
+        w->stats.rate_limit_drops++;
+        goto return_buf;
+      }
+    }
+
     int off = 0;
 
     // Complete any partial frame in rbuf.

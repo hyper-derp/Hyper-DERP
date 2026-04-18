@@ -85,6 +85,26 @@ static bool ReadBool(ryml::ConstNodeRef node,
   return true;
 }
 
+/// Read a uint64_t from a YAML node.
+static bool ReadUint64(ryml::ConstNodeRef node,
+                       const char* name, uint64_t* out,
+                       Error<ConfigError>* err) {
+  if (!node.has_val()) return true;
+  auto val = node.val();
+  char* end;
+  errno = 0;
+  unsigned long long v =
+      strtoull(val.data(), &end, 10);
+  if (end == val.data() || errno == ERANGE) {
+    *err = {ConfigError::InvalidValue,
+            std::string(name) +
+                ": expected non-negative integer"};
+    return false;
+  }
+  *out = static_cast<uint64_t>(v);
+  return true;
+}
+
 /// Read a string from a YAML node.
 static void ReadStr(ryml::ConstNodeRef node,
                     std::string* out) {
@@ -189,6 +209,13 @@ auto LoadConfig(const char* path, ServerConfig* config)
   TRY_BOOL(sqpoll, sqpoll)
   TRY_STR(tls_cert, tls_cert)
   TRY_STR(tls_key, tls_key)
+
+  if (root.has_child("peer_rate_limit")) {
+    if (!ReadUint64(root["peer_rate_limit"],
+                    "peer_rate_limit",
+                    &config->peer_rate_limit, &err))
+      return std::unexpected(err);
+  }
 
   if (root.has_child("pin_cores")) {
     if (!ReadPinCores(root["pin_cores"],

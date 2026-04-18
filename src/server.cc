@@ -348,9 +348,13 @@ static void HandleConnection(Server* server, int fd) {
 
     // Perform HD enrollment handshake.
     HdEnrollResult result;
+    server->hd_enrollments.fetch_add(
+        1, std::memory_order_relaxed);
     auto hs = HdPerformHandshake(
         fd, &server->hd_peers, &result);
     if (!hs) {
+      server->hd_auth_failures.fetch_add(
+          1, std::memory_order_relaxed);
       spdlog::warn(
           "HD handshake failed for fd {}: {} ({})",
           fd, hs.error().message,
@@ -583,6 +587,8 @@ auto ServerInit(Server* server,
   // Apply configuration to data plane context.
   server->data_plane.sockbuf_size = config->sockbuf_size;
   server->data_plane.sqpoll = config->sqpoll ? 1 : 0;
+  server->data_plane.peer_rate_limit =
+      config->peer_rate_limit;
   for (int i = 0; i < num_workers && i < kMaxWorkers;
        i++) {
     server->data_plane.pin_cores[i] =
@@ -799,9 +805,15 @@ auto ServerRun(Server* server,
                server->data_plane.num_workers);
 
   // Start metrics server (if configured).
+  HdServerCounters hd_counters;
+  if (server->hd_enabled) {
+    hd_counters.enrollments = &server->hd_enrollments;
+    hd_counters.auth_failures = &server->hd_auth_failures;
+  }
   server->metrics_server = MetricsStart(
       server->config.metrics, &server->data_plane,
-      server->hd_enabled ? &server->hd_peers : nullptr);
+      server->hd_enabled ? &server->hd_peers : nullptr,
+      hd_counters);
 
   // Connect to seed relays in a background thread.
   if (!server->config.seed_relays.empty() &&
@@ -882,7 +894,9 @@ auto ServerRun(Server* server,
 
   // Poll for external stop signal in a background
   // thread. This bridges the async-signal-safe flag
-  // into the normal shutdown path.
+  // into the normal shutdown path. Drain is performed
+  // here (not in ServerStop) because ServerStop may run
+  // from a signal handler where spdlog/usleep are unsafe.
   std::thread stop_poller;
   if (stop_flag) {
     stop_poller = std::thread([server, stop_flag]() {
@@ -893,6 +907,7 @@ auto ServerRun(Server* server,
         };
         nanosleep(&ts, nullptr);
       }
+      ServerDrain(server);
       ServerStop(server);
     });
   }
@@ -934,6 +949,37 @@ auto ServerRun(Server* server,
                      "DpRun returned error");
   }
   return {};
+}
+
+void ServerDrain(Server* server) {
+  spdlog::info("draining connections...");
+
+  // Shutdown the listen socket to unblock accept().
+  // shutdown() is safe to call while another thread is
+  // blocked in accept() — it causes accept() to return
+  // with EINVAL. close() is deferred to ServerRun.
+  if (server->listen_fd >= 0) {
+    shutdown(server->listen_fd, SHUT_RDWR);
+  }
+
+  // Wait for in-flight sends to complete (max 5s).
+  for (int i = 0; i < 50; i++) {
+    bool has_inflight = false;
+    for (int w = 0; w < server->data_plane.num_workers;
+         w++) {
+      Worker* wk = server->data_plane.workers[w];
+      if (!wk) continue;
+      if (__atomic_load_n(&wk->send_pressure,
+                          __ATOMIC_RELAXED) > 0) {
+        has_inflight = true;
+        break;
+      }
+    }
+    if (!has_inflight) break;
+    usleep(100000);  // 100ms
+  }
+
+  spdlog::info("drain complete");
 }
 
 void ServerStop(Server* server) {

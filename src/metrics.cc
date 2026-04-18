@@ -33,6 +33,7 @@ struct MetricsServer {
   std::thread thread;
   Ctx* ctx;
   HdPeerRegistry* hd_peers;
+  HdServerCounters hd_counters;
   std::chrono::steady_clock::time_point start_time;
 };
 
@@ -86,7 +87,11 @@ struct AggregatedStats {
   uint64_t recv_enobufs = 0;
   uint64_t frame_pool_hits = 0;
   uint64_t frame_pool_misses = 0;
+  uint64_t hd_mesh_forwards = 0;
+  uint64_t hd_fleet_forwards = 0;
+  uint64_t rate_limit_drops = 0;
   int64_t peers_active = 0;
+  int64_t hd_peers_active = 0;
   int num_workers = 0;
 };
 
@@ -120,10 +125,19 @@ static AggregatedStats CollectStats(Ctx* ctx) {
         &w->stats.frame_pool_hits, __ATOMIC_RELAXED);
     s.frame_pool_misses += __atomic_load_n(
         &w->stats.frame_pool_misses, __ATOMIC_RELAXED);
+    s.hd_mesh_forwards += __atomic_load_n(
+        &w->stats.hd_mesh_forwards, __ATOMIC_RELAXED);
+    s.hd_fleet_forwards += __atomic_load_n(
+        &w->stats.hd_fleet_forwards, __ATOMIC_RELAXED);
+    s.rate_limit_drops += __atomic_load_n(
+        &w->stats.rate_limit_drops, __ATOMIC_RELAXED);
     // Count active peers from hash table.
     for (int j = 0; j < kHtCapacity; j++) {
       if (w->ht[j].occupied == 1) {
         s.peers_active++;
+        if (w->ht[j].protocol == PeerProtocol::kHd) {
+          s.hd_peers_active++;
+        }
       }
     }
   }
@@ -174,6 +188,39 @@ static void RegisterRoutes(MetricsServer* ms,
     WriteCounter(out, "hyper_derp_frame_pool_misses_total",
                  "Frame pool allocations via malloc",
                  s.frame_pool_misses);
+
+    // HD Protocol metrics.
+    WriteGauge(out, "hyper_derp_hd_peers_active",
+               "HD Protocol peers",
+               s.hd_peers_active);
+    WriteCounter(out,
+                 "hyper_derp_hd_mesh_forwards_total",
+                 "MeshData frames forwarded",
+                 s.hd_mesh_forwards);
+    WriteCounter(out,
+                 "hyper_derp_hd_fleet_forwards_total",
+                 "FleetData frames forwarded",
+                 s.hd_fleet_forwards);
+    WriteCounter(out,
+                 "hyper_derp_rate_limit_drops_total",
+                 "Recv batches dropped by rate limiter",
+                 s.rate_limit_drops);
+
+    // Server-level HD counters.
+    if (ms->hd_counters.enrollments) {
+      WriteCounter(out,
+                   "hyper_derp_hd_enrollments_total",
+                   "HD enrollment attempts",
+                   ms->hd_counters.enrollments->load(
+                       std::memory_order_relaxed));
+    }
+    if (ms->hd_counters.auth_failures) {
+      WriteCounter(out,
+                   "hyper_derp_hd_auth_failures_total",
+                   "HD HMAC auth failures",
+                   ms->hd_counters.auth_failures->load(
+                       std::memory_order_relaxed));
+    }
 
     auto resp = crow::response(200, out.str());
     resp.set_header("Content-Type",
@@ -489,7 +536,8 @@ static void RegisterHdRoutes(MetricsServer* ms) {
 
 MetricsServer* MetricsStart(const MetricsConfig& config,
                             Ctx* ctx,
-                            HdPeerRegistry* hd_peers) {
+                            HdPeerRegistry* hd_peers,
+                            HdServerCounters hd_counters) {
   if (config.port == 0) {
     return nullptr;
   }
@@ -497,6 +545,7 @@ MetricsServer* MetricsStart(const MetricsConfig& config,
   auto* ms = new MetricsServer;
   ms->ctx = ctx;
   ms->hd_peers = hd_peers;
+  ms->hd_counters = hd_counters;
   ms->start_time = std::chrono::steady_clock::now();
 
   RegisterRoutes(ms, config.enable_debug);

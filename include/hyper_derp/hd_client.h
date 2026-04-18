@@ -186,6 +186,24 @@ auto HdClientSendMeshData(HdClient* c,
                           const uint8_t* data, int len)
     -> std::expected<void, Error<HdClientError>>;
 
+/// @brief Reconnect to the relay after a connection drop.
+///
+/// Closes the old connection, reconnects via TCP, performs
+/// HTTP upgrade, and re-enrolls with the same key pair.
+/// @param c Client with valid host/port and key material.
+/// @returns void on success, or HdClientError.
+auto HdClientReconnect(HdClient* c)
+    -> std::expected<void, Error<HdClientError>>;
+
+/// @brief Send an HD Ping frame.
+///
+/// The relay responds with a Pong echoing the same 8 bytes.
+/// Useful for keepalive and connection liveness detection.
+/// @param c Enrolled client.
+/// @returns void on success, or HdClientError.
+auto HdClientSendPing(HdClient* c)
+    -> std::expected<void, Error<HdClientError>>;
+
 /// @brief Close client connection and reset state.
 /// @param c Client to close.
 void HdClientClose(HdClient* c);

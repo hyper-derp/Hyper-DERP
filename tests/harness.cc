@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstring>
 
 #include "hyper_derp/hd_peers.h"
@@ -76,13 +77,16 @@ pid_t StartRelay(uint16_t port, int num_workers,
       _exit(1);
     }
 
-    // Re-install SIGTERM to stop cleanly.
-    static Server* g_srv = &server;
+    // Use stop_flag pattern: signal handler sets flag,
+    // ServerRun's stop_poller drains + stops cleanly.
+    static std::atomic<int> stop_flag{0};
     struct sigaction sa = {};
-    sa.sa_handler = [](int) { ServerStop(g_srv); };
+    sa.sa_handler = [](int) {
+      stop_flag.store(1, std::memory_order_release);
+    };
     sigaction(SIGTERM, &sa, nullptr);
 
-    (void)ServerRun(&server);
+    (void)ServerRun(&server, &stop_flag);
     ServerDestroy(&server);
     _exit(0);
   }
@@ -122,12 +126,16 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
       _exit(1);
     }
 
-    static Server* g_srv = &server;
+    // Use stop_flag pattern: signal handler sets flag,
+    // ServerRun's stop_poller drains + stops cleanly.
+    static std::atomic<int> stop_flag{0};
     struct sigaction sa = {};
-    sa.sa_handler = [](int) { ServerStop(g_srv); };
+    sa.sa_handler = [](int) {
+      stop_flag.store(1, std::memory_order_release);
+    };
     sigaction(SIGTERM, &sa, nullptr);
 
-    (void)ServerRun(&server);
+    (void)ServerRun(&server, &stop_flag);
     ServerDestroy(&server);
     _exit(0);
   }
