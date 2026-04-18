@@ -136,6 +136,9 @@ if(ENABLE_FUZZING)
   add_subdirectory(tests/fuzz)
 endif()
 
+# Client daemon.
+add_subdirectory(client)
+
 # ============================================================================
 # Install rules
 # ============================================================================
