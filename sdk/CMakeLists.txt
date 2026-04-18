@@ -51,6 +51,11 @@ target_include_directories(hd_fleet PUBLIC
   ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(hd_fleet PUBLIC hd_sdk)
 
+# -- Tools --------------------------------------------------------------------
+
+add_executable(hdcat tools/hdcat/hdcat.cc)
+target_link_libraries(hdcat PRIVATE hd_sdk)
+
 # C ABI wrapper.
 add_library(hd_sdk_c STATIC
   bindings/c/hd_sdk_c.cc)
