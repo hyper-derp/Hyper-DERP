@@ -154,8 +154,7 @@ static void Usage() {
     "  --duration <s>      Test duration (10)\n"
     "  --rate-mbps <mbps>  Rate cap (0=unlimited)\n"
     "  --batch <n>         sendmmsg batch size (64)\n"
-    "  --bind-dev <dev>    Bind to device (SO_BINDTODEVICE)\n"
-  );
+    "  --bind-dev <dev>    Bind to device (SO_BINDTODEVICE)\n");
 }
 
 int main(int argc, char* argv[]) {

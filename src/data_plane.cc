@@ -1432,7 +1432,6 @@ static void ForwardHdData(Worker* w, Peer* src,
       }
     }
   }
-
 }
 
 // -- Forwarding (DERP protocol) ----------------------------------------------

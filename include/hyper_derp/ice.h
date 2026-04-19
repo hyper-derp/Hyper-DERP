@@ -19,9 +19,9 @@ namespace hyper_derp {
 
 /// ICE candidate types.
 enum class IceCandidateType : uint8_t {
-  kHost = 0,            // Local interface address
-  kServerReflexive = 1, // STUN-discovered address
-  kRelay = 2,           // TURN relay address
+  kHost = 0,             // Local interface address
+  kServerReflexive = 1,  // STUN-discovered address
+  kRelay = 2,            // TURN relay address
 };
 
 /// Single ICE candidate.
@@ -79,7 +79,7 @@ struct IceSession {
   int pair_count = 0;
   int nominated_pair = -1;  // Index into pairs[]
   uint64_t last_check_ns = 0;
-  int check_interval_ms = 50; // Ta timer (ms)
+  int check_interval_ms = 50;  // Ta timer (ms)
   uint8_t occupied = 0;
 };
 

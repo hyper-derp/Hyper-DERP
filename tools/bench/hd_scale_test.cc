@@ -136,7 +136,10 @@ static int CountApprovedPeers(const char* host, int port) {
   int total = 0;
   while (total < req_len) {
     int w = write(fd, req + total, req_len - total);
-    if (w <= 0) { close(fd); return -1; }
+    if (w <= 0) {
+      close(fd);
+      return -1;
+    }
     total += w;
   }
 
