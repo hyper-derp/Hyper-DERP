@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 
-#include "wg_proxy.h"
+#include "hd/wg/wg_proxy.h"
 #include "hyper_derp/protocol.h"
 
 namespace hyper_derp {

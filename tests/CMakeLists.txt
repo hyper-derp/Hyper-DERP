@@ -73,19 +73,19 @@ gtest_discover_tests(test_production
 # WG client tests (need client/ include path).
 add_executable(test_wg_proxy test_wg_proxy.cc)
 target_link_libraries(test_wg_proxy PRIVATE
-  wg_client GTest::gtest_main)
+  hd_wg GTest::gtest_main)
 gtest_discover_tests(test_wg_proxy
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
 
 add_executable(test_wg_peer test_wg_peer.cc)
 target_link_libraries(test_wg_peer PRIVATE
-  wg_client GTest::gtest_main)
+  hd_wg GTest::gtest_main)
 gtest_discover_tests(test_wg_peer
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
 
 add_executable(test_wg_config test_wg_config.cc)
 target_link_libraries(test_wg_config PRIVATE
-  wg_client GTest::gtest_main)
+  hd_wg GTest::gtest_main)
 gtest_discover_tests(test_wg_config
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
 

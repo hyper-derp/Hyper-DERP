@@ -32,10 +32,10 @@
 #include "hyper_derp/stun.h"
 #include "hyper_derp/tun.h"
 
-#include "wg_config.h"
-#include "wg_netlink.h"
-#include "wg_peer.h"
-#include "wg_proxy.h"
+#include "hd/wg/wg_config.h"
+#include "hd/wg/wg_netlink.h"
+#include "hd/wg/wg_peer.h"
+#include "hd/wg/wg_proxy.h"
 
 using namespace hyper_derp;
 using namespace std::string_view_literals;

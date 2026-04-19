@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "wg_config.h"
+#include "hd/wg/wg_config.h"
 
 namespace hyper_derp {
 namespace {

@@ -123,6 +123,12 @@ target_compile_definitions(hyper-derp PRIVATE
 # Benchmark tools.
 add_subdirectory(tools/bench)
 
+# SDK library.
+add_subdirectory(sdk)
+
+# Client daemon.
+add_subdirectory(client)
+
 # Tests.
 if(BUILD_TESTING OR NOT DEFINED BUILD_TESTING)
   enable_testing()
@@ -135,12 +141,6 @@ option(ENABLE_FUZZING "Build fuzz targets" OFF)
 if(ENABLE_FUZZING)
   add_subdirectory(tests/fuzz)
 endif()
-
-# SDK library.
-add_subdirectory(sdk)
-
-# Client daemon.
-add_subdirectory(client)
 
 # ============================================================================
 # Install rules

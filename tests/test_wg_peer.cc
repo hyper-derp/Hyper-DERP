@@ -4,7 +4,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 
-#include "wg_peer.h"
+#include "hd/wg/wg_peer.h"
 
 namespace hyper_derp {
 namespace {
