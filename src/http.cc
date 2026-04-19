@@ -144,6 +144,21 @@ int WriteUpgradeResponse(uint8_t* buf, int buf_size,
   return n;
 }
 
+int WriteHdUpgradeResponse(uint8_t* buf,
+                           int buf_size) {
+  auto r = std::format_to_n(
+      reinterpret_cast<char*>(buf), buf_size - 1,
+      "HTTP/1.1 101 Switching Protocols\r\n"
+      "Upgrade: HD\r\n"
+      "Connection: Upgrade\r\n\r\n");
+  int n = static_cast<int>(r.size);
+  if (n < 0 || n >= buf_size) {
+    return -1;
+  }
+  *r.out = '\0';
+  return n;
+}
+
 int WriteProbeResponse(uint8_t* buf, int buf_size) {
   auto r = std::format_to_n(
       reinterpret_cast<char*>(buf), buf_size - 1,

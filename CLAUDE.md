@@ -37,6 +37,16 @@ ctest --output-on-failure -j --test-dir build/tests
 - `src/handshake.cc` — Key exchange, NaCl box crypto
 - `src/server.cc` — TCP listener, HTTP upgrade, handshake, hand-off
 - `src/main.cc` — Entry point (--port, --workers)
+- `include/hyper_derp/hd_protocol.h` — HD wire format (Data, MeshData, FleetData, RouteAnnounce)
+- `include/hyper_derp/hd_peers.h` — HD peer registry with enrollment and forwarding rules
+- `include/hyper_derp/hd_handshake.h` — HD enrollment handshake (HMAC auth)
+- `include/hyper_derp/hd_bridge.h` — DERP-to-HD frame conversion
+- `include/hyper_derp/hd_client.h` — HD client SDK
+- `include/hyper_derp/hd_relay_table.h` — Relay routing table for fleet mode
+- `include/hyper_derp/stun.h` — STUN message codec (RFC 5389)
+- `include/hyper_derp/turn.h` — TURN allocation manager (RFC 5766)
+- `include/hyper_derp/ice.h` — ICE agent (RFC 8445)
+- `include/hyper_derp/xdp_loader.h` — XDP program loader
 
 ## Architecture
 

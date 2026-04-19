@@ -9,9 +9,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <print>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "hyper_derp/config.h"
+#include "hyper_derp/ctl_channel.h"
 #include "hyper_derp/server.h"
 
 static std::atomic<int> g_stop_flag{0};
@@ -44,6 +47,19 @@ static void PrintUsage(const char* prog) {
       "endpoints\n"
       "  --log-level <level>   Log level "
       "(debug|info|warn|error)\n"
+      "  --hd-relay-key <hex>  HD relay shared secret "
+      "(enables HD)\n"
+      "  --hd-enroll-mode <m>  HD enrollment mode "
+      "(manual|auto)\n"
+      "  --hd-relay-id <id>    This relay's fleet ID "
+      "(enables fleet)\n"
+      "  --hd-seed-relay <h:p> Seed relay to connect to\n"
+      "  --level2              Enable Level 2 direct "
+      "path (ICE/TURN/XDP)\n"
+      "  --stun-port <port>    STUN listen port "
+      "(default: 3478)\n"
+      "  --xdp-interface <nic> Network interface for "
+      "XDP attachment\n"
       "  --help                Show this help\n"
       "  --version             Show version",
       prog);
@@ -101,10 +117,18 @@ int main(int argc, char* argv[]) {
   const char* tls_key = nullptr;
   const char* pin_spec = nullptr;
   const char* log_level = nullptr;
+  const char* hd_relay_key = nullptr;
+  const char* hd_enroll_mode = nullptr;
+  const char* xdp_interface = nullptr;
+  int stun_port = -1;
+  int hd_relay_id = -1;
+  std::vector<std::string> seed_relays;
   bool debug_endpoints = false;
   bool sqpoll = false;
+  bool level2 = false;
   bool debug_set = false;
   bool sqpoll_set = false;
+  bool level2_set = false;
 
   for (int i = 1; i < argc; i++) {
     std::string_view arg = argv[i];
@@ -169,6 +193,31 @@ int main(int argc, char* argv[]) {
       sqpoll_set = true;
     } else if (arg == "--log-level"sv && i + 1 < argc) {
       log_level = argv[++i];
+    } else if (arg == "--hd-relay-key"sv &&
+               i + 1 < argc) {
+      hd_relay_key = argv[++i];
+    } else if (arg == "--hd-enroll-mode"sv &&
+               i + 1 < argc) {
+      hd_enroll_mode = argv[++i];
+    } else if (arg == "--hd-relay-id"sv &&
+               i + 1 < argc) {
+      hd_relay_id = atoi(argv[++i]);
+    } else if (arg == "--hd-seed-relay"sv &&
+               i + 1 < argc) {
+      seed_relays.emplace_back(argv[++i]);
+    } else if (arg == "--level2"sv) {
+      level2 = true;
+      level2_set = true;
+    } else if (arg == "--stun-port"sv &&
+               i + 1 < argc) {
+      if (!ParseInt(argv[++i], &stun_port, 1, 65535)) {
+        std::println(stderr,
+                     "error: invalid --stun-port");
+        return EXIT_FAILURE;
+      }
+    } else if (arg == "--xdp-interface"sv &&
+               i + 1 < argc) {
+      xdp_interface = argv[++i];
     } else {
       std::println(stderr,
                    "error: unknown option '{}'", arg);
@@ -241,6 +290,38 @@ int main(int argc, char* argv[]) {
   if (sqpoll_set)
     config.sqpoll = sqpoll;
 
+  if (hd_relay_key)
+    config.hd_relay_key = hd_relay_key;
+  if (hd_enroll_mode) {
+    std::string_view mode = hd_enroll_mode;
+    if (mode == "auto"sv) {
+      config.hd_enroll_mode =
+          hyper_derp::HdEnrollMode::kAutoApprove;
+    } else if (mode == "manual"sv) {
+      config.hd_enroll_mode =
+          hyper_derp::HdEnrollMode::kManual;
+    } else {
+      std::println(stderr,
+                   "error: invalid --hd-enroll-mode "
+                   "(manual|auto)");
+      return EXIT_FAILURE;
+    }
+  }
+
+  if (hd_relay_id >= 0)
+    config.hd_relay_id =
+        static_cast<uint16_t>(hd_relay_id);
+  if (!seed_relays.empty())
+    config.seed_relays = std::move(seed_relays);
+
+  if (level2_set)
+    config.level2.enabled = level2;
+  if (stun_port >= 0)
+    config.level2.stun_port =
+        static_cast<uint16_t>(stun_port);
+  if (xdp_interface)
+    config.level2.xdp_interface = xdp_interface;
+
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,
                           config.pin_cores.data(),
@@ -264,6 +345,13 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
+  // Start ZMQ control channel.
+  auto* ctl = hyper_derp::CtlChannelStart(
+      "ipc:///tmp/hyper-derp.sock",
+      &server.data_plane,
+      config.hd_relay_key.empty()
+          ? nullptr : &server.hd_peers);
+
   // Install signal handlers. Only set the atomic flag;
   // ServerRun polls it and calls ServerStop from a safe
   // context.
@@ -277,6 +365,7 @@ int main(int argc, char* argv[]) {
 
   auto run = hyper_derp::ServerRun(&server, &g_stop_flag);
 
+  hyper_derp::CtlChannelStop(ctl);
   hyper_derp::ServerDestroy(&server);
   spdlog::info("hyper-derp exiting");
   return run.has_value() ? EXIT_SUCCESS : EXIT_FAILURE;

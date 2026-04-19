@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <mutex>
 
+#include "hyper_derp/hd_relay_table.h"
+#include "hyper_derp/ice.h"
 #include "hyper_derp/protocol.h"
 #include "hyper_derp/types.h"
 
@@ -71,6 +73,22 @@ struct ControlPlane {
   // Thread synchronization.
   std::mutex mutex;
   std::atomic<int> running{0};
+
+  // -- Level 2 ICE integration ----------------------
+  // ICE agent pointer (owned by Server).
+  IceAgent* ice_agent = nullptr;
+  // timerfd for periodic ICE connectivity checks.
+  int ice_timer_fd = -1;
+  // UDP socket for STUN binding requests/responses.
+  int stun_udp_fd = -1;
+  // Level 2 enabled flag.
+  bool level2_enabled = false;
+
+  // -- Fleet routing --------------------------------
+  // 30-second periodic timerfd for route announcements.
+  int route_announce_fd = -1;
+  // Relay routing table (owned by Server).
+  RelayTable* relay_table = nullptr;
 };
 
 /// @brief Initialize the control plane.
@@ -126,6 +144,53 @@ void CpRunLoop(ControlPlane* cp);
 /// @brief Signal the control thread to stop.
 /// @param cp Control plane.
 void CpStop(ControlPlane* cp);
+
+/// @brief Enable Level 2 ICE in the control plane.
+///
+/// Sets the ICE agent pointer, creates a timerfd for
+/// periodic connectivity checks, and binds a UDP socket
+/// for STUN traffic. Must be called before CpRunLoop.
+/// @param cp Control plane.
+/// @param agent ICE agent (owned by Server).
+/// @param stun_port UDP port for STUN binding.
+/// @return 0 on success, -1 on failure.
+int CpEnableLevel2(ControlPlane* cp,
+                   IceAgent* agent,
+                   uint16_t stun_port);
+
+/// @brief Process an HD PeerInfo frame from a peer.
+///
+/// Parses remote ICE candidates from the payload and
+/// advances the ICE state machine for the peer pair.
+/// @param cp Control plane.
+/// @param fd Source peer's socket fd.
+/// @param payload PeerInfo payload (after HD frame header).
+/// @param payload_len Payload length.
+void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
+                        const uint8_t* payload,
+                        int payload_len);
+
+/// @brief Enable fleet routing in the control plane.
+///
+/// Creates a 30-second periodic timerfd for route
+/// announcements and registers it with epoll. Must be
+/// called before CpRunLoop.
+/// @param cp Control plane.
+/// @param rt Relay routing table (owned by Server).
+void CpEnableFleetRouting(ControlPlane* cp,
+                          RelayTable* rt);
+
+/// @brief Process a RouteAnnounce from a neighbor relay.
+///
+/// Parses the announcement, identifies the source relay,
+/// and updates the routing table with improved routes.
+/// @param cp Control plane.
+/// @param fd Source peer's socket fd.
+/// @param payload RouteAnnounce payload (after HD header).
+/// @param payload_len Payload length.
+void CpHandleRouteAnnounce(ControlPlane* cp, int fd,
+                           const uint8_t* payload,
+                           int payload_len);
 
 }  // namespace hyper_derp
 

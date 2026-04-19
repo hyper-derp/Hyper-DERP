@@ -13,9 +13,16 @@
 #include <cstdint>
 #include <sstream>
 #include <string>
+#include <sys/socket.h>
 #include <thread>
+#include <unistd.h>
 
+#include <sodium.h>
+
+#include "hyper_derp/data_plane.h"
 #include "hyper_derp/handshake.h"
+#include "hyper_derp/hd_handshake.h"
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/metrics.h"
 #include "hyper_derp/protocol.h"
 
@@ -25,6 +32,8 @@ struct MetricsServer {
   crow::SimpleApp app;
   std::thread thread;
   Ctx* ctx;
+  HdPeerRegistry* hd_peers;
+  HdServerCounters hd_counters;
   std::chrono::steady_clock::time_point start_time;
 };
 
@@ -78,7 +87,14 @@ struct AggregatedStats {
   uint64_t recv_enobufs = 0;
   uint64_t frame_pool_hits = 0;
   uint64_t frame_pool_misses = 0;
+  uint64_t hd_mesh_forwards = 0;
+  uint64_t hd_fleet_forwards = 0;
+  uint64_t rate_limit_drops = 0;
+  uint64_t hd_fwd_no_rule = 0;
+  uint64_t hd_fwd_no_route = 0;
+  uint64_t hd_fwd_same_worker = 0;
   int64_t peers_active = 0;
+  int64_t hd_peers_active = 0;
   int num_workers = 0;
 };
 
@@ -112,10 +128,25 @@ static AggregatedStats CollectStats(Ctx* ctx) {
         &w->stats.frame_pool_hits, __ATOMIC_RELAXED);
     s.frame_pool_misses += __atomic_load_n(
         &w->stats.frame_pool_misses, __ATOMIC_RELAXED);
+    s.hd_mesh_forwards += __atomic_load_n(
+        &w->stats.hd_mesh_forwards, __ATOMIC_RELAXED);
+    s.hd_fleet_forwards += __atomic_load_n(
+        &w->stats.hd_fleet_forwards, __ATOMIC_RELAXED);
+    s.rate_limit_drops += __atomic_load_n(
+        &w->stats.rate_limit_drops, __ATOMIC_RELAXED);
+    s.hd_fwd_no_rule += __atomic_load_n(
+        &w->stats.hd_fwd_no_rule, __ATOMIC_RELAXED);
+    s.hd_fwd_no_route += __atomic_load_n(
+        &w->stats.hd_fwd_no_route, __ATOMIC_RELAXED);
+    s.hd_fwd_same_worker += __atomic_load_n(
+        &w->stats.hd_fwd_same_worker, __ATOMIC_RELAXED);
     // Count active peers from hash table.
     for (int j = 0; j < kHtCapacity; j++) {
       if (w->ht[j].occupied == 1) {
         s.peers_active++;
+        if (w->ht[j].protocol == PeerProtocol::kHd) {
+          s.hd_peers_active++;
+        }
       }
     }
   }
@@ -166,6 +197,39 @@ static void RegisterRoutes(MetricsServer* ms,
     WriteCounter(out, "hyper_derp_frame_pool_misses_total",
                  "Frame pool allocations via malloc",
                  s.frame_pool_misses);
+
+    // HD Protocol metrics.
+    WriteGauge(out, "hyper_derp_hd_peers_active",
+               "HD Protocol peers",
+               s.hd_peers_active);
+    WriteCounter(out,
+                 "hyper_derp_hd_mesh_forwards_total",
+                 "MeshData frames forwarded",
+                 s.hd_mesh_forwards);
+    WriteCounter(out,
+                 "hyper_derp_hd_fleet_forwards_total",
+                 "FleetData frames forwarded",
+                 s.hd_fleet_forwards);
+    WriteCounter(out,
+                 "hyper_derp_rate_limit_drops_total",
+                 "Recv batches dropped by rate limiter",
+                 s.rate_limit_drops);
+
+    // Server-level HD counters.
+    if (ms->hd_counters.enrollments) {
+      WriteCounter(out,
+                   "hyper_derp_hd_enrollments_total",
+                   "HD enrollment attempts",
+                   ms->hd_counters.enrollments->load(
+                       std::memory_order_relaxed));
+    }
+    if (ms->hd_counters.auth_failures) {
+      WriteCounter(out,
+                   "hyper_derp_hd_auth_failures_total",
+                   "HD HMAC auth failures",
+                   ms->hd_counters.auth_failures->load(
+                       std::memory_order_relaxed));
+    }
 
     auto resp = crow::response(200, out.str());
     resp.set_header("Content-Type",
@@ -219,6 +283,12 @@ static void RegisterRoutes(MetricsServer* ms,
           &w->stats.send_econnreset, __ATOMIC_RELAXED);
       wj["send_eagain"] = __atomic_load_n(
           &w->stats.send_eagain, __ATOMIC_RELAXED);
+      wj["hd_fwd_no_route"] = __atomic_load_n(
+          &w->stats.hd_fwd_no_route, __ATOMIC_RELAXED);
+      wj["hd_fwd_same_worker"] = __atomic_load_n(
+          &w->stats.hd_fwd_same_worker, __ATOMIC_RELAXED);
+      wj["send_queue_drops"] = __atomic_load_n(
+          &w->stats.send_queue_drops, __ATOMIC_RELAXED);
       // Count peers.
       int peers = 0;
       for (int j = 0; j < kHtCapacity; j++) {
@@ -261,19 +331,240 @@ static void RegisterRoutes(MetricsServer* ms,
   });
 }
 
+// -- HD peer management routes -----------------------------------------------
+
+static void RegisterHdRoutes(MetricsServer* ms) {
+  if (!ms->hd_peers) return;
+
+  // List all HD peers.
+  CROW_ROUTE(ms->app, "/api/v1/peers")
+  ([ms]() {
+    // Snapshot under lock, build JSON outside.
+    struct PeerSnap {
+      Key key;
+      HdPeerState state;
+      int fd;
+      int rule_count;
+      Key rules[kHdMaxForwardRules];
+    };
+    std::vector<PeerSnap> snaps;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      for (int i = 0; i < kHdMaxPeers; i++) {
+        auto& p = ms->hd_peers->peers[i];
+        if (p.occupied != 1) continue;
+        PeerSnap s;
+        s.key = p.key;
+        s.state = p.state;
+        s.fd = p.fd;
+        s.rule_count = p.rule_count;
+        for (int r = 0; r < p.rule_count; r++) {
+          s.rules[r] = p.rules[r].dst_key;
+        }
+        snaps.push_back(s);
+      }
+    }
+    crow::json::wvalue::list peers;
+    for (auto& s : snaps) {
+      crow::json::wvalue pj;
+      char hex[kKeySize * 2 + 1];
+      KeyToHex(s.key, hex);
+      pj["key"] = std::string(hex);
+      pj["state"] = s.state == HdPeerState::kApproved
+          ? "approved"
+          : s.state == HdPeerState::kPending
+          ? "pending" : "denied";
+      pj["fd"] = s.fd;
+      pj["rule_count"] = s.rule_count;
+      crow::json::wvalue::list rules;
+      for (int r = 0; r < s.rule_count; r++) {
+        char dhex[kKeySize * 2 + 1];
+        KeyToHex(s.rules[r], dhex);
+        rules.push_back(std::string(dhex));
+      }
+      pj["rules"] = std::move(rules);
+      peers.push_back(std::move(pj));
+    }
+    crow::json::wvalue resp;
+    resp["count"] = static_cast<int>(peers.size());
+    resp["peers"] = std::move(peers);
+    return crow::response(200, resp);
+  });
+
+  // Approve a pending peer.
+  CROW_ROUTE(ms->app, "/api/v1/peers/<string>/approve")
+  .methods("POST"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (key_hex.size() != kKeySize * 2 ||
+        sodium_hex2bin(
+            key.data(), kKeySize,
+            key_hex.c_str(), key_hex.size(),
+            nullptr, nullptr, nullptr) != 0) {
+      return crow::response(400, "invalid key hex");
+    }
+    int fd = -1;
+    uint16_t pid = 0;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      if (!HdPeersApprove(ms->hd_peers, key.data())) {
+        return crow::response(404, "peer not found");
+      }
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (p) {
+        fd = p->fd;
+        pid = p->peer_id;
+      }
+    }
+    // I/O outside the lock.
+    if (fd >= 0) {
+      HdSendApproved(fd, key);
+      timeval tv{.tv_sec = 0, .tv_usec = 0};
+      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                 &tv, sizeof(tv));
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+                 &tv, sizeof(tv));
+      DpAddPeer(ms->ctx, fd, key,
+                PeerProtocol::kHd, pid);
+    }
+    return crow::response(200, "approved");
+  });
+
+  // Deny a pending peer.
+  CROW_ROUTE(ms->app, "/api/v1/peers/<string>/deny")
+  .methods("POST"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (key_hex.size() != kKeySize * 2 ||
+        sodium_hex2bin(
+            key.data(), kKeySize,
+            key_hex.c_str(), key_hex.size(),
+            nullptr, nullptr, nullptr) != 0) {
+      return crow::response(400, "invalid key hex");
+    }
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+      HdPeersDeny(ms->hd_peers, key.data());
+    }
+    if (fd >= 0) {
+      HdSendDenied(fd, 0, "denied by admin");
+      close(fd);
+    }
+    return crow::response(200, "denied");
+  });
+
+  // Revoke (delete) a peer.
+  CROW_ROUTE(ms->app, "/api/v1/peers/<string>")
+  .methods("DELETE"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (key_hex.size() != kKeySize * 2 ||
+        sodium_hex2bin(
+            key.data(), kKeySize,
+            key_hex.c_str(), key_hex.size(),
+            nullptr, nullptr, nullptr) != 0) {
+      return crow::response(400, "invalid key hex");
+    }
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+      HdPeersRemove(ms->hd_peers, key.data());
+    }
+    if (fd >= 0) {
+      DpRemovePeer(ms->ctx, key);
+      close(fd);
+    }
+    return crow::response(200, "revoked");
+  });
+
+  // Add a forwarding rule for a peer.
+  CROW_ROUTE(ms->app, "/api/v1/peers/<string>/rules")
+  .methods("POST"_method)
+  ([ms](const crow::request& req,
+        const std::string& key_hex) {
+    auto body = crow::json::load(req.body);
+    if (!body || !body.has("dst_key")) {
+      return crow::response(400, "need dst_key");
+    }
+    std::string dst_hex = body["dst_key"].s();
+    Key peer_key{}, dst_key{};
+    if (key_hex.size() != kKeySize * 2 ||
+        sodium_hex2bin(
+            peer_key.data(), kKeySize,
+            key_hex.c_str(), key_hex.size(),
+            nullptr, nullptr, nullptr) != 0) {
+      return crow::response(400, "invalid peer key");
+    }
+    if (dst_hex.size() != kKeySize * 2 ||
+        sodium_hex2bin(
+            dst_key.data(), kKeySize,
+            dst_hex.c_str(), dst_hex.size(),
+            nullptr, nullptr, nullptr) != 0) {
+      return crow::response(400, "invalid dst_key");
+    }
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      if (!HdPeersAddRule(ms->hd_peers,
+                          peer_key.data(), dst_key)) {
+        return crow::response(
+            400, "rule limit or peer not found");
+      }
+    }
+    // Push the rule to the data plane (lock-free cmd).
+    DpAddFwdRule(ms->ctx, peer_key, dst_key);
+    return crow::response(200, "rule added");
+  });
+
+  // Relay status.
+  CROW_ROUTE(ms->app, "/api/v1/relay")
+  ([ms]() {
+    crow::json::wvalue j;
+    j["hd_enabled"] = (ms->hd_peers != nullptr);
+    if (ms->hd_peers) {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      j["hd_peer_count"] = ms->hd_peers->peer_count;
+      j["hd_enroll_mode"] =
+          ms->hd_peers->enroll_mode ==
+              HdEnrollMode::kAutoApprove
+          ? "auto" : "manual";
+    }
+    j["workers"] = ms->ctx->num_workers;
+    return crow::response(200, j);
+  });
+}
+
 // -- Public API --------------------------------------------------------------
 
 MetricsServer* MetricsStart(const MetricsConfig& config,
-                            Ctx* ctx) {
+                            Ctx* ctx,
+                            HdPeerRegistry* hd_peers,
+                            HdServerCounters hd_counters) {
   if (config.port == 0) {
     return nullptr;
   }
 
   auto* ms = new MetricsServer;
   ms->ctx = ctx;
+  ms->hd_peers = hd_peers;
+  ms->hd_counters = hd_counters;
   ms->start_time = std::chrono::steady_clock::now();
 
   RegisterRoutes(ms, config.enable_debug);
+  RegisterHdRoutes(ms);
 
   // Suppress Crow's internal logging noise.
   ms->app.loglevel(crow::LogLevel::Warning);

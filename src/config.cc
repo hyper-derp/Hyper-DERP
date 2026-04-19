@@ -12,6 +12,8 @@
 #include <cstring>
 #include <string>
 
+#include "hyper_derp/hd_peers.h"
+
 namespace hyper_derp {
 
 static auto ReadFile(const char* path, std::string* out)
@@ -80,6 +82,26 @@ static bool ReadBool(ryml::ConstNodeRef node,
             std::string(name) + ": expected boolean"};
     return false;
   }
+  return true;
+}
+
+/// Read a uint64_t from a YAML node.
+static bool ReadUint64(ryml::ConstNodeRef node,
+                       const char* name, uint64_t* out,
+                       Error<ConfigError>* err) {
+  if (!node.has_val()) return true;
+  auto val = node.val();
+  char* end;
+  errno = 0;
+  unsigned long long v =
+      strtoull(val.data(), &end, 10);
+  if (end == val.data() || errno == ERANGE) {
+    *err = {ConfigError::InvalidValue,
+            std::string(name) +
+                ": expected non-negative integer"};
+    return false;
+  }
+  *out = static_cast<uint64_t>(v);
   return true;
 }
 
@@ -188,6 +210,13 @@ auto LoadConfig(const char* path, ServerConfig* config)
   TRY_STR(tls_cert, tls_cert)
   TRY_STR(tls_key, tls_key)
 
+  if (root.has_child("peer_rate_limit")) {
+    if (!ReadUint64(root["peer_rate_limit"],
+                    "peer_rate_limit",
+                    &config->peer_rate_limit, &err))
+      return std::unexpected(err);
+  }
+
   if (root.has_child("pin_cores")) {
     if (!ReadPinCores(root["pin_cores"],
                       &config->pin_cores, &err)) {
@@ -217,6 +246,99 @@ auto LoadConfig(const char* path, ServerConfig* config)
                       &err))
           return std::unexpected(err);
         config->metrics.enable_debug = v;
+      }
+    }
+  }
+
+  // HD Protocol sub-section.
+  if (root.has_child("hd")) {
+    auto h = root["hd"];
+    if (h.is_map()) {
+      if (h.has_child("relay_key"))
+        ReadStr(h["relay_key"], &config->hd_relay_key);
+      if (h.has_child("relay_id")) {
+        int v = 0;
+        if (!ReadInt(h["relay_id"], "hd.relay_id",
+                     &v, 0, 65535, &err))
+          return std::unexpected(err);
+        config->hd_relay_id = static_cast<uint16_t>(v);
+      }
+      if (h.has_child("seed_relays")) {
+        auto sr = h["seed_relays"];
+        if (sr.is_seq()) {
+          for (auto child : sr.children()) {
+            if (child.has_val()) {
+              auto val = child.val();
+              config->seed_relays.emplace_back(
+                  val.data(), val.len);
+            }
+          }
+        }
+      }
+      if (h.has_child("enroll_mode")) {
+        auto val = h["enroll_mode"].val();
+        std::string_view mode(val.data(), val.len);
+        if (mode == "auto") {
+          config->hd_enroll_mode =
+              HdEnrollMode::kAutoApprove;
+        } else if (mode == "manual") {
+          config->hd_enroll_mode =
+              HdEnrollMode::kManual;
+        } else {
+          return MakeError(
+              ConfigError::InvalidValue,
+              "hd.enroll_mode: expected manual|auto");
+        }
+      }
+    }
+  }
+
+  // Level 2 (direct path) sub-section.
+  if (root.has_child("level2")) {
+    auto l2 = root["level2"];
+    if (l2.is_map()) {
+      if (l2.has_child("enabled")) {
+        bool v = false;
+        if (!ReadBool(l2["enabled"],
+                      "level2.enabled", &v, &err))
+          return std::unexpected(err);
+        config->level2.enabled = v;
+      }
+      if (l2.has_child("stun_port")) {
+        int v = 0;
+        if (!ReadInt(l2["stun_port"],
+                     "level2.stun_port", &v,
+                     1, 65535, &err))
+          return std::unexpected(err);
+        config->level2.stun_port =
+            static_cast<uint16_t>(v);
+      }
+      if (l2.has_child("xdp_interface"))
+        ReadStr(l2["xdp_interface"],
+                &config->level2.xdp_interface);
+      if (l2.has_child("turn")) {
+        auto t = l2["turn"];
+        if (t.is_map()) {
+          if (t.has_child("realm"))
+            ReadStr(t["realm"],
+                    &config->level2.turn_realm);
+          if (t.has_child("max_allocations")) {
+            int v = 0;
+            if (!ReadInt(t["max_allocations"],
+                         "level2.turn.max_allocations",
+                         &v, 1, 1000000, &err))
+              return std::unexpected(err);
+            config->level2.turn_max_allocations = v;
+          }
+          if (t.has_child("default_lifetime")) {
+            int v = 0;
+            if (!ReadInt(t["default_lifetime"],
+                         "level2.turn.default_lifetime",
+                         &v, 30, 3600, &err))
+              return std::unexpected(err);
+            config->level2.turn_default_lifetime = v;
+          }
+        }
       }
     }
   }

@@ -40,7 +40,8 @@ jobs:
             cmake ninja-build \
             liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
-            libssl-dev libasio-dev
+            libssl-dev libasio-dev \
+            libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
       - name: Set GCC 14
         run: |
           sudo update-alternatives \
@@ -64,8 +65,11 @@ jobs:
 
   package:
     name: Package
+    # Package only on pushes to release branches (v*).
+    # Tag-driven releases go through release.yml; PRs
+    # don't need a throwaway .deb.
     if: >
-      github.event_name == 'pull_request' ||
+      github.event_name == 'push' &&
       startsWith(github.ref, 'refs/heads/v')
     needs: [test, lint]
     runs-on: ubuntu-latest
@@ -80,7 +84,8 @@ jobs:
             cmake ninja-build \
             liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
-            libssl-dev libasio-dev
+            libssl-dev libasio-dev \
+            libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
       - name: Set GCC 14
         run: |
           sudo update-alternatives \

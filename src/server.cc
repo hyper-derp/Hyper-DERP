@@ -20,7 +20,17 @@
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
+#include "hyper_derp/hd_client.h"
+#include "hyper_derp/hd_handshake.h"
+#include "hyper_derp/hd_peers.h"
+#include "hyper_derp/hd_protocol.h"
+#include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/http.h"
+#include "hyper_derp/ice.h"
+#include "hyper_derp/turn.h"
+#include "hyper_derp/xdp_loader.h"
+
+#include <sodium.h>
 
 namespace hyper_derp {
 
@@ -69,6 +79,112 @@ static void WarnRateLimit(uint64_t rejected) {
   } else {
     spdlog::warn("rate limit: rejected {} connections",
                  rejected);
+  }
+}
+
+void TryIceUpgrade(Server* server,
+                   const Key& new_peer_key) {
+  if (!server->level2_enabled || !server->hd_enabled) {
+    return;
+  }
+
+  HdPeerRegistry* reg = &server->hd_peers;
+  IceAgent* agent = &server->ice_agent;
+  std::lock_guard reg_lock(reg->mutex);
+
+  // Find the new peer in the registry.
+  HdPeer* new_peer =
+      HdPeersLookup(reg, new_peer_key.data());
+  if (!new_peer || new_peer->state !=
+      HdPeerState::kApproved) {
+    return;
+  }
+
+  // Check every other approved peer for matching
+  // forwarding rules.
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    HdPeer* other = &reg->peers[i];
+    if (other->occupied != 1) continue;
+    if (other->state != HdPeerState::kApproved) continue;
+    if (other->key == new_peer_key) continue;
+    if (other->fd < 0) continue;
+
+    // Check if other has a rule pointing at new_peer
+    // or new_peer has a rule pointing at other.
+    bool has_rule = false;
+    for (int r = 0; r < other->rule_count; ++r) {
+      if (other->rules[r].occupied &&
+          other->rules[r].dst_key == new_peer_key) {
+        has_rule = true;
+        break;
+      }
+    }
+    if (!has_rule) {
+      for (int r = 0; r < new_peer->rule_count; ++r) {
+        if (new_peer->rules[r].occupied &&
+            new_peer->rules[r].dst_key == other->key) {
+          has_rule = true;
+          break;
+        }
+      }
+    }
+    if (!has_rule) continue;
+
+    // Start ICE session for this peer pair.
+    std::lock_guard ice_lock(agent->mutex);
+    IceSession* existing =
+        IceFindSession(agent, other->key.data());
+    if (existing) continue;  // Already in progress.
+
+    IceSession* session =
+        IceStartSession(agent, other->key);
+    if (!session) {
+      spdlog::warn("ICE session table full");
+      return;
+    }
+
+    // Add relay IP as server-reflexive candidate.
+    IceAddLocalCandidate(
+        session, IceCandidateType::kServerReflexive,
+        agent->relay_ip, htons(agent->stun_port));
+
+    // Serialize candidates into PeerInfo frames and
+    // send to both peers.
+    uint8_t cand_buf[256];
+    int cand_len = IceSerializeCandidates(
+        session, cand_buf, sizeof(cand_buf));
+    if (cand_len <= 0) continue;
+
+    // Build PeerInfo frame for the new peer about the
+    // other peer.
+    uint8_t frame[512];
+    int flen = HdBuildPeerInfo(
+        frame, other->key, cand_buf, cand_len);
+    if (flen > 0) {
+      auto* buf = static_cast<uint8_t*>(malloc(flen));
+      if (buf) {
+        std::memcpy(buf, frame, flen);
+        DpWrite(&server->data_plane,
+                new_peer_key, buf, flen);
+      }
+    }
+
+    // Build PeerInfo frame for the other peer about
+    // the new peer.
+    flen = HdBuildPeerInfo(
+        frame, new_peer_key, cand_buf, cand_len);
+    if (flen > 0) {
+      auto* buf = static_cast<uint8_t*>(malloc(flen));
+      if (buf) {
+        std::memcpy(buf, frame, flen);
+        DpWrite(&server->data_plane,
+                other->key, buf, flen);
+      }
+    }
+
+    char hex[kKeySize * 2 + 1];
+    KeyToHex(other->key, hex);
+    spdlog::info("ICE: started session for peer {}", hex);
   }
 }
 
@@ -182,6 +298,202 @@ static void HandleConnection(Server* server, int fd) {
       SendAndClose(fd, resp, n);
     } else {
       close(fd);
+    }
+    return;
+  }
+
+  // HD protocol path.
+  if (req.path == "/hd"sv) {
+    if (!server->hd_enabled) {
+      uint8_t resp[256];
+      int n = WriteErrorResponse(
+          resp, sizeof(resp), 404, "not found");
+      if (n > 0) {
+        SendAndClose(fd, resp, n);
+      } else {
+        close(fd);
+      }
+      return;
+    }
+    if (!req.has_upgrade) {
+      uint8_t resp[256];
+      int n = WriteErrorResponse(
+          resp, sizeof(resp), 426,
+          "HD requires connection upgrade");
+      if (n > 0) {
+        SendAndClose(fd, resp, n);
+      } else {
+        close(fd);
+      }
+      return;
+    }
+
+    // Send HTTP 101 Switching Protocols for HD.
+    uint8_t resp[512];
+    int n = WriteHdUpgradeResponse(
+        resp, sizeof(resp));
+    if (n < 0) {
+      close(fd);
+      return;
+    }
+    int total = 0;
+    while (total < n) {
+      int w = write(fd, resp + total, n - total);
+      if (w <= 0) {
+        close(fd);
+        return;
+      }
+      total += w;
+    }
+
+    // Perform HD enrollment handshake.
+    HdEnrollResult result;
+    server->hd_enrollments.fetch_add(
+        1, std::memory_order_relaxed);
+    auto hs = HdPerformHandshake(
+        fd, &server->hd_peers, &result);
+    if (!hs) {
+      server->hd_auth_failures.fetch_add(
+          1, std::memory_order_relaxed);
+      spdlog::warn(
+          "HD handshake failed for fd {}: {} ({})",
+          fd, hs.error().message,
+          HdHandshakeErrorName(hs.error().code));
+      close(fd);
+      return;
+    }
+
+    char hex[kKeySize * 2 + 1];
+    KeyToHex(result.client_key, hex);
+
+    if (result.auto_approved) {
+      spdlog::info("HD peer auto-approved: {}", hex);
+
+      // Clear handshake timeouts.
+      tv = {.tv_sec = 0, .tv_usec = 0};
+      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv,
+                 sizeof(tv));
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv,
+                 sizeof(tv));
+
+      // Look up peer ID from the HD registry.
+      auto* hp = HdPeersLookup(&server->hd_peers,
+                               result.client_key.data());
+      uint16_t pid = hp ? hp->peer_id : 0;
+
+      // Hand to data plane as HD peer.
+      DpAddPeer(&server->data_plane, fd,
+                result.client_key, PeerProtocol::kHd,
+                pid);
+      CpOnPeerConnect(&server->control_plane,
+                      result.client_key, fd);
+
+      // Handle relay enrollment.
+      if (result.is_relay && result.relay_id > 0) {
+        RelayTableAdd(&server->relay_table,
+                      result.relay_id, fd,
+                      result.client_key, nullptr);
+        // Map relay_id to peer_id in the data plane.
+        if (hp) {
+          server->data_plane.relay_peer_map[
+              result.relay_id] = hp->peer_id;
+        }
+        spdlog::info("relay {} enrolled (peer_id={})",
+                     result.relay_id,
+                     hp ? hp->peer_id : 0);
+      }
+
+      // Notify existing HD peers about the new peer,
+      // and the new peer about existing HD peers.
+      // PeerInfo payload: [32B peer_key][2B peer_id]
+      {
+        std::lock_guard lock(server->hd_peers.mutex);
+        for (int i = 0; i < kHdMaxPeers; i++) {
+          auto& p = server->hd_peers.peers[i];
+          if (p.occupied != 1 ||
+              p.state != HdPeerState::kApproved) {
+            continue;
+          }
+          if (p.key == result.client_key) continue;
+
+          // Tell existing peer about new peer.
+          // PeerInfo payload: [32B peer_key][2B peer_id]
+          uint8_t info[kHdFrameHeaderSize + kKeySize + 2];
+          uint8_t pid_buf[2] = {
+              static_cast<uint8_t>(pid >> 8),
+              static_cast<uint8_t>(pid)};
+          int flen = HdBuildPeerInfo(info,
+              result.client_key, pid_buf, 2);
+          if (flen > 0) {
+            auto* buf = static_cast<uint8_t*>(
+                malloc(flen));
+            if (buf) {
+              std::memcpy(buf, info, flen);
+              DpWrite(&server->data_plane, p.key,
+                      buf, flen);
+            }
+          }
+
+          // Tell new peer about existing peer.
+          uint8_t opid_buf[2] = {
+              static_cast<uint8_t>(p.peer_id >> 8),
+              static_cast<uint8_t>(p.peer_id)};
+          flen = HdBuildPeerInfo(info,
+              p.key, opid_buf, 2);
+          if (flen > 0) {
+            auto* buf = static_cast<uint8_t*>(
+                malloc(flen));
+            if (buf) {
+              std::memcpy(buf, info, flen);
+              DpWrite(&server->data_plane,
+                      result.client_key, buf, flen);
+            }
+          }
+        }
+      }
+
+      // Forward PeerInfo to connected relay peers so
+      // clients on remote relays can discover this peer.
+      // Include our relay_id so they know it's remote.
+      if (server->config.hd_relay_id > 0 &&
+          !result.is_relay) {
+        std::lock_guard rtlock(server->relay_table.mutex);
+        for (int i = 0; i < kMaxRelays; i++) {
+          auto& re = server->relay_table.entries[i];
+          if (re.occupied != 1 || re.fd < 0) continue;
+
+          // Build PeerInfo with extended data:
+          // [32B key][2B peer_id][2B relay_id]
+          uint8_t ext[4] = {
+              static_cast<uint8_t>(pid >> 8),
+              static_cast<uint8_t>(pid),
+              static_cast<uint8_t>(
+                  server->config.hd_relay_id >> 8),
+              static_cast<uint8_t>(
+                  server->config.hd_relay_id)};
+          uint8_t info[kHdFrameHeaderSize + kKeySize + 4];
+          int flen = HdBuildPeerInfo(info,
+              result.client_key, ext, 4);
+          if (flen > 0) {
+            auto* buf = static_cast<uint8_t*>(
+                malloc(flen));
+            if (buf) {
+              std::memcpy(buf, info, flen);
+              DpWrite(&server->data_plane,
+                      re.key, buf, flen);
+            }
+          }
+        }
+      }
+
+      // Attempt Level 2 upgrade if enabled.
+      if (server->level2_enabled) {
+        TryIceUpgrade(server, result.client_key);
+      }
+    } else {
+      spdlog::info("HD peer pending approval: {}", hex);
+      // fd stays alive in the registry for later
+      // manual approval. Don't hand to data plane yet.
     }
     return;
   }
@@ -358,6 +670,8 @@ auto ServerInit(Server* server,
   // Apply configuration to data plane context.
   server->data_plane.sockbuf_size = config->sockbuf_size;
   server->data_plane.sqpoll = config->sqpoll ? 1 : 0;
+  server->data_plane.peer_rate_limit =
+      config->peer_rate_limit;
   for (int i = 0; i < num_workers && i < kMaxWorkers;
        i++) {
     server->data_plane.pin_cores[i] =
@@ -390,6 +704,116 @@ auto ServerInit(Server* server,
     }
     server->ktls_enabled = true;
     spdlog::info("kTLS enabled (TLS 1.3 AES-GCM)");
+  }
+
+  // Initialize HD protocol if relay key is configured.
+  if (!config->hd_relay_key.empty()) {
+    if (config->hd_relay_key.size() != kKeySize * 2) {
+      spdlog::error(
+          "HD relay key must be {} hex chars, got {}",
+          kKeySize * 2, config->hd_relay_key.size());
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::DataPlaneInitFailed,
+                       "bad HD relay key length");
+    }
+    Key relay_key{};
+    size_t bin_len = 0;
+    if (sodium_hex2bin(
+            relay_key.data(), kKeySize,
+            config->hd_relay_key.c_str(),
+            config->hd_relay_key.size(),
+            nullptr, &bin_len, nullptr) != 0 ||
+        static_cast<int>(bin_len) != kKeySize) {
+      spdlog::error("HD relay key: invalid hex");
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::DataPlaneInitFailed,
+                       "bad HD relay key hex");
+    }
+    HdPeersInit(&server->hd_peers, relay_key,
+                config->hd_enroll_mode);
+    server->hd_peers.relay_id = config->hd_relay_id;
+    server->hd_enabled = true;
+
+    // Initialize relay table and set relay_id in data
+    // plane context.
+    server->data_plane.relay_id = config->hd_relay_id;
+    if (config->hd_relay_id > 0) {
+      RelayTableInit(&server->relay_table,
+                     config->hd_relay_id);
+      // Enable fleet routing in the control plane.
+      CpEnableFleetRouting(&server->control_plane,
+                           &server->relay_table);
+      spdlog::info("relay table initialized (self_id={})",
+                   config->hd_relay_id);
+    }
+
+    spdlog::info("HD protocol enabled (mode={}, "
+                 "relay_id={})",
+                 config->hd_enroll_mode ==
+                         HdEnrollMode::kAutoApprove
+                     ? "auto"
+                     : "manual",
+                 config->hd_relay_id);
+  }
+
+  // Initialize Level 2 (ICE/TURN/XDP) if enabled.
+  if (config->level2.enabled) {
+    if (!server->hd_enabled) {
+      spdlog::error("Level 2 requires HD protocol");
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::Level2InitFailed,
+                       "Level 2 requires HD");
+    }
+
+    // Initialize ICE agent.
+    // TODO(karl): resolve relay IP from interface.
+    // For now use 0.0.0.0 (will be overridden by STUN).
+    IceInit(&server->ice_agent, 0,
+            config->level2.stun_port);
+
+    // Initialize TURN manager.
+    server->turn_manager = new TurnManager{};
+    TurnInit(server->turn_manager, 0,
+             config->level2.turn_realm.empty()
+                 ? "relay"
+                 : config->level2.turn_realm.c_str());
+
+    // Load XDP program if interface is specified.
+    if (!config->level2.xdp_interface.empty()) {
+      XdpConfig xdp_cfg{};
+      xdp_cfg.interface =
+          config->level2.xdp_interface.c_str();
+      xdp_cfg.stun_port = config->level2.stun_port;
+      xdp_cfg.enabled = true;
+      int rc = XdpLoad(&server->xdp_ctx, &xdp_cfg);
+      if (rc < 0) {
+        spdlog::warn(
+            "XDP load failed (rc={}), continuing "
+            "without XDP fast path", rc);
+        // Non-fatal: ICE works without XDP.
+      }
+    }
+
+    // Enable Level 2 in the control plane.
+    if (CpEnableLevel2(&server->control_plane,
+                       &server->ice_agent,
+                       config->level2.stun_port) < 0) {
+      spdlog::error("Failed to enable Level 2 in "
+                    "control plane");
+      delete server->turn_manager;
+      server->turn_manager = nullptr;
+      DpDestroy(&server->data_plane);
+      return MakeError(ServerError::Level2InitFailed,
+                       "CpEnableLevel2 failed");
+    }
+
+    server->level2_enabled = true;
+    spdlog::info(
+        "Level 2 enabled (STUN port {}, XDP on {})",
+        config->level2.stun_port,
+        config->level2.xdp_interface.empty()
+            ? "none"
+            : config->level2.xdp_interface);
   }
 
   // Create TCP listener.
@@ -464,12 +888,141 @@ auto ServerRun(Server* server,
                server->data_plane.num_workers);
 
   // Start metrics server (if configured).
+  HdServerCounters hd_counters;
+  if (server->hd_enabled) {
+    hd_counters.enrollments = &server->hd_enrollments;
+    hd_counters.auth_failures = &server->hd_auth_failures;
+  }
   server->metrics_server = MetricsStart(
-      server->config.metrics, &server->data_plane);
+      server->config.metrics, &server->data_plane,
+      server->hd_enabled ? &server->hd_peers : nullptr,
+      hd_counters);
+
+  // Connect to seed relays in a background thread.
+  if (!server->config.seed_relays.empty() &&
+      server->hd_enabled &&
+      server->config.hd_relay_id > 0) {
+    server->seed_thread = std::thread([server]() {
+      int seed_idx = 0;
+      for (const auto& seed : server->config.seed_relays) {
+        seed_idx++;
+        // Parse host:port.
+        auto colon = seed.rfind(':');
+        if (colon == std::string::npos) {
+          spdlog::warn("seed relay '{}': missing port",
+                       seed);
+          continue;
+        }
+        std::string host = seed.substr(0, colon);
+        uint16_t port = static_cast<uint16_t>(
+            std::stoi(seed.substr(colon + 1)));
+
+        HdClient client;
+        HdClientInitWithKeys(
+            &client,
+            server->keys.public_key.data(),
+            server->keys.private_key.data(),
+            server->hd_peers.relay_key);
+
+        auto conn = HdClientConnect(
+            &client, host.c_str(), port);
+        if (!conn) {
+          spdlog::warn(
+              "seed relay {}: connect failed: {}",
+              seed, conn.error().message);
+          HdClientClose(&client);
+          continue;
+        }
+
+        // TLS if the server has it enabled.
+        if (!server->config.tls_cert.empty()) {
+          auto tls = HdClientTlsConnect(&client);
+          if (!tls) {
+            spdlog::warn(
+                "seed relay {}: tls failed: {}",
+                seed, tls.error().message);
+            HdClientClose(&client);
+            continue;
+          }
+        }
+
+        auto up = HdClientUpgrade(&client);
+        if (!up) {
+          spdlog::warn(
+              "seed relay {}: upgrade failed: {}",
+              seed, up.error().message);
+          HdClientClose(&client);
+          continue;
+        }
+
+        auto enroll = HdClientEnrollAsRelay(
+            &client, server->config.hd_relay_id);
+        if (!enroll) {
+          spdlog::warn(
+              "seed relay {}: enrollment failed: {}",
+              seed, enroll.error().message);
+          HdClientClose(&client);
+          continue;
+        }
+
+        // Enrolled. Add to relay table and data plane.
+        int fd = client.fd;
+        Key peer_key = client.public_key;
+
+        // Detach the fd from the client (prevent close).
+        client.fd = -1;
+        client.connected = false;
+
+        // Assign a peer_id for this relay peer.
+        uint16_t seed_pid = 0;
+        {
+          std::lock_guard lock(
+              server->hd_peers.mutex);
+          auto* hp = HdPeersInsert(
+              &server->hd_peers, peer_key, fd);
+          if (hp) seed_pid = hp->peer_id;
+        }
+
+        // Hand the fd to the data plane as an HD peer.
+        DpAddPeer(&server->data_plane, fd,
+                  peer_key, PeerProtocol::kHd,
+                  seed_pid);
+        CpOnPeerConnect(&server->control_plane,
+                        peer_key, fd);
+
+        // Add to our relay table so we forward
+        // PeerInfo to this relay.
+        // Guess seed relay_id: for a 2-relay fleet,
+        // if we're 2, seed is 1. Otherwise use the
+        // seed index + 1.
+        uint16_t seed_relay_id =
+            static_cast<uint16_t>(seed_idx + 1);
+        if (seed_relay_id ==
+            server->config.hd_relay_id) {
+          seed_relay_id++;
+        }
+        RelayTableAdd(&server->relay_table,
+                      seed_relay_id, fd,
+                      peer_key, nullptr);
+        if (seed_pid > 0) {
+          server->data_plane.relay_peer_map[
+              seed_relay_id] = seed_pid;
+        }
+        spdlog::info("seed relay registered as "
+                     "relay_id={} (peer_id={})",
+                     seed_relay_id, seed_pid);
+
+        spdlog::info("connected to seed relay {} (fd={})",
+                     seed, fd);
+      }
+    });
+  }
 
   // Poll for external stop signal in a background
   // thread. This bridges the async-signal-safe flag
-  // into the normal shutdown path.
+  // into the normal shutdown path. Drain is performed
+  // here (not in ServerStop) because ServerStop may run
+  // from a signal handler where spdlog/usleep are unsafe.
   std::thread stop_poller;
   if (stop_flag) {
     stop_poller = std::thread([server, stop_flag]() {
@@ -480,6 +1033,7 @@ auto ServerRun(Server* server,
         };
         nanosleep(&ts, nullptr);
       }
+      ServerDrain(server);
       ServerStop(server);
     });
   }
@@ -506,6 +1060,9 @@ auto ServerRun(Server* server,
   if (server->accept_thread.joinable()) {
     server->accept_thread.join();
   }
+  if (server->seed_thread.joinable()) {
+    server->seed_thread.join();
+  }
 
   // Stop and join the control thread.
   CpStop(&server->control_plane);
@@ -518,6 +1075,37 @@ auto ServerRun(Server* server,
                      "DpRun returned error");
   }
   return {};
+}
+
+void ServerDrain(Server* server) {
+  spdlog::info("draining connections...");
+
+  // Shutdown the listen socket to unblock accept().
+  // shutdown() is safe to call while another thread is
+  // blocked in accept() — it causes accept() to return
+  // with EINVAL. close() is deferred to ServerRun.
+  if (server->listen_fd >= 0) {
+    shutdown(server->listen_fd, SHUT_RDWR);
+  }
+
+  // Wait for in-flight sends to complete (max 5s).
+  for (int i = 0; i < 50; i++) {
+    bool has_inflight = false;
+    for (int w = 0; w < server->data_plane.num_workers;
+         w++) {
+      Worker* wk = server->data_plane.workers[w];
+      if (!wk) continue;
+      if (__atomic_load_n(&wk->send_pressure,
+                          __ATOMIC_RELAXED) > 0) {
+        has_inflight = true;
+        break;
+      }
+    }
+    if (!has_inflight) break;
+    usleep(100000);  // 100ms
+  }
+
+  spdlog::info("drain complete");
 }
 
 void ServerStop(Server* server) {
@@ -583,6 +1171,14 @@ void ServerStop(Server* server) {
 void ServerDestroy(Server* server) {
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;
+  if (server->level2_enabled) {
+    if (server->xdp_ctx.attached) {
+      XdpUnload(&server->xdp_ctx);
+    }
+    delete server->turn_manager;
+    server->turn_manager = nullptr;
+    server->level2_enabled = false;
+  }
   if (server->ktls_enabled) {
     KtlsCtxDestroy(&server->ktls_ctx);
     server->ktls_enabled = false;

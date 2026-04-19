@@ -16,6 +16,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include "hyper_derp/hd_bridge.h"
+#include "hyper_derp/hd_protocol.h"
+
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -44,12 +47,27 @@
 
 namespace hyper_derp {
 
+// -- Inline timing -----------------------------------------------------------
+
+static inline uint64_t NowNsRelaxed() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
+         static_cast<uint64_t>(ts.tv_nsec);
+}
+
 // -- Internal forward declarations -------------------------------------------
 
 static void SlabFreeItem(Worker* w, SendItem* item);
 static void FrameFree(Worker* w, uint8_t* buf);
 static int WorkerInitRing(Worker* w);
 static void DrainDeferredRecvs(Worker* w);
+static void ForwardMsg(Worker* w, FrameType type,
+                       uint8_t* payload, int payload_len,
+                       Peer* src);
+static void EnqueueSend(Worker* w, Peer* peer,
+                        uint8_t* data, int len);
+static uint8_t* FrameAlloc(Worker* w, int size);
 
 // -- user_data encoding ------------------------------------------------------
 
@@ -162,6 +180,18 @@ static int HtInsert(Worker* w, int fd,
   p->zc_draining = 0;
   p->poll_write_pending = 0;
   p->send_pending = 0;
+  p->peer_id = 0;
+  p->fwd_count = 0;
+  p->fwd1_dst_fd = -1;
+  p->fwd1_dst_worker = -1;
+  p->fwd1_peer = nullptr;
+  for (int i = 0; i < Peer::kMaxPeerRules; i++) {
+    p->fwd[i].peer = nullptr;
+    p->fwd[i].dst_worker = -1;
+    p->fwd[i].dst_fd = -1;
+  }
+  p->recv_bytes_window = 0;
+  p->window_start_ns = 0;
   return 0;
 }
 
@@ -604,12 +634,24 @@ static int EnqueueCmd(Worker* w, const Cmd* cmd) {
   return -1;
 }
 
-void DpAddPeer(Ctx* ctx, int fd, const Key& key) {
+void DpAddPeer(Ctx* ctx, int fd, const Key& key,
+               PeerProtocol protocol, uint16_t peer_id) {
   int wid = PeerWorker(ctx->num_workers, key);
+  DpAddPeerToWorker(ctx, fd, key, protocol, wid, peer_id);
+}
+
+void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
+                       PeerProtocol protocol, int wid,
+                       uint16_t peer_id) {
+  if (wid < 0 || wid >= ctx->num_workers) {
+    wid = PeerWorker(ctx->num_workers, key);
+  }
   Cmd cmd{};
   cmd.type = kCmdAddPeer;
   cmd.fd = fd;
   cmd.key = key;
+  cmd.protocol = protocol;
+  cmd.peer_id = peer_id;
   EnqueueCmd(ctx->workers[wid], &cmd);
 }
 
@@ -619,6 +661,20 @@ void DpRemovePeer(Ctx* ctx, const Key& key) {
   cmd.type = kCmdRemovePeer;
   cmd.key = key;
   EnqueueCmd(ctx->workers[wid], &cmd);
+}
+
+void DpAddFwdRule(Ctx* ctx, const Key& peer_key,
+                  const Key& dst_key) {
+  int src_wid = PeerWorker(ctx->num_workers, peer_key);
+
+  // Single command to the source worker. The worker
+  // handles migration internally — no cross-worker
+  // command ordering issues.
+  Cmd cmd{};
+  cmd.type = kCmdSetFwdRule;
+  cmd.key = peer_key;
+  cmd.dst_key = dst_key;
+  EnqueueCmd(ctx->workers[src_wid], &cmd);
 }
 
 void DpWrite(Ctx* ctx, const Key& key,
@@ -672,6 +728,8 @@ static int WriteAllBlocking(int fd, const uint8_t* buf,
   return 0;
 }
 
+// -- Direct cross-shard send --------------------------------------------------
+
 // -- io_uring SQE helpers ----------------------------------------------------
 
 /// Get an SQE, flushing the submission queue if full.
@@ -689,6 +747,24 @@ static inline struct io_uring_sqe* GetSqe(Worker* w) {
     w->stats.sq_overflow++;
   }
   return sqe;
+}
+
+/// Submit a send SQE for a fd not owned by this worker.
+/// Used for HD cross-shard forwarding. The buffer is
+/// freed on completion via the bit-63 check in the CQE
+/// loop (no Peer needed).
+static void EnqueueSendDirect(Worker* w, int fd,
+                              uint8_t* buf, int len) {
+  struct io_uring_sqe* sqe = GetSqe(w);
+  if (!sqe) {
+    FrameFree(w, buf);
+    return;
+  }
+  io_uring_prep_send(sqe, fd, buf, len,
+                     MSG_DONTWAIT | MSG_NOSIGNAL);
+  sqe->user_data = reinterpret_cast<uint64_t>(buf) |
+                   (1ULL << 63);
+  w->stats.send_bytes += len;
 }
 
 static void DeferRecv(Worker* w, int fd) {
@@ -827,7 +903,6 @@ static inline bool SubmitPeerSend(Worker* w, Peer* peer,
 
 static void EnqueueSend(Worker* w, Peer* peer,
                         uint8_t* data, int len) {
-  // Drop newest when queue is full (backpressure).
   if (peer->send_queued >= kMaxSendQueueDepth) {
     w->stats.send_queue_drops++;
     FrameFree(w, data);
@@ -969,6 +1044,396 @@ static void FlushPendingSends(Worker* w) {
   w->pending_count = 0;
 }
 
+// -- HD frame dispatch -------------------------------------------------------
+
+/// Returns the header size for the peer's protocol.
+static inline int FrameHdrSize(const Peer* p) {
+  return p->protocol == PeerProtocol::kHd
+             ? kHdFrameHeaderSize
+             : kFrameHeaderSize;
+}
+
+/// Read payload length from header bytes, protocol-aware.
+static inline uint32_t ReadPeerPayloadLen(
+    const Peer* p, const uint8_t* hdr) {
+  if (p->protocol == PeerProtocol::kHd) {
+    return HdReadPayloadLen(hdr);
+  }
+  return ReadPayloadLen(hdr);
+}
+
+/// Validate payload length, protocol-aware.
+static inline bool IsValidPeerPayloadLen(
+    const Peer* p, uint32_t len) {
+  if (p->protocol == PeerProtocol::kHd) {
+    return HdIsValidPayloadLen(len);
+  }
+  return IsValidPayloadLen(len);
+}
+
+// Forward declarations for HD forwarding.
+// frame points to the complete HD frame (header+payload).
+static void ForwardHdData(Worker* w, Peer* src,
+                          const uint8_t* frame,
+                          int frame_len);
+
+/// Push a frame to another worker via the xfer ring.
+static inline void XferPush(Worker* w, int dst_id,
+                            int dst_fd,
+                            uint8_t* buf, int len) {
+  if (dst_id == w->id ||
+      dst_id >= w->ctx->num_workers) {
+    FrameFree(w, buf);
+    return;
+  }
+  Worker* dst_w = w->ctx->workers[dst_id];
+  Xfer x{};
+  x.dst_fd = dst_fd;
+  x.frame = buf;
+  x.frame_len = len;
+  x.dst_gen = __atomic_load_n(
+      &dst_w->fd_gen[dst_fd], __ATOMIC_ACQUIRE);
+  int rc = XferSpscPush(
+      dst_w->xfer_inbox[w->id], &x);
+  if (rc >= 0) {
+    __atomic_fetch_or(
+        &dst_w->pending_sources,
+        1u << static_cast<unsigned>(w->id),
+        __ATOMIC_RELEASE);
+    if (rc == 1) {
+      w->xfer_signal_pending |=
+          (1u << static_cast<unsigned>(dst_id));
+    }
+  } else {
+    FrameFree(w, buf);
+    w->stats.xfer_drops++;
+    w->send_pressure++;
+  }
+}
+
+/// Hot path: forward a single HD Data frame (1:1 rule).
+/// Small function — all forwarding state on cache line 0
+/// of the source Peer (no additional cache misses).
+/// noinline: keep instruction footprint separate from the
+/// multi-type DispatchHdFrame to avoid icache pollution.
+__attribute__((noinline))
+static void ForwardHdData1(Worker* w, Peer* peer,
+                           const uint8_t* hdr,
+                           int frame_len) {
+  uint8_t* buf = FrameAlloc(w, frame_len);
+  if (!buf) return;
+  memcpy(buf, hdr, frame_len);
+
+  Peer* dst = peer->fwd1_peer;
+  if (dst && dst->occupied == 1) {
+    EnqueueSend(w, dst, buf, frame_len);
+    return;
+  }
+  if (peer->fwd1_dst_fd >= 0) {
+    XferPush(w, peer->fwd1_dst_worker,
+             peer->fwd1_dst_fd, buf, frame_len);
+    return;
+  }
+  // First frame: lazy resolve via fwd[0].key.
+  dst = HtLookup(w, peer->fwd[0].key.data());
+  if (dst) {
+    peer->fwd1_peer = dst;
+    peer->fwd[0].peer = dst;
+    EnqueueSend(w, dst, buf, frame_len);
+    return;
+  }
+  Route* rt = RouteLookup(w->routes,
+      peer->fwd[0].key.data());
+  if (!rt) {
+    w->stats.hd_fwd_no_route++;
+    FrameFree(w, buf);
+    return;
+  }
+  peer->fwd1_dst_fd = rt->fd;
+  peer->fwd1_dst_worker = rt->worker_id;
+  peer->fwd[0].dst_fd = rt->fd;
+  peer->fwd[0].dst_worker = rt->worker_id;
+  XferPush(w, rt->worker_id, rt->fd,
+           buf, frame_len);
+}
+
+/// Dispatch a complete HD frame.
+static void DispatchHdFrame(Worker* w, Peer* peer,
+                            const uint8_t* hdr,
+                            int payload_len) {
+  auto hd_type = HdReadFrameType(hdr);
+  const uint8_t* payload = hdr + kHdFrameHeaderSize;
+
+  if (hd_type == HdFrameType::kData) {
+    int frame_len = kHdFrameHeaderSize + payload_len;
+    if (__builtin_expect(peer->fwd_count == 1, 1)) {
+      ForwardHdData1(w, peer, hdr, frame_len);
+      return;
+    }
+    ForwardHdData(w, peer, hdr, frame_len);
+  } else if (hd_type == HdFrameType::kPing &&
+             payload_len == kHdPingDataSize) {
+    uint8_t pong[kHdFrameHeaderSize + kHdPingDataSize];
+    HdBuildPong(pong, payload);
+    uint8_t* buf = FrameAlloc(w, sizeof(pong));
+    if (buf) {
+      memcpy(buf, pong, sizeof(pong));
+      EnqueueSend(w, peer, buf,
+                  static_cast<int>(sizeof(pong)));
+    }
+  } else if (hd_type == HdFrameType::kMeshData) {
+    // MeshData: [4B header][2B dst_peer_id][payload]
+    // Route to a specific peer by local peer ID. The
+    // frame is converted to a plain Data frame for the
+    // receiver (strip mesh header, rewrite type).
+    if (payload_len < kHdMeshDstSize) return;
+    uint16_t dst_id = HdReadMeshDst(payload);
+
+    // O(1) lookup via peer ID map (same-shard).
+    Peer* dst = nullptr;
+    if (w->peer_id_map && dst_id > 0) {
+      dst = w->peer_id_map[dst_id];
+    }
+
+    // Build a MeshData frame for the destination.
+    // Keep the mesh header so the receiver knows the
+    // source peer ID (rewritten to sender's ID).
+    int fwd_frame_len =
+        kHdFrameHeaderSize + payload_len;
+    uint8_t* buf = FrameAlloc(w, fwd_frame_len);
+    if (!buf) return;
+    // Rewrite: set type=MeshData, replace dst_peer_id
+    // with src_peer_id so receiver knows who sent it.
+    HdWriteFrameHeader(buf, HdFrameType::kMeshData,
+        static_cast<uint32_t>(payload_len));
+    uint16_t src_id = peer->peer_id;
+    buf[kHdFrameHeaderSize] =
+        static_cast<uint8_t>(src_id >> 8);
+    buf[kHdFrameHeaderSize + 1] =
+        static_cast<uint8_t>(src_id);
+    memcpy(buf + kHdFrameHeaderSize + kHdMeshDstSize,
+           payload + kHdMeshDstSize,
+           payload_len - kHdMeshDstSize);
+
+    if (dst && dst->occupied == 1) {
+      // Same-shard.
+      EnqueueSend(w, dst, buf, fwd_frame_len);
+    } else {
+      // Cross-shard: look up route by scanning all
+      // workers' peer_id_maps via the route table.
+      // For now, broadcast to all workers via xfer.
+      bool sent = false;
+      for (int wi = 0; wi < w->ctx->num_workers; wi++) {
+        if (wi == w->id) continue;
+        Worker* dw = w->ctx->workers[wi];
+        if (dw->peer_id_map &&
+            dw->peer_id_map[dst_id]) {
+          // Found the worker. Use xfer.
+          int dst_fd = dw->peer_id_map[dst_id]->fd;
+          XferPush(w, wi, dst_fd, buf, fwd_frame_len);
+          sent = true;
+          break;
+        }
+      }
+      if (!sent) FrameFree(w, buf);
+    }
+    w->stats.hd_mesh_forwards++;
+  } else if (hd_type == HdFrameType::kFleetData) {
+    // FleetData: [4B header][2B relay_id][2B peer_id]
+    // [payload]
+    if (payload_len < kHdFleetDstSize) return;
+    uint16_t dst_relay = HdReadFleetRelay(payload);
+    uint16_t dst_peer = HdReadFleetPeer(payload);
+
+    if (dst_relay == w->ctx->relay_id ||
+        dst_relay == 0) {
+      // Local delivery: route to local peer by ID.
+      Peer* dst = nullptr;
+      if (w->peer_id_map && dst_peer > 0) {
+        dst = w->peer_id_map[dst_peer];
+      }
+      if (!dst || dst->occupied != 1) return;
+
+      // Convert to MeshData with source peer_id so the
+      // receiving client can dispatch to the right tunnel.
+      int fwd_payload = payload_len - kHdFleetDstSize;
+      int mesh_payload = kHdMeshDstSize + fwd_payload;
+      int frame_len =
+          kHdFrameHeaderSize + mesh_payload;
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) return;
+      HdWriteFrameHeader(buf, HdFrameType::kMeshData,
+          static_cast<uint32_t>(mesh_payload));
+      // Set src_peer_id from the sending peer.
+      uint16_t src_id = peer->peer_id;
+      buf[kHdFrameHeaderSize] =
+          static_cast<uint8_t>(src_id >> 8);
+      buf[kHdFrameHeaderSize + 1] =
+          static_cast<uint8_t>(src_id);
+      memcpy(buf + kHdFrameHeaderSize + kHdMeshDstSize,
+             payload + kHdFleetDstSize, fwd_payload);
+      EnqueueSend(w, dst, buf, frame_len);
+      w->stats.hd_fleet_forwards++;
+    } else {
+      // Remote delivery: forward to next-hop relay
+      // peer via relay_peer_map.
+      uint16_t next_peer =
+          w->ctx->relay_peer_map[dst_relay];
+      if (next_peer == 0 || !w->peer_id_map) return;
+      Peer* relay_peer =
+          w->peer_id_map[next_peer];
+      if (!relay_peer || relay_peer->occupied != 1)
+        return;
+
+      // Forward entire FleetData frame as-is.
+      int frame_len =
+          kHdFrameHeaderSize + payload_len;
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) return;
+      memcpy(buf, hdr, frame_len);
+      EnqueueSend(w, relay_peer, buf, frame_len);
+      w->stats.hd_fleet_forwards++;
+    }
+  } else if (hd_type == HdFrameType::kPeerInfo) {
+    // If from a relay peer, broadcast to all local HD
+    // peers (cross-relay peer discovery).
+    if (peer->peer_id > 0 && w->ctx->relay_id > 0) {
+      int frame_len = kHdFrameHeaderSize + payload_len;
+      for (int i = 0; i < kHtCapacity; i++) {
+        Peer* dst = &w->ht[i];
+        if (dst->occupied != 1 || dst == peer) continue;
+        if (dst->protocol != PeerProtocol::kHd) continue;
+        uint8_t* buf = FrameAlloc(w, frame_len);
+        if (!buf) continue;
+        memcpy(buf, hdr, frame_len);
+        EnqueueSend(w, dst, buf, frame_len);
+      }
+    }
+  } else if (hd_type == HdFrameType::kRouteAnnounce) {
+    // Forward RouteAnnounce to control plane.
+    // Pipe format: [4B fd BE][1B type][4B len BE][payload].
+    uint8_t fd_buf[4];
+    fd_buf[0] = static_cast<uint8_t>(peer->fd >> 24);
+    fd_buf[1] = static_cast<uint8_t>(peer->fd >> 16);
+    fd_buf[2] = static_cast<uint8_t>(peer->fd >> 8);
+    fd_buf[3] = static_cast<uint8_t>(peer->fd);
+    uint8_t tag = static_cast<uint8_t>(hd_type);
+    uint8_t len_buf[4];
+    len_buf[0] =
+        static_cast<uint8_t>(payload_len >> 24);
+    len_buf[1] =
+        static_cast<uint8_t>(payload_len >> 16);
+    len_buf[2] =
+        static_cast<uint8_t>(payload_len >> 8);
+    len_buf[3] =
+        static_cast<uint8_t>(payload_len);
+    (void)WriteAllBlocking(w->pipe_wr, fd_buf, 4);
+    (void)WriteAllBlocking(w->pipe_wr, &tag, 1);
+    (void)WriteAllBlocking(w->pipe_wr, len_buf, 4);
+    (void)WriteAllBlocking(w->pipe_wr, payload,
+                           payload_len);
+  }
+  // Other HD frame types (PeerGone) are control frames
+  // handled elsewhere.
+}
+
+/// Dispatch a complete frame based on peer protocol.
+/// ForwardMsg takes non-const payload for historical
+/// reasons; the cast is safe because it only reads.
+static inline void DispatchFrame(Worker* w, Peer* peer,
+                                 const uint8_t* hdr,
+                                 int payload_len) {
+  if (peer->protocol == PeerProtocol::kHd) {
+    DispatchHdFrame(w, peer, hdr, payload_len);
+  } else {
+    auto* payload = const_cast<uint8_t*>(
+        hdr + kFrameHeaderSize);
+    ForwardMsg(w, ReadFrameType(hdr),
+               payload, payload_len, peer);
+  }
+}
+
+// -- Forwarding (HD protocol) ------------------------------------------------
+
+/// Forward a complete HD frame. Mirrors ForwardMsg's
+/// inline pattern: one alloc, one lookup, one send.
+/// No per-packet hash. No header rebuild.
+static void ForwardHdData(Worker* w, Peer* src,
+                          const uint8_t* frame,
+                          int frame_len) {
+  if (src->fwd_count <= 0) {
+    // No rules: broadcast to all same-shard HD peers.
+    for (int i = 0; i < kHtCapacity; i++) {
+      Peer* dst = &w->ht[i];
+      if (dst->occupied != 1 || dst == src) continue;
+      if (dst->protocol != PeerProtocol::kHd) continue;
+      uint8_t* buf = FrameAlloc(w, frame_len);
+      if (!buf) continue;
+      memcpy(buf, frame, frame_len);
+      EnqueueSend(w, dst, buf, frame_len);
+    }
+    return;
+  }
+
+  // Rule-based: one alloc + send per rule, same pattern
+  // as ForwardMsg.
+  for (int r = 0; r < src->fwd_count; r++) {
+    uint8_t* buf = FrameAlloc(w, frame_len);
+    if (!buf) return;
+    memcpy(buf, frame, frame_len);
+
+    Peer* dst = src->fwd[r].peer;
+    if (dst && dst->occupied == 1) {
+      EnqueueSend(w, dst, buf, frame_len);
+      continue;
+    }
+    int dst_fd = src->fwd[r].dst_fd;
+    int dst_id = src->fwd[r].dst_worker;
+    if (dst_fd < 0) {
+      dst = HtLookup(w, src->fwd[r].key.data());
+      if (dst) {
+        src->fwd[r].peer = dst;
+        EnqueueSend(w, dst, buf, frame_len);
+        continue;
+      }
+      Route* rt = RouteLookup(w->routes,
+          src->fwd[r].key.data());
+      if (rt) {
+        src->fwd[r].dst_worker = rt->worker_id;
+        src->fwd[r].dst_fd = rt->fd;
+        dst_fd = rt->fd;
+        dst_id = rt->worker_id;
+      }
+    }
+    if (dst_fd < 0) {
+      FrameFree(w, buf);
+      continue;
+    }
+    XferPush(w, dst_id, dst_fd, buf, frame_len);
+  }
+
+  // Forward to same-shard DERP peers via bridge.
+  const uint8_t* hd_payload = frame + kHdFrameHeaderSize;
+  int hd_payload_len = frame_len - kHdFrameHeaderSize;
+  for (int i = 0; i < kHtCapacity; i++) {
+    Peer* dst = &w->ht[i];
+    if (dst->occupied != 1 || dst == src) continue;
+    if (dst->protocol != PeerProtocol::kDerp) continue;
+    uint8_t derp_frame[kFrameHeaderSize + kKeySize +
+                       kMaxFramePayload];
+    int derp_len = BridgeHdToDerp(
+        hd_payload, hd_payload_len, src->key,
+        derp_frame, sizeof(derp_frame));
+    if (derp_len > 0) {
+      uint8_t* buf = FrameAlloc(w, derp_len);
+      if (buf) {
+        memcpy(buf, derp_frame, derp_len);
+        EnqueueSend(w, dst, buf, derp_len);
+      }
+    }
+  }
+}
+
 // -- Forwarding (DERP protocol) ----------------------------------------------
 
 static void SendToPipe(Worker* w, int fd,
@@ -1040,6 +1505,23 @@ static void ForwardMsg(Worker* w, FrameType type,
   // Same-shard fast path.
   Peer* dst = HtLookup(w, dst_key);
   if (dst) {
+    if (dst->protocol == PeerProtocol::kHd) {
+      // DERP source -> HD destination: bridge.
+      FrameFree(w, frame);
+      uint8_t hd_frame[kHdFrameHeaderSize +
+                        kMaxFramePayload];
+      int hd_len = BridgeDerpToHd(
+          payload, payload_len,
+          hd_frame, sizeof(hd_frame));
+      if (hd_len > 0) {
+        uint8_t* buf = FrameAlloc(w, hd_len);
+        if (buf) {
+          memcpy(buf, hd_frame, hd_len);
+          EnqueueSend(w, dst, buf, hd_len);
+        }
+      }
+      return;
+    }
     EnqueueSend(w, dst, frame, frame_len);
     return;
   }
@@ -1073,6 +1555,7 @@ static void ForwardMsg(Worker* w, FrameType type,
   } else {
     FrameFree(w, frame);
     w->stats.xfer_drops++;
+    w->send_pressure++;
   }
 }
 
@@ -1120,27 +1603,44 @@ static void HandleRecvProvided(Worker* w,
 
     int n = cqe->res;
     w->stats.recv_bytes += n;
+
+    // Per-peer rate limiting.
+    if (w->ctx->peer_rate_limit > 0) {
+      uint64_t now = NowNsRelaxed();
+      if (now - peer->window_start_ns > 1000000000ULL) {
+        peer->recv_bytes_window = 0;
+        peer->window_start_ns = now;
+      }
+      peer->recv_bytes_window += n;
+      if (peer->recv_bytes_window >
+          w->ctx->peer_rate_limit) {
+        w->stats.rate_limit_drops++;
+        goto return_buf;
+      }
+    }
+
     int off = 0;
 
     // Complete any partial frame in rbuf.
+    int hdr_size = FrameHdrSize(peer);
     if (peer->rbuf_len > 0) {
-      while (peer->rbuf_len < kFrameHeaderSize &&
+      while (peer->rbuf_len < hdr_size &&
              off < n) {
         peer->rbuf[peer->rbuf_len++] = buf[off++];
       }
-      if (peer->rbuf_len < kFrameHeaderSize) {
+      if (peer->rbuf_len < hdr_size) {
         goto return_buf;
       }
 
       uint32_t payload_len =
-          ReadPayloadLen(peer->rbuf);
-      if (!IsValidPayloadLen(payload_len)) {
+          ReadPeerPayloadLen(peer, peer->rbuf);
+      if (!IsValidPeerPayloadLen(peer, payload_len)) {
         NotifyPeerClose(w, peer);
         peer->rbuf_len = 0;
         goto return_buf;
       }
 
-      int frame_len = kFrameHeaderSize +
+      int frame_len = hdr_size +
                       static_cast<int>(payload_len);
       int need = frame_len - peer->rbuf_len;
       if (need > n - off) {
@@ -1153,9 +1653,8 @@ static void HandleRecvProvided(Worker* w,
       memcpy(peer->rbuf + peer->rbuf_len,
              buf + off, need);
       off += need;
-      ForwardMsg(w, ReadFrameType(peer->rbuf),
-                 peer->rbuf + kFrameHeaderSize,
-                 static_cast<int>(payload_len), peer);
+      DispatchFrame(w, peer, peer->rbuf,
+                    static_cast<int>(payload_len));
       peer->rbuf_len = 0;
     }
 
@@ -1164,21 +1663,20 @@ static void HandleRecvProvided(Worker* w,
     // extra batch after shutdown signal.
     int running = __atomic_load_n(
         &w->running, __ATOMIC_ACQUIRE);
-    while (running && off + kFrameHeaderSize <= n) {
+    while (running && off + hdr_size <= n) {
       uint32_t payload_len =
-          ReadPayloadLen(buf + off);
-      if (!IsValidPayloadLen(payload_len)) {
+          ReadPeerPayloadLen(peer, buf + off);
+      if (!IsValidPeerPayloadLen(peer, payload_len)) {
         NotifyPeerClose(w, peer);
         goto return_buf;
       }
-      int frame_len = kFrameHeaderSize +
+      int frame_len = hdr_size +
                       static_cast<int>(payload_len);
       if (off + frame_len > n) {
         break;
       }
-      ForwardMsg(w, ReadFrameType(buf + off),
-                 buf + off + kFrameHeaderSize,
-                 static_cast<int>(payload_len), peer);
+      DispatchFrame(w, peer, buf + off,
+                    static_cast<int>(payload_len));
       off += frame_len;
     }
 
@@ -1223,24 +1721,24 @@ static void HandleRecvSingle(Worker* w,
   w->stats.recv_bytes += n;
   peer->rbuf_len += n;
 
+  int hdr_size = FrameHdrSize(peer);
   int running = __atomic_load_n(
       &w->running, __ATOMIC_ACQUIRE);
-  while (running && peer->rbuf_len >= kFrameHeaderSize) {
+  while (running && peer->rbuf_len >= hdr_size) {
     uint32_t payload_len =
-        ReadPayloadLen(peer->rbuf);
-    if (!IsValidPayloadLen(payload_len)) {
+        ReadPeerPayloadLen(peer, peer->rbuf);
+    if (!IsValidPeerPayloadLen(peer, payload_len)) {
       NotifyPeerClose(w, peer);
       return;
     }
-    int frame_len = kFrameHeaderSize +
+    int frame_len = hdr_size +
                     static_cast<int>(payload_len);
     if (peer->rbuf_len < frame_len) {
       break;
     }
 
-    ForwardMsg(w, ReadFrameType(peer->rbuf),
-               peer->rbuf + kFrameHeaderSize,
-               static_cast<int>(payload_len), peer);
+    DispatchFrame(w, peer, peer->rbuf,
+                  static_cast<int>(payload_len));
 
     int remaining = peer->rbuf_len - frame_len;
     if (remaining > 0) {
@@ -1540,9 +2038,23 @@ static void ProcessCmdAdd(Worker* w, Cmd* cmd) {
   if (!p) {
     return;
   }
+  p->protocol = cmd->protocol;
+  p->peer_id = cmd->peer_id;
   w->fd_map[cmd->fd] = p;
   w->fd_gen[cmd->fd]++;
   w->peer_count++;
+
+  // Register in peer ID lookup table for MeshData routing.
+  if (cmd->protocol == PeerProtocol::kHd &&
+      cmd->peer_id > 0) {
+    if (!w->peer_id_map) {
+      w->peer_id_map = static_cast<Peer**>(
+          calloc(65536, sizeof(Peer*)));
+    }
+    if (w->peer_id_map) {
+      w->peer_id_map[cmd->peer_id] = p;
+    }
+  }
 
   BroadcastRouteAdd(w->ctx, cmd->key, w->id, cmd->fd);
 
@@ -1582,6 +2094,10 @@ static void ProcessCmdRemove(Worker* w, Cmd* cmd) {
   Peer* p = HtLookup(w, cmd->key.data());
   if (!p) {
     return;
+  }
+  // Clear peer ID map entry before removal.
+  if (p->peer_id > 0 && w->peer_id_map) {
+    w->peer_id_map[p->peer_id] = nullptr;
   }
   int fd = p->fd;
   if (fd >= 0 && fd < kMaxFd) {
@@ -1629,6 +2145,55 @@ static void ProcessCommands(Worker* w) {
       case kCmdWrite:
         ProcessCmdWrite(w, &cmd);
         break;
+      case kCmdSetFwdRule: {
+        Peer* p = HtLookup(w, cmd.key.data());
+        if (!p || p->fwd_count >= Peer::kMaxPeerRules) {
+          break;
+        }
+        int idx = p->fwd_count;
+        p->fwd[idx].key = cmd.dst_key;
+
+        Peer* dst = HtLookup(w, cmd.dst_key.data());
+        p->fwd[idx].peer = dst;
+        if (!dst) {
+          Route* rt = RouteLookup(w->routes,
+              cmd.dst_key.data());
+          if (rt) {
+            p->fwd[idx].dst_worker = rt->worker_id;
+            p->fwd[idx].dst_fd = rt->fd;
+          }
+        }
+        // Populate hot 1:1 fields for the first rule.
+        if (idx == 0) {
+          p->fwd1_peer = dst;
+          if (!dst) {
+            p->fwd1_dst_fd = p->fwd[0].dst_fd;
+            p->fwd1_dst_worker = p->fwd[0].dst_worker;
+          }
+        }
+        p->fwd_count++;
+        break;
+      }
+      case kCmdMovePeerOut: {
+        // Remove peer from this worker without closing
+        // the fd. Used for same-shard migration.
+        Peer* p = HtLookup(w, cmd.key.data());
+        if (p) {
+          // Clear peer ID map entry before removal.
+          if (p->peer_id > 0 && w->peer_id_map) {
+            w->peer_id_map[p->peer_id] = nullptr;
+          }
+          int fd = p->fd;
+          if (fd >= 0 && fd < kMaxFd) {
+            w->fd_map[fd] = nullptr;
+          }
+          HtRemove(w, cmd.key);
+          // Don't broadcast route remove — the re-add
+          // on the new worker will update the route.
+          if (w->peer_count > 0) w->peer_count--;
+        }
+        break;
+      }
       case kCmdStop:
         w->running = 0;
         break;
@@ -1761,6 +2326,15 @@ static void* WorkerRun(void* arg) {
       int nr = 0;
       io_uring_for_each_cqe(&w->ring, head, c) {
         if (nr >= kMaxCqeBatch) break;
+        // Direct send completion: bit 63 marks a
+        // cross-shard send with an embedded buffer ptr.
+        if (c->user_data & (1ULL << 63)) {
+          auto* buf = reinterpret_cast<uint8_t*>(
+              c->user_data & ~(1ULL << 63));
+          FrameFree(w, buf);
+          nr++;
+          continue;
+        }
         uint8_t op = UdOp(c->user_data);
         switch (op) {
           case kOpRecv:
@@ -1838,6 +2412,12 @@ static void* WorkerRun(void* arg) {
       int dnr = 0;
       io_uring_for_each_cqe(&w->ring, dhead, dcqe) {
         dnr++;
+        if (dcqe->user_data & (1ULL << 63)) {
+          auto* buf = reinterpret_cast<uint8_t*>(
+              dcqe->user_data & ~(1ULL << 63));
+          FrameFree(w, buf);
+          continue;
+        }
         uint8_t dop = UdOp(dcqe->user_data);
         if (dop == kOpSend) {
           HandleSendCqe(w, dcqe);
@@ -2130,6 +2710,9 @@ static void WorkerDestroy(Worker* w, Ctx* ctx) {
       w->xfer_inbox[i] = nullptr;
     }
   }
+
+  free(w->peer_id_map);
+  w->peer_id_map = nullptr;
 
   FramePoolDestroy(w);
   SlabDestroy(w);

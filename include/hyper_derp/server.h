@@ -12,15 +12,30 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
+#include "hyper_derp/hd_peers.h"
+#include "hyper_derp/hd_relay_table.h"
+#include "hyper_derp/ice.h"
 #include "hyper_derp/ktls.h"
 #include "hyper_derp/metrics.h"
+#include "hyper_derp/turn.h"
+#include "hyper_derp/xdp_loader.h"
 
 namespace hyper_derp {
+
+/// Connection level for a peer pair. Level 0 (DERP) is
+/// managed by the standard DERP data plane. Level 1 (HD) and
+/// Level 2 (Direct) are HD protocol extensions.
+enum class ConnectionLevel : uint8_t {
+  kDerp = 0,    // Level 0: standard DERP relay
+  kHd = 1,      // Level 1: HD protocol relay
+  kDirect = 2,  // Level 2: direct path (ICE)
+};
 
 /// Error codes for ServerInit / ServerRun.
 enum class ServerError {
@@ -40,6 +55,8 @@ enum class ServerError {
   DataPlaneRunFailed,
   /// kTLS initialization failed.
   KtlsInitFailed,
+  /// Level 2 initialization failed.
+  Level2InitFailed,
 };
 
 /// Human-readable name for a ServerError code.
@@ -62,6 +79,8 @@ constexpr auto ServerErrorName(ServerError e)
       return "DataPlaneRunFailed";
     case ServerError::KtlsInitFailed:
       return "KtlsInitFailed";
+    case ServerError::Level2InitFailed:
+      return "Level2InitFailed";
   }
   return "Unknown";
 }
@@ -84,7 +103,29 @@ struct ServerConfig {
   bool sqpoll = false;
   /// Metrics HTTP server configuration.
   MetricsConfig metrics;
+  /// HD Protocol relay key (32-byte shared secret).
+  /// Empty string = HD protocol disabled.
+  std::string hd_relay_key;
+  /// HD enrollment mode.
+  HdEnrollMode hd_enroll_mode = HdEnrollMode::kManual;
+  /// This relay's fleet ID (0 = standalone, no fleet).
+  uint16_t hd_relay_id = 0;
+  /// Seed relays for fleet bootstrapping ("host:port").
+  std::vector<std::string> seed_relays;
   std::array<int, kMaxWorkers> pin_cores{};
+  /// Per-peer receive rate limit in bytes/sec. 0 = unlimited.
+  uint64_t peer_rate_limit = 0;
+
+  /// Level 2 (direct path) configuration.
+  struct Level2Config {
+    bool enabled = false;
+    uint16_t stun_port = 3478;
+    /// NIC name for XDP attachment (e.g. "eth0").
+    std::string xdp_interface;
+    std::string turn_realm;
+    int turn_max_allocations = 10000;
+    int turn_default_lifetime = 600;
+  } level2;
 
   ServerConfig() { pin_cores.fill(-1); }
 };
@@ -97,11 +138,26 @@ struct Server {
   ControlPlane control_plane{};
   KtlsCtx ktls_ctx{};
   bool ktls_enabled = false;
+  HdPeerRegistry hd_peers{};
+  RelayTable relay_table{};
+  bool hd_enabled = false;
   int listen_fd = -1;
   std::atomic<int> running{0};
   std::thread accept_thread;
   std::thread control_thread;
+  std::thread seed_thread;
   MetricsServer* metrics_server = nullptr;
+
+  // Level 2 (direct path) subsystems.
+  IceAgent ice_agent{};
+  TurnManager* turn_manager = nullptr;
+  XdpContext xdp_ctx{};
+  bool level2_enabled = false;
+
+  // Server-level HD counters (incremented from accept
+  // thread, read with relaxed atomics).
+  std::atomic<uint64_t> hd_enrollments{0};
+  std::atomic<uint64_t> hd_auth_failures{0};
 };
 
 /// @brief Initializes the server.
@@ -126,9 +182,26 @@ auto ServerRun(Server* server,
 /// @param server Running server.
 void ServerStop(Server* server);
 
+/// @brief Drains in-flight connections before shutdown.
+///
+/// Closes the listen socket to stop new connections, then
+/// waits up to 5 seconds for in-flight sends to complete.
+/// @param server Running server.
+void ServerDrain(Server* server);
+
 /// @brief Tears down the server, freeing all resources.
 /// @param server Server to destroy.
 void ServerDestroy(Server* server);
+
+/// @brief Attempt Level 2 ICE upgrade for a new HD peer.
+///
+/// Called after a new HD peer connects. Checks the HD peer
+/// registry for other approved peers with matching forwarding
+/// rules and starts ICE sessions for each eligible pair.
+/// @param server Server with Level 2 enabled.
+/// @param new_peer_key The newly connected HD peer's key.
+void TryIceUpgrade(Server* server,
+                   const Key& new_peer_key);
 
 }  // namespace hyper_derp
 

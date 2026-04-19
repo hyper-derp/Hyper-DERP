@@ -1,0 +1,30 @@
+[Unit]
+Description=HD WireGuard Tunnel Daemon
+After=network-online.target
+Wants=network-online.target
+Documentation=https://hyper-derp.dev/docs/hd-wg
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hd-wg --config /etc/hd-wg/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+
+# Needs root for wireguard.ko netlink + interface config.
+User=root
+
+# Security hardening.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/tmp
+PrivateTmp=yes
+ProtectKernelTunables=no
+ProtectKernelModules=no
+
+# wireguard.ko needs these.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

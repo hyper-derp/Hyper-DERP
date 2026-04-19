@@ -11,8 +11,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstring>
 
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/server.h"
 
 namespace hyper_derp {
@@ -75,13 +77,65 @@ pid_t StartRelay(uint16_t port, int num_workers,
       _exit(1);
     }
 
-    // Re-install SIGTERM to stop cleanly.
-    static Server* g_srv = &server;
+    // Use stop_flag pattern: signal handler sets flag,
+    // ServerRun's stop_poller drains + stops cleanly.
+    static std::atomic<int> stop_flag{0};
     struct sigaction sa = {};
-    sa.sa_handler = [](int) { ServerStop(g_srv); };
+    sa.sa_handler = [](int) {
+      stop_flag.store(1, std::memory_order_release);
+    };
     sigaction(SIGTERM, &sa, nullptr);
 
-    (void)ServerRun(&server);
+    (void)ServerRun(&server, &stop_flag);
+    ServerDestroy(&server);
+    _exit(0);
+  }
+
+  return pid;
+}
+
+pid_t StartHdRelay(uint16_t port, int num_workers,
+                   const Key& relay_key) {
+  pid_t pid = fork();
+  if (pid < 0) {
+    return -1;
+  }
+
+  if (pid == 0) {
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+
+    ServerConfig config;
+    config.port = port;
+    config.num_workers = num_workers;
+
+    // Convert relay key to hex string for config.
+    char hex[kKeySize * 2 + 1];
+    for (int i = 0; i < kKeySize; i++) {
+      static const char digits[] = "0123456789abcdef";
+      hex[i * 2] = digits[relay_key[i] >> 4];
+      hex[i * 2 + 1] = digits[relay_key[i] & 0x0f];
+    }
+    hex[kKeySize * 2] = '\0';
+    config.hd_relay_key = hex;
+    config.hd_enroll_mode = HdEnrollMode::kAutoApprove;
+
+    Server server;
+    if (!ServerInit(&server, &config)) {
+      _exit(1);
+    }
+
+    // Use stop_flag pattern: signal handler sets flag,
+    // ServerRun's stop_poller drains + stops cleanly.
+    static std::atomic<int> stop_flag{0};
+    struct sigaction sa = {};
+    sa.sa_handler = [](int) {
+      stop_flag.store(1, std::memory_order_release);
+    };
+    sigaction(SIGTERM, &sa, nullptr);
+
+    (void)ServerRun(&server, &stop_flag);
     ServerDestroy(&server);
     _exit(0);
   }

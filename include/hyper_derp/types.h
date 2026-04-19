@@ -154,6 +154,8 @@ enum CmdType : uint8_t {
   kCmdRemovePeer = 2,
   kCmdWrite = 3,
   kCmdStop = 4,
+  kCmdSetFwdRule = 5,
+  kCmdMovePeerOut = 6,
 };
 
 // -- Data-oriented structs ---------------------------------------------------
@@ -165,29 +167,60 @@ struct SendItem {
   SendItem* next;
 };
 
+/// Protocol type for each peer connection.
+enum class PeerProtocol : uint8_t {
+  kDerp = 0,
+  kHd   = 1,
+};
+
 /// Per-peer mutable state. Stored in a flat hash table
 /// indexed by peer key. Fields are ordered hot-to-cold.
 /// rbuf is allocated separately to keep the hot struct
 /// small for hash table probing (~96 bytes vs ~1540).
 struct Peer {
-  // Hot: accessed every packet.
+  // --- Cache line 0: recv + forwarding hot path ---
+  // Recv: touched on every received frame.
   int fd;
   int rbuf_len;
   uint8_t occupied;  // 0=empty, 1=live, 2=tombstone
+  PeerProtocol protocol = PeerProtocol::kDerp;
+  uint16_t peer_id = 0;
+  // HD 1:1 forwarding: touched on every forwarded HD
+  // Data frame. Same cache line as fd/occupied — zero
+  // additional cache misses for the common case.
+  int fwd_count = 0;
+  int fwd1_dst_fd = -1;
+  int fwd1_dst_worker = -1;
+  Peer* fwd1_peer = nullptr;
+  // Remaining line 0 space: send-path fields that fit.
+  int send_inflight;
+  int send_queued;
+  int send_pending;  // Queued items await first submit.
 
-  // Warm: accessed on send path.
+  // --- Cache line 1: send path ---
   SendItem* send_head;
   SendItem* send_tail;
   SendItem* send_next;
-  int send_inflight;
-  int send_queued;
   int no_zc;
   int zc_draining;
   int poll_write_pending;
-  int send_pending;  // Queued items await first submit.
+
+  // Full rule table for multi-rule/MeshData paths.
+  static constexpr int kMaxPeerRules = 16;
+  struct FwdRule {
+    Peer* peer;
+    Key key;
+    int dst_fd;
+    int dst_worker;
+  };
+  FwdRule fwd[kMaxPeerRules]{};
 
   // Cold: accessed on connect/disconnect.
   Key key;
+
+  // Per-peer rate limiting.
+  uint64_t recv_bytes_window = 0;  // Bytes in current window.
+  uint64_t window_start_ns = 0;   // Window start time.
 
   // Per-peer read buffer for frame reassembly (heap).
   uint8_t* rbuf;
@@ -209,6 +242,10 @@ struct Cmd {
   Key key;
   uint8_t* data;
   int data_len;
+  PeerProtocol protocol = PeerProtocol::kDerp;
+  uint16_t peer_id = 0;  // HD peer ID for MeshData routing.
+  Key dst_key;  // For kCmdSetFwdRule.
+  int retries = 0;  // Self-retry counter.
 };
 
 /// Cross-shard transfer item. Carries a pre-framed buffer
@@ -237,6 +274,12 @@ struct WorkerStats {
   uint64_t recv_pauses;
   uint64_t frame_pool_hits;
   uint64_t frame_pool_misses;
+  uint64_t hd_mesh_forwards;
+  uint64_t hd_fleet_forwards;
+  uint64_t rate_limit_drops;
+  uint64_t hd_fwd_no_rule;
+  uint64_t hd_fwd_no_route;
+  uint64_t hd_fwd_same_worker;
 };
 
 /// SPSC ring buffer for commands to a worker.
@@ -279,6 +322,10 @@ struct Worker {
 
   // fd → Peer* map for O(1) lookup by fd.
   Peer* fd_map[kMaxFd];
+
+  // HD peer ID → Peer* for MeshData O(1) routing.
+  // Allocated lazily on first HD peer (65536 × 8 = 512 KB).
+  Peer** peer_id_map = nullptr;
 
   // Per-fd generation counter (guards against fd reuse
   // races in cross-shard transfers).
@@ -363,6 +410,10 @@ struct Worker {
   pthread_t thread;
 };
 
+/// Per-peer receive rate limit (bytes/sec). 0 = unlimited.
+/// Configurable via ServerConfig.
+inline constexpr uint64_t kDefaultPeerRateLimit = 0;
+
 /// Top-level data plane context.
 struct Ctx {
   Worker* workers[kMaxWorkers];
@@ -373,6 +424,14 @@ struct Ctx {
   int sockbuf_size;
   /// SQPOLL mode: kernel thread polls SQ on our behalf.
   int sqpoll;
+  /// Per-peer receive rate limit (bytes/sec, 0 = unlimited).
+  uint64_t peer_rate_limit = kDefaultPeerRateLimit;
+  /// This relay's fleet ID (0 = standalone).
+  uint16_t relay_id = 0;
+  /// Relay-to-relay routing: relay_id -> peer_id of the
+  /// neighbor relay's HD connection on this relay.
+  /// Indexed by destination relay_id. 0 = no mapping.
+  uint16_t relay_peer_map[65536]{};
 };
 
 }  // namespace hyper_derp

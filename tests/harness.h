@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <sys/types.h>
 
+#include "hyper_derp/protocol.h"
+
 namespace hyper_derp {
 namespace test {
 
@@ -24,6 +26,14 @@ uint16_t FindFreePort();
 pid_t StartRelay(uint16_t port, int num_workers,
                  const char* tls_cert = nullptr,
                  const char* tls_key = nullptr);
+
+/// @brief Start relay with HD protocol enabled.
+/// @param port Port to listen on.
+/// @param num_workers Number of data plane workers.
+/// @param relay_key 32-byte shared secret for enrollment.
+/// @returns Child PID, or -1 on error.
+pid_t StartHdRelay(uint16_t port, int num_workers,
+                   const Key& relay_key);
 
 /// @brief Wait until relay accepts TCP connections.
 /// @param port Relay port.

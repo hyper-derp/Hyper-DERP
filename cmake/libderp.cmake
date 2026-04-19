@@ -6,8 +6,17 @@ message(STATUS "libsodium: ${SODIUM_LIB}")
 
 find_package(OpenSSL REQUIRED)
 
+find_library(BPF_LIB bpf REQUIRED)
+find_path(BPF_INCLUDE_DIR bpf/libbpf.h REQUIRED)
+message(STATUS "libbpf: ${BPF_LIB}")
+
+find_library(ZMQ_LIB zmq REQUIRED)
+find_path(ZMQ_INCLUDE_DIR zmq.hpp REQUIRED)
+message(STATUS "libzmq: ${ZMQ_LIB}")
+
 add_library(libderp_obj OBJECT
   src/protocol.cc
+  src/hd_protocol.cc
   src/data_plane.cc
   src/http.cc
   src/handshake.cc
@@ -19,15 +28,29 @@ add_library(libderp_obj OBJECT
   src/metrics.cc
   src/ktls.cc
   src/config.cc
+  src/hd_peers.cc
+  src/hd_handshake.cc
+  src/hd_client.cc
+  src/hd_bridge.cc
+  src/hd_relay_table.cc
+  src/stun.cc
+  src/turn.cc
+  src/xdp_loader.cc
+  src/ice.cc
+  src/ctl_channel.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
   ${URING_INCLUDE_DIR}
   ${SODIUM_INCLUDE_DIR}
+  ${BPF_INCLUDE_DIR}
+  ${ZMQ_INCLUDE_DIR}
 )
 target_link_libraries(libderp_obj PUBLIC
   ${URING_LIB}
   ${SODIUM_LIB}
+  ${BPF_LIB}
+  ${ZMQ_LIB}
   spdlog::spdlog
   Crow::Crow
   OpenSSL::SSL
@@ -45,10 +68,13 @@ target_include_directories(libderp PUBLIC
   ${PROJECT_SOURCE_DIR}/include
   ${URING_INCLUDE_DIR}
   ${SODIUM_INCLUDE_DIR}
+  ${BPF_INCLUDE_DIR}
 )
 target_link_libraries(libderp PUBLIC
   ${URING_LIB}
   ${SODIUM_LIB}
+  ${BPF_LIB}
+  ${ZMQ_LIB}
   spdlog::spdlog
   Crow::Crow
   OpenSSL::SSL

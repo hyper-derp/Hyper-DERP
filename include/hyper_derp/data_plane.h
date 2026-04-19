@@ -31,7 +31,21 @@ void DpDestroy(Ctx* ctx);
 /// @param ctx Data plane context.
 /// @param fd The peer's socket file descriptor.
 /// @param key The peer's 32-byte public key.
-void DpAddPeer(Ctx* ctx, int fd, const Key& key);
+/// @param protocol Protocol type (DERP or HD).
+/// @param peer_id HD peer ID for MeshData routing (0 =
+///   none).
+void DpAddPeer(Ctx* ctx, int fd, const Key& key,
+               PeerProtocol protocol =
+                   PeerProtocol::kDerp,
+               uint16_t peer_id = 0);
+
+/// @brief Registers a peer on a specific worker.
+/// @param wid Worker index to place the peer on.
+/// @param peer_id HD peer ID for MeshData routing (0 =
+///   none).
+void DpAddPeerToWorker(Ctx* ctx, int fd, const Key& key,
+                       PeerProtocol protocol, int wid,
+                       uint16_t peer_id = 0);
 
 /// @brief Removes a peer from the data plane.
 /// @param ctx Data plane context.
@@ -45,6 +59,13 @@ void DpRemovePeer(Ctx* ctx, const Key& key);
 /// @param data_len Length of data.
 void DpWrite(Ctx* ctx, const Key& key,
              uint8_t* data, int data_len);
+
+/// @brief Adds a forwarding rule to an HD peer.
+/// @param ctx Data plane context.
+/// @param peer_key The source peer's key.
+/// @param dst_key The destination peer's key.
+void DpAddFwdRule(Ctx* ctx, const Key& peer_key,
+                  const Key& dst_key);
 
 /// @brief Signals all workers to stop.
 /// @param ctx Data plane context.

@@ -11,3 +11,20 @@ target_link_libraries(derp-scale-test PRIVATE libderp)
 
 add_executable(derp-scale-test-uring derp_scale_test_uring.cc)
 target_link_libraries(derp-scale-test-uring PRIVATE libderp)
+
+add_executable(hd-test-client hd_test_client.cc)
+target_link_libraries(hd-test-client PRIVATE libderp)
+
+add_executable(hd-scale-test hd_scale_test.cc)
+target_link_libraries(hd-scale-test PRIVATE libderp)
+
+add_executable(hd-scale-test-uring hd_scale_test_uring.cc)
+target_link_libraries(hd-scale-test-uring PRIVATE libderp)
+
+add_executable(udp-blaster udp_blaster.cc)
+target_link_libraries(udp-blaster PRIVATE libderp)
+
+add_executable(af-xdp-relay af_xdp_relay.cc)
+target_link_libraries(af-xdp-relay PRIVATE libderp)
+target_compile_definitions(af-xdp-relay PRIVATE
+  _GNU_SOURCE)
