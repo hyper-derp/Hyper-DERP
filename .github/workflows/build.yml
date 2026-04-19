@@ -65,8 +65,11 @@ jobs:
 
   package:
     name: Package
+    # Package only on pushes to release branches (v*).
+    # Tag-driven releases go through release.yml; PRs
+    # don't need a throwaway .deb.
     if: >
-      github.event_name == 'pull_request' ||
+      github.event_name == 'push' &&
       startsWith(github.ref, 'refs/heads/v')
     needs: [test, lint]
     runs-on: ubuntu-latest
