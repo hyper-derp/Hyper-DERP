@@ -18,6 +18,7 @@
 #include <cstring>
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <poll.h>
@@ -577,10 +578,11 @@ static void CheckDirectPromotion(WgPeer* peer,
     KickWgHandshake(peer->tunnel_ip);
   }
 
-  // 7s ICE window: one WG handshake retry (WG re-fires
-  // handshake_init ~5s after the first attempt) before we
-  // give up and fall back to the proxy.
-  if (elapsed > 7000) {
+  // 10s ICE window: WG's handshake_init retry interval is
+  // ~5s, so this covers two attempts. Pretty forgiving of
+  // tight startup races where the first init arrives at the
+  // remote wg.ko before the remote has configured the peer.
+  if (elapsed > 10000) {
     StartRelay(peer, wg, proxy, ifname, proxy_port,
                keepalive);
     spdlog::info("peer {} direct failed, fell back to relay",
@@ -727,7 +729,11 @@ int main(int argc, char** argv) {
                            &srflx_ip, &srflx_port);
   }
 
-  // Get our host IP for candidate exchange.
+  // Get our host IP for candidate exchange. Primary: UDP
+  // "connect to 8.8.8.8" trick returns the kernel's chosen
+  // source address. Fallback (no default route — e.g. a
+  // tight netns): walk getifaddrs and pick the first
+  // non-loopback, non-wg IPv4 address.
   uint32_t host_ip = 0;
   {
     int s = socket(AF_INET, SOCK_DGRAM, 0);
@@ -745,6 +751,27 @@ int main(int argc, char** argv) {
         host_ip = local.sin_addr.s_addr;
       }
       close(s);
+    }
+  }
+  if (host_ip == 0) {
+    struct ifaddrs* ifa_list = nullptr;
+    if (getifaddrs(&ifa_list) == 0) {
+      for (auto* ifa = ifa_list; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr ||
+            ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (ifa->ifa_name && (
+              strcmp(ifa->ifa_name, "lo") == 0 ||
+              strncmp(ifa->ifa_name,
+                      cfg.wg_interface.c_str(),
+                      cfg.wg_interface.size()) == 0)) {
+          continue;
+        }
+        auto* in = reinterpret_cast<sockaddr_in*>(
+            ifa->ifa_addr);
+        host_ip = in->sin_addr.s_addr;
+        break;
+      }
+      freeifaddrs(ifa_list);
     }
   }
   uint16_t host_port = htons(cfg.wg_listen_port);
