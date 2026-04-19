@@ -478,6 +478,53 @@ static void CheckDirectPromotion(WgPeer* peer,
     return;
   }
 
+  // Health-check an established direct path. If we're
+  // sending but rx_bytes hasn't changed for ~15s, the
+  // direct endpoint has gone away — switch to relay.
+  if (peer->state == WgPeerState::kDirect) {
+    uint64_t now = NowMs();
+    if (now - peer->direct_last_check_ns < 2000) return;
+    peer->direct_last_check_ns = now;
+
+    WgPeerStats stats;
+    WgNlGetPeerStats(wg, ifname, peer->wg_pubkey, &stats);
+
+    // Initial sample: seed the baseline and return.
+    if (peer->direct_last_rx_change_ns == 0) {
+      peer->direct_last_rx_bytes = stats.rx_bytes;
+      peer->direct_last_tx_bytes = stats.tx_bytes;
+      peer->direct_last_rx_change_ns = now;
+      return;
+    }
+
+    if (stats.rx_bytes != peer->direct_last_rx_bytes) {
+      peer->direct_last_rx_bytes = stats.rx_bytes;
+      peer->direct_last_rx_change_ns = now;
+    }
+    bool tx_growing =
+        stats.tx_bytes > peer->direct_last_tx_bytes;
+    peer->direct_last_tx_bytes = stats.tx_bytes;
+
+    if (tx_growing &&
+        now - peer->direct_last_rx_change_ns > 15000) {
+      // Wipe the stale direct-path session so WG will
+      // initiate a fresh handshake on the new endpoint.
+      WgNlRemovePeer(wg, ifname, peer->wg_pubkey);
+      StartRelay(peer, wg, proxy, ifname, proxy_port,
+                 keepalive);
+      peer->direct_last_rx_change_ns = 0;
+      // Tell the peer so it also resets its direct
+      // session — otherwise it keeps trying to reply to
+      // the dead direct endpoint.
+      HdClientSendMeshData(proxy->hd, peer->hd_peer_id,
+                           kFallMagic, 4);
+      spdlog::info("peer {} direct path stalled, "
+                   "falling back to relay",
+                   peer->hd_peer_id);
+    }
+    return;
+  }
+
   if (peer->state != WgPeerState::kIceChecking) return;
 
   uint64_t elapsed = NowMs() - peer->ice_start_ns;
@@ -486,6 +533,8 @@ static void CheckDirectPromotion(WgPeer* peer,
 
   if (hs_sec > peer->ice_baseline_hs) {
     peer->state = WgPeerState::kDirect;
+    peer->direct_last_check_ns = 0;
+    peer->direct_last_rx_change_ns = 0;
     char ip_str[INET_ADDRSTRLEN];
     struct in_addr a = {peer->direct_ip};
     inet_ntop(AF_INET, &a, ip_str, sizeof(ip_str));
@@ -891,6 +940,23 @@ int main(int argc, char** argv) {
                                cfg.keepalive_secs,
                                payload, payload_len,
                                cfg.force_relay);
+            }
+          } else if (payload_len >= 4 &&
+                     memcmp(payload, kFallMagic, 4) == 0) {
+            auto* peer = WgPeerFindById(&peers, src_id);
+            if (peer &&
+                peer->state == WgPeerState::kDirect) {
+              WgNlRemovePeer(&wg,
+                             cfg.wg_interface.c_str(),
+                             peer->wg_pubkey);
+              StartRelay(peer, &wg, &proxy,
+                         cfg.wg_interface.c_str(),
+                         cfg.proxy_port,
+                         cfg.keepalive_secs);
+              peer->direct_last_rx_change_ns = 0;
+              spdlog::info("peer {} peer-requested relay "
+                           "fallback",
+                           peer->hd_peer_id);
             }
           } else {
             WgProxyHandleHd(&proxy, src_id,

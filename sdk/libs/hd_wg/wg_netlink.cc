@@ -405,13 +405,13 @@ auto WgNlRemovePeer(WgNetlink* wg, const char* ifname,
 
 struct HandshakeCtx {
   const uint8_t* want_pubkey = nullptr;
-  uint64_t handshake_sec = 0;
+  WgPeerStats stats;
 };
 
 struct PeerAttrs {
   bool has_pubkey = false;
   uint8_t pubkey[kWgKeySize]{};
-  uint64_t handshake_sec = 0;
+  WgPeerStats stats;
 };
 
 static int PeerAttrCb(const struct nlattr* attr, void* data) {
@@ -427,8 +427,12 @@ static int PeerAttrCb(const struct nlattr* attr, void* data) {
     const int64_t* ts = static_cast<const int64_t*>(
         mnl_attr_get_payload(attr));
     if (ts[0] > 0) {
-      a->handshake_sec = static_cast<uint64_t>(ts[0]);
+      a->stats.handshake_sec = static_cast<uint64_t>(ts[0]);
     }
+  } else if (type == WGPEER_A_RX_BYTES) {
+    a->stats.rx_bytes = mnl_attr_get_u64(attr);
+  } else if (type == WGPEER_A_TX_BYTES) {
+    a->stats.tx_bytes = mnl_attr_get_u64(attr);
   }
   return MNL_CB_OK;
 }
@@ -440,7 +444,7 @@ static int PeersNestCb(const struct nlattr* attr,
   mnl_attr_parse_nested(attr, PeerAttrCb, &a);
   if (a.has_pubkey &&
       memcmp(a.pubkey, ctx->want_pubkey, kWgKeySize) == 0) {
-    ctx->handshake_sec = a.handshake_sec;
+    ctx->stats = a.stats;
   }
   return MNL_CB_OK;
 }
@@ -460,11 +464,11 @@ static int GetDeviceMsgCb(const struct nlmsghdr* nlh,
   return MNL_CB_OK;
 }
 
-auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
-                          const uint8_t* public_key,
-                          uint64_t* handshake_sec)
+auto WgNlGetPeerStats(WgNetlink* wg, const char* ifname,
+                      const uint8_t* public_key,
+                      WgPeerStats* stats)
     -> std::expected<void, Error<WgNlError>> {
-  *handshake_sec = 0;
+  *stats = {};
 
   // Use a dedicated socket so our dump doesn't interleave
   // with in-flight SET_DEVICE acks on wg->nl.
@@ -516,7 +520,18 @@ auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
   }
 
   mnl_socket_close(nl);
-  *handshake_sec = ctx.handshake_sec;
+  *stats = ctx.stats;
+  return {};
+}
+
+auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
+                          const uint8_t* public_key,
+                          uint64_t* handshake_sec)
+    -> std::expected<void, Error<WgNlError>> {
+  WgPeerStats stats;
+  auto r = WgNlGetPeerStats(wg, ifname, public_key, &stats);
+  if (!r) return r;
+  *handshake_sec = stats.handshake_sec;
   return {};
 }
 

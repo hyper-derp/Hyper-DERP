@@ -41,6 +41,14 @@ struct WgPeer {
   uint32_t direct_ip = 0;
   uint16_t direct_port = 0;
 
+  // kDirect health tracking. We poll rx_bytes while in
+  // kDirect; if tx is growing but rx has stalled for long
+  // enough, the direct path broke and we switch to relay.
+  uint64_t direct_last_check_ns = 0;
+  uint64_t direct_last_rx_change_ns = 0;
+  uint64_t direct_last_rx_bytes = 0;
+  uint64_t direct_last_tx_bytes = 0;
+
   uint8_t active = 0;
 };
 

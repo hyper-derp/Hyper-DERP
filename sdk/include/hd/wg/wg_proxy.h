@@ -26,6 +26,11 @@ inline constexpr int kWgexSize = 40;  // 4B magic + 32B key + 4B IP
 /// ICE candidate exchange magic.
 inline constexpr uint8_t kCandMagic[4] = {'C', 'A', 'N', 'D'};
 
+/// "Fall back to relay" signal. Sent by a peer that just
+/// switched from direct → relay so the remote side also
+/// resets its WG session before rekey time.
+inline constexpr uint8_t kFallMagic[4] = {'F', 'A', 'L', 'L'};
+
 enum class WgProxyError {
   SocketFailed,
   BindFailed,

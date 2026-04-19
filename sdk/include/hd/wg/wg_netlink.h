@@ -75,6 +75,19 @@ auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
                           uint64_t* handshake_sec)
     -> std::expected<void, Error<WgNlError>>;
 
+/// Per-peer counters from wg.ko.
+struct WgPeerStats {
+  uint64_t handshake_sec = 0;
+  uint64_t rx_bytes = 0;
+  uint64_t tx_bytes = 0;
+};
+
+/// Get handshake time + rx/tx byte counters for a peer.
+auto WgNlGetPeerStats(WgNetlink* wg, const char* ifname,
+                      const uint8_t* public_key,
+                      WgPeerStats* stats)
+    -> std::expected<void, Error<WgNlError>>;
+
 /// Assign IP address and bring interface up (ioctl).
 auto WgNlConfigureAddr(const char* ifname,
                        uint32_t addr, int prefix_len)
