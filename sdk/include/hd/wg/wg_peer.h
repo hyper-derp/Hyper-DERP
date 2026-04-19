@@ -32,6 +32,9 @@ struct WgPeer {
 
   // ICE state.
   uint64_t ice_start_ns = 0;
+  /// Last-handshake-time seen when direct path was tried.
+  /// If wg.ko reports a newer one later, direct works.
+  uint64_t ice_baseline_hs = 0;
   uint32_t direct_ip = 0;
   uint16_t direct_port = 0;
 

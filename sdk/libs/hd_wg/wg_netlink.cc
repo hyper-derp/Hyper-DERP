@@ -401,6 +401,106 @@ auto WgNlRemovePeer(WgNetlink* wg, const char* ifname,
   return {};
 }
 
+// -- Get peer handshake time -------------------------------------------------
+
+struct HandshakeCtx {
+  const uint8_t* want_pubkey = nullptr;
+  uint64_t handshake_sec = 0;
+  bool matched = false;
+};
+
+static int PeerAttrCb(const struct nlattr* attr, void* data) {
+  auto* ctx = static_cast<HandshakeCtx*>(data);
+  int type = mnl_attr_get_type(attr);
+  if (type == WGPEER_A_PUBLIC_KEY) {
+    const uint8_t* pk = static_cast<const uint8_t*>(
+        mnl_attr_get_payload(attr));
+    if (memcmp(pk, ctx->want_pubkey, kWgKeySize) == 0) {
+      ctx->matched = true;
+    }
+  } else if (type == WGPEER_A_LAST_HANDSHAKE_TIME &&
+             ctx->matched) {
+    // struct __kernel_timespec: s64 tv_sec, s64 tv_nsec.
+    const int64_t* ts = static_cast<const int64_t*>(
+        mnl_attr_get_payload(attr));
+    if (ts[0] > 0) {
+      ctx->handshake_sec = static_cast<uint64_t>(ts[0]);
+    }
+  }
+  return MNL_CB_OK;
+}
+
+static int PeersNestCb(const struct nlattr* attr,
+                       void* data) {
+  auto* ctx = static_cast<HandshakeCtx*>(data);
+  HandshakeCtx inner;
+  inner.want_pubkey = ctx->want_pubkey;
+  mnl_attr_parse_nested(attr, PeerAttrCb, &inner);
+  if (inner.matched) {
+    ctx->matched = true;
+    ctx->handshake_sec = inner.handshake_sec;
+  }
+  return MNL_CB_OK;
+}
+
+static int DeviceAttrCb(const struct nlattr* attr,
+                        void* data) {
+  if (mnl_attr_get_type(attr) == WGDEVICE_A_PEERS) {
+    mnl_attr_parse_nested(attr, PeersNestCb, data);
+  }
+  return MNL_CB_OK;
+}
+
+static int GetDeviceMsgCb(const struct nlmsghdr* nlh,
+                          void* data) {
+  mnl_attr_parse(nlh, sizeof(struct genlmsghdr),
+                 DeviceAttrCb, data);
+  return MNL_CB_OK;
+}
+
+auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
+                          const uint8_t* public_key,
+                          uint64_t* handshake_sec)
+    -> std::expected<void, Error<WgNlError>> {
+  *handshake_sec = 0;
+
+  uint8_t buf[MNL_SOCKET_BUFFER_SIZE];
+  auto* nlh = mnl_nlmsg_put_header(buf);
+  nlh->nlmsg_type = wg->family_id;
+  nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+  nlh->nlmsg_seq = ++wg->seq;
+
+  auto* genl = static_cast<struct genlmsghdr*>(
+      mnl_nlmsg_put_extra_header(nlh,
+          sizeof(struct genlmsghdr)));
+  genl->cmd = WG_CMD_GET_DEVICE;
+  genl->version = 1;
+
+  mnl_attr_put_strz(nlh, WGDEVICE_A_IFNAME, ifname);
+
+  if (mnl_socket_sendto(wg->nl, nlh,
+                        nlh->nlmsg_len) < 0) {
+    return std::unexpected(MakeError(
+        WgNlError::SetDeviceFailed,
+        "sendto: " + std::string(strerror(errno))));
+  }
+
+  HandshakeCtx ctx;
+  ctx.want_pubkey = public_key;
+
+  // GET_DEVICE dumps in one or more messages until NLMSG_DONE.
+  while (true) {
+    int ret = mnl_socket_recvfrom(wg->nl, buf, sizeof(buf));
+    if (ret <= 0) break;
+    ret = mnl_cb_run(buf, ret, wg->seq, wg->portid,
+                     GetDeviceMsgCb, &ctx);
+    if (ret <= MNL_CB_STOP) break;
+  }
+
+  *handshake_sec = ctx.handshake_sec;
+  return {};
+}
+
 // -- Interface address (ioctl, same pattern as tun.cc) -----------------------
 
 auto WgNlConfigureAddr(const char* ifname,

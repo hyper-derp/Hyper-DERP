@@ -405,10 +405,19 @@ static void HandleCandidates(WgPeer* peer,
       wpc.allowed_prefix = 32;
       wpc.keepalive_secs = keepalive;
 
+      // Capture current handshake time as baseline — a
+      // fresh handshake after the endpoint switch is our
+      // proof that the direct path works.
+      uint64_t baseline = 0;
+      WgNlGetPeerHandshake(wg, ifname, peer->wg_pubkey,
+                           &baseline);
+
       auto result = WgNlSetPeer(wg, ifname, &wpc);
       if (result) {
         peer->direct_ip = ip;
         peer->direct_port = ntohs(port);
+        peer->ice_baseline_hs = baseline;
+        peer->ice_start_ns = NowMs();
         peer->state = WgPeerState::kIceChecking;
 
         char ip_str[INET_ADDRSTRLEN];
@@ -439,14 +448,12 @@ static void HandlePeerGone(WgPeerTable* peers,
   spdlog::info("peer removed");
 }
 
-/// Check if a peer's WG handshake succeeded (direct path
-/// working). Called periodically for peers in kIceChecking.
-/// We can't query wg.ko directly without GET_DEVICE, so
-/// we rely on the proxy: if the proxy stops seeing traffic
-/// for this peer (WG is using direct endpoint), we know
-/// direct works.
-/// For now, simply promote after a timeout if WG handshake
-/// should have completed.
+/// Check if a peer's WG handshake succeeded after the
+/// endpoint was switched to a direct candidate. Queries
+/// wg.ko for last-handshake-time: if non-zero since the
+/// switch, the direct path works and we promote. Otherwise
+/// after 5s we revert the endpoint to the proxy so WG
+/// traffic keeps flowing through the relay.
 static void CheckDirectPromotion(WgPeer* peer,
                                  WgNetlink* wg,
                                  WgProxy* proxy,
@@ -456,10 +463,17 @@ static void CheckDirectPromotion(WgPeer* peer,
   if (peer->state != WgPeerState::kIceChecking) return;
 
   uint64_t elapsed = NowMs() - peer->ice_start_ns;
+  uint64_t hs_sec = 0;
+  WgNlGetPeerHandshake(wg, ifname, peer->wg_pubkey, &hs_sec);
 
-  // After 3s in checking, assume direct worked if WG
-  // endpoint is still the direct candidate (not reverted).
-  if (elapsed > 3000) {
+  // Record baseline handshake time on first call.
+  if (peer->ice_baseline_hs == 0 && hs_sec == 0) {
+    // No handshake yet; keep waiting.
+  }
+
+  bool fresh = hs_sec > peer->ice_baseline_hs;
+
+  if (fresh) {
     peer->state = WgPeerState::kDirect;
     char ip_str[INET_ADDRSTRLEN];
     struct in_addr a = {peer->direct_ip};
@@ -467,6 +481,22 @@ static void CheckDirectPromotion(WgPeer* peer,
     spdlog::info("peer {} promoted to direct ({}:{})",
                  peer->hd_peer_id, ip_str,
                  peer->direct_port);
+    return;
+  }
+
+  if (elapsed > 5000) {
+    // No handshake via direct path — revert to relay.
+    WgPeerConfig wpc{};
+    memcpy(wpc.public_key, peer->wg_pubkey, 32);
+    wpc.endpoint_ip = htonl(INADDR_LOOPBACK);
+    wpc.endpoint_port = htons(proxy_port);
+    wpc.allowed_ip = peer->tunnel_ip;
+    wpc.allowed_prefix = 32;
+    wpc.keepalive_secs = keepalive;
+    WgNlSetPeer(wg, ifname, &wpc);
+    peer->state = WgPeerState::kRelayed;
+    spdlog::info("peer {} direct failed, reverted to relay",
+                 peer->hd_peer_id);
   }
 }
 

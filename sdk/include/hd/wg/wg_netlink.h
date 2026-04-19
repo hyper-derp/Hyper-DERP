@@ -67,6 +67,14 @@ auto WgNlRemovePeer(WgNetlink* wg, const char* ifname,
                     const uint8_t* public_key)
     -> std::expected<void, Error<WgNlError>>;
 
+/// Get the last-handshake timestamp (UNIX seconds) for a
+/// peer, or 0 if no handshake has completed. Used to verify
+/// that a direct-path endpoint actually works.
+auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
+                          const uint8_t* public_key,
+                          uint64_t* handshake_sec)
+    -> std::expected<void, Error<WgNlError>>;
+
 /// Assign IP address and bring interface up (ioctl).
 auto WgNlConfigureAddr(const char* ifname,
                        uint32_t addr, int prefix_len)
