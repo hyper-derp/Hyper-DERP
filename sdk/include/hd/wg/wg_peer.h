@@ -58,8 +58,15 @@ struct WgPeerTable {
   int count = 0;
 };
 
+/// Add a peer, or return the existing entry for this
+/// public key. If `is_new` is non-null, it is set to true
+/// when a fresh entry was created, false when an existing
+/// entry was returned (and its hd_peer_id refreshed to the
+/// passed value — relays sometimes reassign IDs across
+/// reconnects).
 WgPeer* WgPeerAdd(WgPeerTable* t, const Key& hd_key,
-                  uint16_t hd_peer_id);
+                  uint16_t hd_peer_id,
+                  bool* is_new = nullptr);
 WgPeer* WgPeerFind(WgPeerTable* t, const Key& hd_key);
 WgPeer* WgPeerFindById(WgPeerTable* t,
                        uint16_t hd_peer_id);

@@ -286,11 +286,13 @@ static void HandlePeerInfo(HdClient* hd,
       static_cast<uint16_t>(payload[32]) << 8 |
       payload[33];
 
-  auto* peer = WgPeerAdd(peers, peer_key, peer_id);
+  bool is_new = false;
+  auto* peer = WgPeerAdd(peers, peer_key, peer_id, &is_new);
   if (!peer) return;
 
-  spdlog::info("peer {} appeared (id={})",
-               peer_id, peer_id);
+  if (is_new) {
+    spdlog::info("peer {} appeared", peer_id);
+  }
 
   if (peer->state == WgPeerState::kNew ||
       peer->state == WgPeerState::kWgexSent) {
@@ -375,6 +377,23 @@ static void StartRelay(WgPeer* peer, WgNetlink* wg,
   peer->state = WgPeerState::kRelayed;
 }
 
+/// Send a single throwaway UDP packet at the peer's tunnel
+/// IP so the kernel routes via wg0 and WG actually initiates
+/// its handshake. Without this, WG sits idle until the user
+/// sends something and the 5s ICE window often expires first.
+static void KickWgHandshake(uint32_t peer_tunnel_ip) {
+  int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+  if (fd < 0) return;
+  sockaddr_in dst{};
+  dst.sin_family = AF_INET;
+  dst.sin_addr.s_addr = peer_tunnel_ip;
+  dst.sin_port = htons(9);  // discard
+  const uint8_t byte = 0;
+  sendto(fd, &byte, 1, 0,
+         reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+  close(fd);
+}
+
 /// Handle received ICE candidates from a peer.
 static void HandleCandidates(WgPeer* peer,
                              WgNetlink* wg,
@@ -432,6 +451,7 @@ static void HandleCandidates(WgPeer* peer,
         spdlog::info("peer {} trying direct {}:{}",
                      peer->hd_peer_id, ip_str,
                      ntohs(port));
+        KickWgHandshake(peer->tunnel_ip);
       }
       return;  // Try one candidate at a time.
     }
@@ -544,7 +564,23 @@ static void CheckDirectPromotion(WgPeer* peer,
     return;
   }
 
-  if (elapsed > 5000) {
+  // Re-kick every 500 ms. The first kick (from
+  // HandleCandidates) can lose a race if the remote
+  // side hasn't yet configured wg.ko for us, in which
+  // case their kernel drops the handshake_init. WG's
+  // own retry backoff is ~5s, which matches the whole
+  // ICE window — too slow. Kick again ourselves.
+  uint64_t now = NowMs();
+  if (peer->direct_last_check_ns == 0 ||
+      now - peer->direct_last_check_ns >= 500) {
+    peer->direct_last_check_ns = now;
+    KickWgHandshake(peer->tunnel_ip);
+  }
+
+  // 7s ICE window: one WG handshake retry (WG re-fires
+  // handshake_init ~5s after the first attempt) before we
+  // give up and fall back to the proxy.
+  if (elapsed > 7000) {
     StartRelay(peer, wg, proxy, ifname, proxy_port,
                keepalive);
     spdlog::info("peer {} direct failed, fell back to relay",

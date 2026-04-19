@@ -10,11 +10,13 @@
 namespace hyper_derp {
 
 WgPeer* WgPeerAdd(WgPeerTable* t, const Key& hd_key,
-                  uint16_t hd_peer_id) {
+                  uint16_t hd_peer_id, bool* is_new) {
   // Check existing.
   for (int i = 0; i < kWgMaxPeers; i++) {
     if (t->peers[i].active &&
         t->peers[i].hd_key == hd_key) {
+      t->peers[i].hd_peer_id = hd_peer_id;
+      if (is_new) *is_new = false;
       return &t->peers[i];
     }
   }
@@ -27,6 +29,7 @@ WgPeer* WgPeerAdd(WgPeerTable* t, const Key& hd_key,
       p->state = WgPeerState::kNew;
       p->active = 1;
       t->count++;
+      if (is_new) *is_new = true;
       return p;
     }
   }
