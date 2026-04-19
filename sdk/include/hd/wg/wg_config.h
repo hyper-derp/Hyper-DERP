@@ -27,6 +27,11 @@ struct WgDaemonConfig {
 
   int keepalive_secs = 25;
   std::string log_level = "info";
+
+  /// Skip ICE direct path entirely; always relay WG traffic
+  /// through HD. Useful under symmetric NAT or when a
+  /// deterministic "HD is the transport" behavior is wanted.
+  bool force_relay = false;
 };
 
 /// Load config from YAML file.

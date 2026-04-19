@@ -100,6 +100,8 @@ bool WgLoadConfig(const char* path,
       ReadInt(root, "keepalive", 25);
   config->log_level =
       ReadStr(root, "log_level", "info");
+  config->force_relay =
+      ReadInt(root, "force_relay", 0) != 0;
 
   return true;
 }

@@ -275,7 +275,8 @@ static void HandlePeerInfo(HdClient* hd,
                            uint32_t host_ip,
                            uint16_t host_port,
                            uint32_t srflx_ip,
-                           uint16_t srflx_port) {
+                           uint16_t srflx_port,
+                           bool force_relay) {
   if (len < 34) return;
   Key peer_key;
   memcpy(peer_key.data(), payload, 32);
@@ -294,8 +295,10 @@ static void HandlePeerInfo(HdClient* hd,
   if (peer->state == WgPeerState::kNew ||
       peer->state == WgPeerState::kWgexSent) {
     SendWgex(hd, peer_id, wg_pubkey, tunnel_ip);
-    SendCandidates(hd, peer_id, host_ip, host_port,
-                   srflx_ip, srflx_port);
+    if (!force_relay) {
+      SendCandidates(hd, peer_id, host_ip, host_port,
+                     srflx_ip, srflx_port);
+    }
     if (peer->state == WgPeerState::kNew)
       peer->state = WgPeerState::kWgexSent;
   }
@@ -311,7 +314,8 @@ static void HandleWgex(WgPeer* peer, WgNetlink* wg,
                        const uint8_t* our_wg_pubkey,
                        uint32_t our_tunnel_ip,
                        uint32_t host_ip, uint16_t host_port,
-                       uint32_t srflx_ip, uint16_t srflx_port) {
+                       uint32_t srflx_ip, uint16_t srflx_port,
+                       bool force_relay) {
   uint8_t wg_pubkey[32];
   uint32_t tunnel_ip;
   if (WgParseWgex(data, len, wg_pubkey, &tunnel_ip) < 0)
@@ -330,9 +334,11 @@ static void HandleWgex(WgPeer* peer, WgNetlink* wg,
   if (peer->state == WgPeerState::kNew) {
     SendWgex(hd, peer->hd_peer_id, our_wg_pubkey,
              our_tunnel_ip);
-    SendCandidates(hd, peer->hd_peer_id,
-                   host_ip, host_port,
-                   srflx_ip, srflx_port);
+    if (!force_relay) {
+      SendCandidates(hd, peer->hd_peer_id,
+                     host_ip, host_port,
+                     srflx_ip, srflx_port);
+    }
   }
 
   // Configure WG peer initially through relay proxy.
@@ -369,7 +375,9 @@ static void HandleCandidates(WgPeer* peer,
                              WgNetlink* wg,
                              const char* ifname,
                              uint16_t keepalive,
-                             const uint8_t* data, int len) {
+                             const uint8_t* data, int len,
+                             bool force_relay) {
+  if (force_relay) return;
   if (len < 4 || memcmp(data, kCandMagic, 4) != 0) return;
   data += 4; len -= 4;
 
@@ -478,6 +486,8 @@ static void PrintUsage() {
       "  --proxy-port PORT    UDP proxy port (51821)\n"
       "  --stun SERVER        STUN server (host:port)\n"
       "  --keepalive SECS     WG keepalive (25)\n"
+      "  --force-relay        Always relay WG via HD (no "
+      "ICE direct path)\n"
       "  --help\n");
 }
 
@@ -524,6 +534,8 @@ int main(int argc, char** argv) {
       cfg.stun_server = argv[++i];
     } else if (arg == "--keepalive"sv && i + 1 < argc) {
       cfg.keepalive_secs = atoi(argv[++i]);
+    } else if (arg == "--force-relay"sv) {
+      cfg.force_relay = true;
     } else if (arg == "--help"sv) {
       PrintUsage();
       return 0;
@@ -577,7 +589,8 @@ int main(int argc, char** argv) {
   signal(SIGTERM, SigHandler);
   signal(SIGPIPE, SIG_IGN);
 
-  spdlog::info("hd-wg starting");
+  spdlog::info("hd-wg starting{}",
+               cfg.force_relay ? " (force-relay)" : "");
 
   // -------------------------------------------------------
   // Phase 1: STUN discovery (port inheritance trick).
@@ -802,7 +815,8 @@ int main(int argc, char** argv) {
           HandlePeerInfo(&hd, &peers, frame_buf,
                          frame_len, wg_public, tunnel_ip,
                          host_ip, host_port,
-                         srflx_ip, srflx_port);
+                         srflx_ip, srflx_port,
+                         cfg.force_relay);
         } else if (frame_type == HdFrameType::kMeshData) {
           if (frame_len < 2) continue;
           uint16_t src_id =
@@ -822,7 +836,8 @@ int main(int argc, char** argv) {
                          payload, payload_len,
                          &hd, wg_public, tunnel_ip,
                          host_ip, host_port,
-                         srflx_ip, srflx_port);
+                         srflx_ip, srflx_port,
+                         cfg.force_relay);
             }
           } else if (payload_len >= 4 &&
                      memcmp(payload, kCandMagic, 4) == 0) {
@@ -831,7 +846,8 @@ int main(int argc, char** argv) {
               HandleCandidates(peer, &wg,
                                cfg.wg_interface.c_str(),
                                cfg.keepalive_secs,
-                               payload, payload_len);
+                               payload, payload_len,
+                               cfg.force_relay);
             }
           } else {
             WgProxyHandleHd(&proxy, src_id,
