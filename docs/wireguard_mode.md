@@ -1,5 +1,13 @@
 # WireGuard Relay Mode
 
+> Not the same as [hd-wg](hd_wg.md). `hd-wg` is a shipped
+> *client-side* daemon that uses an HD relay as signaling and
+> fallback transport for `wireguard.ko` tunnels. The design
+> below is an alternative *relay-side* WG mode where the
+> Hyper-DERP server itself forwards vanilla WG UDP between
+> configured peers. They can coexist; they address different
+> problems.
+
 ## Status
 
 Design. Not implemented. Specifies a second operating mode

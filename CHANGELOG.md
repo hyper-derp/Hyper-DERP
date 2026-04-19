@@ -12,8 +12,30 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 - FleetData: cross-relay routing with 2-byte relay +
   peer IDs (4.3B addressable endpoints)
 - Relay table with distance-vector route announcements
+- Cross-relay fleet linking (`--hd-relay-id`,
+  `--hd-seed-relay`), with PeerInfo forwarding so tunnels
+  cross seed boundaries transparently
 - DERP-to-HD bridge for mixed networks
-- HD client SDK with Send, SendTo, SendMeshData
+- **HD SDK** (`sdk/`): `hd::sdk::Client` / `Tunnel` event-
+  driven API (move-only pimpl, thread-safe callbacks,
+  own-or-external I/O thread), zero-copy frame pool, C ABI
+  wrapper
+- **SDK extensions**: `hd_wg` (WireGuard integration,
+  netlink, proxy, state machine), `hd_ice` (NAT traversal),
+  `hd_bridge` (TCP/unix ↔ tunnel), `hd_policy`
+  (header-only routing intent), `hd_fleet` (topology view)
+- **`hd-wg` daemon**: client-side WireGuard driver.
+  Signals via HD MeshData (WGEX / CAND / FALL), tries
+  direct UDP first, falls back to a local `wg.ko ↔ HD`
+  proxy when direct fails. `--force-relay` for
+  deterministic relay mode. Runtime direct→relay
+  fallback on stalled tunnels (~15s detection via
+  `WgNlGetPeerStats`; peer reset + `FALL` signal to the
+  remote end to rekey on the new path)
+- **`hdcat`**: netcat/socat for HD tunnels. TCP/UDP/unix-
+  socket, stdin-stdout, YAML config, wildcard peer names
+- **`hdctl`**: ZMQ IPC control CLI for the relay, and a
+  YAML-driven bridge runner
 - REST API: /api/v1/peers, /api/v1/relay
 - STUN/TURN/ICE for Level 2 direct path
 - XDP STUN binding + TURN channel forwarding
@@ -21,11 +43,38 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 - HD scale test tools (pthread + io_uring variants)
 - UDP blaster for AF_XDP benchmarking
 
+### Changed
+- `hd-wg` flow: configure wg.ko with the direct endpoint
+  *first* (never the proxy), so WG's roaming doesn't
+  latch onto `127.0.0.1:<proxy>` before ICE can run.
+  Fall back to proxy only on 5s ICE timeout or 500ms
+  "no candidates".
+- Direct-path promotion verified via fresh WG handshake
+  (`WgNlGetPeerHandshake`) instead of the previous 3s
+  unconditional timer, so iptables-blocked paths no
+  longer show as "promoted to direct" while silently
+  failing.
+
+### Fixed
+- HD relay-path RTT from ~100ms to ~1.5ms (65×
+  improvement): `hd-wg` no longer blocks on
+  `SO_RCVTIMEO` after draining the client receive
+  buffer; poll wakes it on new TCP data instead.
+- `WgNlGetPeerHandshake` parsed netlink attributes
+  order-dependently and missed `LAST_HANDSHAKE_TIME`
+  when it arrived before `PUBLIC_KEY`; now
+  order-independent.
+- GET_DEVICE netlink dump interleaved with in-flight
+  SET_DEVICE ACKs on the shared socket (returned EPROTO);
+  uses a dedicated socket per query.
+
 ### Performance
 - HD Protocol: 19,880 Mbps (2.55x Go derper)
 - AF_XDP relay: 24,600 Mbps (3.15x Go derper, zero loss)
 - HD beats DERP by 6.5% with 37% less loss at saturation
 - Relay at 3% CPU forwarding 6 Gbps (client-bottlenecked)
+- `hd-wg` direct: 0.6 ms LAN RTT
+- `hd-wg` relayed: 1.5 ms RTT (same-host VMs, TLS)
 
 ## [0.1.5] - 2026-04-13
 
