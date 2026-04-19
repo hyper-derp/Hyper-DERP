@@ -8,17 +8,61 @@
 #include <sched.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 #include "hyper_derp/hd_peers.h"
 #include "hyper_derp/server.h"
 
 namespace hyper_derp {
 namespace test {
+
+// HD mode requires TLS (server.cc enforces it). The harness
+// generates a throwaway self-signed cert once per process
+// the first time StartHdRelay is called.
+struct TestCertPaths {
+  std::string cert;
+  std::string key;
+};
+
+static const TestCertPaths& EnsureTestCert() {
+  static TestCertPaths paths = [] {
+    TestCertPaths p;
+    std::string dir = "/tmp/hyper-derp-test-" +
+                      std::to_string(getpid());
+    std::filesystem::create_directories(dir);
+    p.cert = dir + "/relay.crt";
+    p.key = dir + "/relay.key";
+    std::string cmd =
+        "openssl req -x509 -newkey rsa:2048 "
+        "-keyout " + p.key + " -out " + p.cert + " "
+        "-days 1 -nodes -subj '/CN=hd-test' "
+        ">/dev/null 2>&1";
+    if (std::system(cmd.c_str()) != 0) {
+      std::fprintf(stderr,
+                   "harness: openssl cert gen failed\n");
+      std::abort();
+    }
+    return p;
+  }();
+  return paths;
+}
+
+auto ConnectHdClient(HdClient* c, const char* host,
+                     uint16_t port)
+    -> std::expected<void, Error<HdClientError>> {
+  auto tcp = HdClientConnect(c, host, port);
+  if (!tcp) return tcp;
+  return HdClientTlsConnect(c);
+}
 
 uint16_t FindFreePort() {
   int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -96,6 +140,10 @@ pid_t StartRelay(uint16_t port, int num_workers,
 
 pid_t StartHdRelay(uint16_t port, int num_workers,
                    const Key& relay_key) {
+  // Generate once in the parent so every forked child
+  // reads the same paths (static locals don't survive the
+  // fork, but the files on disk do).
+  const auto& cert = EnsureTestCert();
   pid_t pid = fork();
   if (pid < 0) {
     return -1;
@@ -120,6 +168,8 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
     hex[kKeySize * 2] = '\0';
     config.hd_relay_key = hex;
     config.hd_enroll_mode = HdEnrollMode::kAutoApprove;
+    config.tls_cert = cert.cert;
+    config.tls_key = cert.key;
 
     Server server;
     if (!ServerInit(&server, &config)) {

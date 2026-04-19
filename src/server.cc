@@ -636,6 +636,17 @@ static void AcceptLoop(Server* server) {
 auto ServerInit(Server* server,
                 const ServerConfig* config)
     -> std::expected<void, Error<ServerError>> {
+  // HD mode requires TLS. Enforced here (not just in
+  // main.cc) so programmatic callers — test harnesses,
+  // embedded servers — can't accidentally skip it.
+  if (!config->hd_relay_key.empty() &&
+      (config->tls_cert.empty() ||
+       config->tls_key.empty())) {
+    return MakeError(ServerError::ConfigInvalid,
+                     "HD mode requires TLS "
+                     "(set tls_cert and tls_key)");
+  }
+
   server->config = *config;
   server->listen_fd = -1;
   server->running.store(0, std::memory_order_relaxed);

@@ -58,7 +58,7 @@ TEST_F(ProductionTest, GracefulShutdown) {
   ASSERT_TRUE(init.has_value());
   client.relay_key = relay_key_;
 
-  auto conn = HdClientConnect(
+  auto conn = test::ConnectHdClient(
       &client, "127.0.0.1", port_);
   ASSERT_TRUE(conn.has_value())
       << "connect failed: " << conn.error().message;
@@ -130,7 +130,7 @@ TEST_F(ProductionTest, ClientReconnect) {
   client.relay_key = relay_key_;
 
   // First connection.
-  auto conn = HdClientConnect(
+  auto conn = test::ConnectHdClient(
       &client, "127.0.0.1", port_);
   ASSERT_TRUE(conn.has_value());
 
@@ -175,7 +175,7 @@ TEST_F(ProductionTest, PingPong) {
   ASSERT_TRUE(init.has_value());
   client.relay_key = relay_key_;
 
-  auto conn = HdClientConnect(
+  auto conn = test::ConnectHdClient(
       &client, "127.0.0.1", port_);
   ASSERT_TRUE(conn.has_value());
 

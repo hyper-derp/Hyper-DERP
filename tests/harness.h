@@ -8,10 +8,19 @@
 #include <cstdint>
 #include <sys/types.h>
 
+#include "hyper_derp/hd_client.h"
 #include "hyper_derp/protocol.h"
 
 namespace hyper_derp {
 namespace test {
+
+/// TCP-connect + TLS-upgrade a client to an HD relay that
+/// was started via StartHdRelay. Since HD mode requires TLS
+/// end-to-end, plain HdClientConnect won't talk to the test
+/// relay — use this instead.
+auto ConnectHdClient(HdClient* c, const char* host,
+                     uint16_t port)
+    -> std::expected<void, Error<HdClientError>>;
 
 /// @brief Find an available TCP port via bind(:0).
 /// @returns Available port number, or 0 on error.

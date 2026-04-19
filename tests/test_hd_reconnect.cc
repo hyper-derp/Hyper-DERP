@@ -42,7 +42,7 @@ TEST_F(HdReconnectTest, ClientReconnectsAfterRelayRestart) {
   ASSERT_TRUE(HdClientInit(&c).has_value());
   c.relay_key = relay_key_;
   ASSERT_TRUE(
-      HdClientConnect(&c, "127.0.0.1", port_).has_value());
+      test::ConnectHdClient(&c, "127.0.0.1", port_).has_value());
   ASSERT_TRUE(HdClientUpgrade(&c).has_value());
   ASSERT_TRUE(HdClientEnroll(&c).has_value());
 
