@@ -406,25 +406,28 @@ auto WgNlRemovePeer(WgNetlink* wg, const char* ifname,
 struct HandshakeCtx {
   const uint8_t* want_pubkey = nullptr;
   uint64_t handshake_sec = 0;
-  bool matched = false;
+};
+
+struct PeerAttrs {
+  bool has_pubkey = false;
+  uint8_t pubkey[kWgKeySize]{};
+  uint64_t handshake_sec = 0;
 };
 
 static int PeerAttrCb(const struct nlattr* attr, void* data) {
-  auto* ctx = static_cast<HandshakeCtx*>(data);
+  auto* a = static_cast<PeerAttrs*>(data);
   int type = mnl_attr_get_type(attr);
   if (type == WGPEER_A_PUBLIC_KEY) {
     const uint8_t* pk = static_cast<const uint8_t*>(
         mnl_attr_get_payload(attr));
-    if (memcmp(pk, ctx->want_pubkey, kWgKeySize) == 0) {
-      ctx->matched = true;
-    }
-  } else if (type == WGPEER_A_LAST_HANDSHAKE_TIME &&
-             ctx->matched) {
+    memcpy(a->pubkey, pk, kWgKeySize);
+    a->has_pubkey = true;
+  } else if (type == WGPEER_A_LAST_HANDSHAKE_TIME) {
     // struct __kernel_timespec: s64 tv_sec, s64 tv_nsec.
     const int64_t* ts = static_cast<const int64_t*>(
         mnl_attr_get_payload(attr));
     if (ts[0] > 0) {
-      ctx->handshake_sec = static_cast<uint64_t>(ts[0]);
+      a->handshake_sec = static_cast<uint64_t>(ts[0]);
     }
   }
   return MNL_CB_OK;
@@ -433,12 +436,11 @@ static int PeerAttrCb(const struct nlattr* attr, void* data) {
 static int PeersNestCb(const struct nlattr* attr,
                        void* data) {
   auto* ctx = static_cast<HandshakeCtx*>(data);
-  HandshakeCtx inner;
-  inner.want_pubkey = ctx->want_pubkey;
-  mnl_attr_parse_nested(attr, PeerAttrCb, &inner);
-  if (inner.matched) {
-    ctx->matched = true;
-    ctx->handshake_sec = inner.handshake_sec;
+  PeerAttrs a;
+  mnl_attr_parse_nested(attr, PeerAttrCb, &a);
+  if (a.has_pubkey &&
+      memcmp(a.pubkey, ctx->want_pubkey, kWgKeySize) == 0) {
+    ctx->handshake_sec = a.handshake_sec;
   }
   return MNL_CB_OK;
 }
@@ -464,11 +466,28 @@ auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
     -> std::expected<void, Error<WgNlError>> {
   *handshake_sec = 0;
 
+  // Use a dedicated socket so our dump doesn't interleave
+  // with in-flight SET_DEVICE acks on wg->nl.
+  struct mnl_socket* nl = mnl_socket_open(NETLINK_GENERIC);
+  if (!nl) {
+    return std::unexpected(MakeError(
+        WgNlError::SocketFailed,
+        "open: " + std::string(strerror(errno))));
+  }
+  if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
+    mnl_socket_close(nl);
+    return std::unexpected(MakeError(
+        WgNlError::SocketFailed,
+        "bind: " + std::string(strerror(errno))));
+  }
+  unsigned int portid = mnl_socket_get_portid(nl);
+  uint32_t seq = 1;
+
   uint8_t buf[MNL_SOCKET_BUFFER_SIZE];
   auto* nlh = mnl_nlmsg_put_header(buf);
   nlh->nlmsg_type = wg->family_id;
   nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-  nlh->nlmsg_seq = ++wg->seq;
+  nlh->nlmsg_seq = seq;
 
   auto* genl = static_cast<struct genlmsghdr*>(
       mnl_nlmsg_put_extra_header(nlh,
@@ -478,8 +497,8 @@ auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
 
   mnl_attr_put_strz(nlh, WGDEVICE_A_IFNAME, ifname);
 
-  if (mnl_socket_sendto(wg->nl, nlh,
-                        nlh->nlmsg_len) < 0) {
+  if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+    mnl_socket_close(nl);
     return std::unexpected(MakeError(
         WgNlError::SetDeviceFailed,
         "sendto: " + std::string(strerror(errno))));
@@ -488,15 +507,15 @@ auto WgNlGetPeerHandshake(WgNetlink* wg, const char* ifname,
   HandshakeCtx ctx;
   ctx.want_pubkey = public_key;
 
-  // GET_DEVICE dumps in one or more messages until NLMSG_DONE.
   while (true) {
-    int ret = mnl_socket_recvfrom(wg->nl, buf, sizeof(buf));
+    int ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
     if (ret <= 0) break;
-    ret = mnl_cb_run(buf, ret, wg->seq, wg->portid,
-                     GetDeviceMsgCb, &ctx);
-    if (ret <= MNL_CB_STOP) break;
+    int cb_ret = mnl_cb_run(buf, ret, seq, portid,
+                            GetDeviceMsgCb, &ctx);
+    if (cb_ret <= MNL_CB_STOP) break;
   }
 
+  mnl_socket_close(nl);
   *handshake_sec = ctx.handshake_sec;
   return {};
 }

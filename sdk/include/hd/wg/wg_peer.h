@@ -31,6 +31,9 @@ struct WgPeer {
   WgPeerState state = WgPeerState::kNew;
 
   // ICE state.
+  /// When WGEX was received; used to time out the "waiting
+  /// for candidates" window before falling back to relay.
+  uint64_t wgex_start_ns = 0;
   uint64_t ice_start_ns = 0;
   /// Last-handshake-time seen when direct path was tried.
   /// If wg.ko reports a newer one later, direct works.

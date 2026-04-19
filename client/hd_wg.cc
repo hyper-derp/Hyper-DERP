@@ -341,33 +341,38 @@ static void HandleWgex(WgPeer* peer, WgNetlink* wg,
     }
   }
 
-  // Configure WG peer initially through relay proxy.
-  WgPeerConfig wpc{};
-  memcpy(wpc.public_key, wg_pubkey, 32);
-  wpc.endpoint_ip = htonl(INADDR_LOOPBACK);
-  wpc.endpoint_port = htons(proxy_port);
-  wpc.allowed_ip = tunnel_ip;
-  wpc.allowed_prefix = 32;
-  wpc.keepalive_secs = keepalive;
-
-  auto result = WgNlSetPeer(wg, ifname, &wpc);
-  if (!result) {
-    spdlog::error("wg set peer: {}",
-                  result.error().message);
-    return;
-  }
-
-  WgProxyAddPeer(proxy, peer->hd_key, peer->hd_peer_id,
-                 wg_pubkey, tunnel_ip);
-
-  peer->state = WgPeerState::kRelayed;
-  peer->ice_start_ns = NowMs();
+  // Don't configure wg.ko yet. Wait for candidates so the
+  // first endpoint is direct (if we get any) — that avoids
+  // WG roaming latching onto the proxy before ICE runs.
+  // If force_relay or no candidates arrive in 500ms, the
+  // periodic check falls back to the proxy endpoint.
+  peer->state = WgPeerState::kWgexDone;
+  peer->wgex_start_ns = NowMs();
 
   char ip_str[INET_ADDRSTRLEN];
   inet_ntop(AF_INET, &tunnel_ip, ip_str, sizeof(ip_str));
-  spdlog::info("peer {} wg tunnel {} (relayed, "
-               "trying direct...)",
+  spdlog::info("peer {} wg tunnel {} (wgex done, "
+               "waiting for candidates)",
                peer->hd_peer_id, ip_str);
+}
+
+/// Configure wg.ko with the proxy endpoint and add the peer
+/// to the proxy table. Used as the relay fallback.
+static void StartRelay(WgPeer* peer, WgNetlink* wg,
+                       WgProxy* proxy, const char* ifname,
+                       uint16_t proxy_port,
+                       uint16_t keepalive) {
+  WgPeerConfig wpc{};
+  memcpy(wpc.public_key, peer->wg_pubkey, 32);
+  wpc.endpoint_ip = htonl(INADDR_LOOPBACK);
+  wpc.endpoint_port = htons(proxy_port);
+  wpc.allowed_ip = peer->tunnel_ip;
+  wpc.allowed_prefix = 32;
+  wpc.keepalive_secs = keepalive;
+  WgNlSetPeer(wg, ifname, &wpc);
+  WgProxyAddPeer(proxy, peer->hd_key, peer->hd_peer_id,
+                 peer->wg_pubkey, peer->tunnel_ip);
+  peer->state = WgPeerState::kRelayed;
 }
 
 /// Handle received ICE candidates from a peer.
@@ -392,11 +397,14 @@ static void HandleCandidates(WgPeer* peer,
     memcpy(&port, data + 4, 2);
     data += 6; len -= 6;
 
-    // Try direct: update WG endpoint to this candidate.
-    // WG will attempt handshake. If it succeeds, we have
-    // direct connectivity.
-    if (peer->state == WgPeerState::kRelayed &&
-        ip != 0 && port != 0) {
+    // Configure WG with the direct endpoint. Only honored
+    // when we already have the peer's WG info (kWgexDone)
+    // or we previously went to relay but haven't yet seen
+    // any direct attempt.
+    bool eligible =
+        peer->state == WgPeerState::kWgexDone ||
+        peer->state == WgPeerState::kRelayed;
+    if (eligible && ip != 0 && port != 0) {
       WgPeerConfig wpc{};
       memcpy(wpc.public_key, peer->wg_pubkey, 32);
       wpc.endpoint_ip = ip;
@@ -405,9 +413,8 @@ static void HandleCandidates(WgPeer* peer,
       wpc.allowed_prefix = 32;
       wpc.keepalive_secs = keepalive;
 
-      // Capture current handshake time as baseline — a
-      // fresh handshake after the endpoint switch is our
-      // proof that the direct path works.
+      // Baseline the handshake time before switching so a
+      // fresh one is proof the direct endpoint works.
       uint64_t baseline = 0;
       WgNlGetPeerHandshake(wg, ifname, peer->wg_pubkey,
                            &baseline);
@@ -460,20 +467,24 @@ static void CheckDirectPromotion(WgPeer* peer,
                                  const char* ifname,
                                  uint16_t proxy_port,
                                  uint16_t keepalive) {
+  // No candidates arrived within the window — configure
+  // the relay path so traffic can start flowing.
+  if (peer->state == WgPeerState::kWgexDone &&
+      NowMs() - peer->wgex_start_ns > 500) {
+    StartRelay(peer, wg, proxy, ifname, proxy_port,
+               keepalive);
+    spdlog::info("peer {} no candidates, using relay",
+                 peer->hd_peer_id);
+    return;
+  }
+
   if (peer->state != WgPeerState::kIceChecking) return;
 
   uint64_t elapsed = NowMs() - peer->ice_start_ns;
   uint64_t hs_sec = 0;
   WgNlGetPeerHandshake(wg, ifname, peer->wg_pubkey, &hs_sec);
 
-  // Record baseline handshake time on first call.
-  if (peer->ice_baseline_hs == 0 && hs_sec == 0) {
-    // No handshake yet; keep waiting.
-  }
-
-  bool fresh = hs_sec > peer->ice_baseline_hs;
-
-  if (fresh) {
+  if (hs_sec > peer->ice_baseline_hs) {
     peer->state = WgPeerState::kDirect;
     char ip_str[INET_ADDRSTRLEN];
     struct in_addr a = {peer->direct_ip};
@@ -485,17 +496,9 @@ static void CheckDirectPromotion(WgPeer* peer,
   }
 
   if (elapsed > 5000) {
-    // No handshake via direct path — revert to relay.
-    WgPeerConfig wpc{};
-    memcpy(wpc.public_key, peer->wg_pubkey, 32);
-    wpc.endpoint_ip = htonl(INADDR_LOOPBACK);
-    wpc.endpoint_port = htons(proxy_port);
-    wpc.allowed_ip = peer->tunnel_ip;
-    wpc.allowed_prefix = 32;
-    wpc.keepalive_secs = keepalive;
-    WgNlSetPeer(wg, ifname, &wpc);
-    peer->state = WgPeerState::kRelayed;
-    spdlog::info("peer {} direct failed, reverted to relay",
+    StartRelay(peer, wg, proxy, ifname, proxy_port,
+               keepalive);
+    spdlog::info("peer {} direct failed, fell back to relay",
                  peer->hd_peer_id);
   }
 }
