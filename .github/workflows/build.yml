@@ -48,6 +48,13 @@ jobs:
             --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
             --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
+      - name: Load kTLS module
+        # HD mode requires TLS end-to-end, and the server
+        # uses kTLS. Without the tls kernel module loaded
+        # OpenSSL accepts the handshake but BIO_get_ktls_*
+        # returns 0 and KtlsAccept fails.
+        run: sudo modprobe tls
+
       - name: Configure
         run: >
           cmake --preset debug
