@@ -53,7 +53,12 @@ jobs:
         # uses kTLS. Without the tls kernel module loaded
         # OpenSSL accepts the handshake but BIO_get_ktls_*
         # returns 0 and KtlsAccept fails.
-        run: sudo modprobe tls
+        run: |
+          sudo modprobe tls || echo "modprobe tls exited non-zero"
+          uname -r
+          lsmod | grep -i tls || echo "no tls module loaded"
+          ls /sys/module/tls 2>&1 || true
+          openssl version -a
 
       - name: Configure
         run: >
