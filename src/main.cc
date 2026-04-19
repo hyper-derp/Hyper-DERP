@@ -314,6 +314,20 @@ int main(int argc, char* argv[]) {
   if (!seed_relays.empty())
     config.seed_relays = std::move(seed_relays);
 
+  // HD mode requires TLS. The enrollment HMAC (HMAC-SHA-
+  // 512/256 over the client public key with the shared
+  // relay key) is replayable on its own — TLS is what
+  // prevents capture + replay on the wire. Fail fast if
+  // the operator has enabled HD without a cert.
+  if (!config.hd_relay_key.empty() &&
+      (config.tls_cert.empty() ||
+       config.tls_key.empty())) {
+    std::println(stderr,
+                 "error: HD mode (--hd-relay-key) requires "
+                 "TLS; set --tls-cert and --tls-key");
+    return EXIT_FAILURE;
+  }
+
   if (level2_set)
     config.level2.enabled = level2;
   if (stun_port >= 0)

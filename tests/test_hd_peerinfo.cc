@@ -47,7 +47,7 @@ TEST_F(HdPeerInfoTest, BothClientsGetPeerInfo) {
   ASSERT_TRUE(HdClientInit(&a).has_value());
   a.relay_key = relay_key_;
   ASSERT_TRUE(
-      HdClientConnect(&a, "127.0.0.1", port_).has_value());
+      test::ConnectHdClient(&a, "127.0.0.1", port_).has_value());
   ASSERT_TRUE(HdClientUpgrade(&a).has_value());
   ASSERT_TRUE(HdClientEnroll(&a).has_value());
   HdClientSetTimeout(&a, 3000);
@@ -57,7 +57,7 @@ TEST_F(HdPeerInfoTest, BothClientsGetPeerInfo) {
   ASSERT_TRUE(HdClientInit(&b).has_value());
   b.relay_key = relay_key_;
   ASSERT_TRUE(
-      HdClientConnect(&b, "127.0.0.1", port_).has_value());
+      test::ConnectHdClient(&b, "127.0.0.1", port_).has_value());
   ASSERT_TRUE(HdClientUpgrade(&b).has_value());
   ASSERT_TRUE(HdClientEnroll(&b).has_value());
   HdClientSetTimeout(&b, 3000);

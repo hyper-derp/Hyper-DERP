@@ -82,7 +82,7 @@ TEST_F(HdE2ETest, SingleDataRelay) {
                          relay_key_);
 
     bool ok = true;
-    ok = ok && HdClientConnect(
+    ok = ok && test::ConnectHdClient(
         &client, "127.0.0.1", port_).has_value();
     ok = ok && HdClientUpgrade(&client).has_value();
     ok = ok && HdClientEnroll(&client).has_value();
@@ -150,7 +150,7 @@ TEST_F(HdE2ETest, SingleDataRelay) {
                          relay_key_);
 
     bool ok = true;
-    ok = ok && HdClientConnect(
+    ok = ok && test::ConnectHdClient(
         &client, "127.0.0.1", port_).has_value();
     ok = ok && HdClientUpgrade(&client).has_value();
     ok = ok && HdClientEnroll(&client).has_value();
@@ -226,7 +226,7 @@ TEST_F(HdE2ETest, BidirectionalRelay) {
                          relay_key_);
 
     bool ok = true;
-    ok = ok && HdClientConnect(
+    ok = ok && test::ConnectHdClient(
         &client, "127.0.0.1", port_).has_value();
     ok = ok && HdClientUpgrade(&client).has_value();
     ok = ok && HdClientEnroll(&client).has_value();
@@ -293,7 +293,7 @@ TEST_F(HdE2ETest, BidirectionalRelay) {
                          relay_key_);
 
     bool ok = true;
-    ok = ok && HdClientConnect(
+    ok = ok && test::ConnectHdClient(
         &client, "127.0.0.1", port_).has_value();
     ok = ok && HdClientUpgrade(&client).has_value();
     ok = ok && HdClientEnroll(&client).has_value();

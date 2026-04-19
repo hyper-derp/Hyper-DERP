@@ -195,6 +195,7 @@ auto HdClientTlsConnect(HdClient* c)
 
   c->ssl = ssl;
   c->ssl_ctx = ctx;
+  c->use_tls = true;
   return {};
 }
 
@@ -593,6 +594,18 @@ auto HdClientReconnect(HdClient* c)
   auto conn = HdClientConnect(c, c->host.c_str(),
                                c->port);
   if (!conn) return conn;
+
+  if (c->use_tls) {
+    // use_tls was set by the original TlsConnect; the
+    // Tls state itself was freed above, so re-run the
+    // handshake on the new fd.
+    c->use_tls = false;
+    auto tls = HdClientTlsConnect(c);
+    if (!tls) return std::unexpected(
+        Error<HdClientError>{
+            HdClientError::IoFailed,
+            tls.error().message});
+  }
 
   // Re-upgrade.
   auto up = HdClientUpgrade(c);

@@ -43,7 +43,7 @@ class SdkTest : public ::testing::Test {
     sodium_bin2hex(hex, sizeof(hex),
                    relay_key_.data(), 32);
     cfg.relay_key = hex;
-    cfg.tls = false;
+    cfg.tls = true;
     cfg.keepalive = std::chrono::seconds(0);
     cfg.auto_reconnect = false;
     return cfg;

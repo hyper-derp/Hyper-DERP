@@ -87,6 +87,9 @@ struct HdClient {
   // read/write.
   SSL* ssl = nullptr;
   SSL_CTX* ssl_ctx = nullptr;
+  /// True if HdClientTlsConnect was used; Reconnect will
+  /// re-run TLS before enroll.
+  bool use_tls = false;
 
   // Recv reassembly buffer. Reads large chunks and
   // parses multiple frames without per-frame syscalls.

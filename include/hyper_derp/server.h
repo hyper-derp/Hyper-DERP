@@ -57,6 +57,9 @@ enum class ServerError {
   KtlsInitFailed,
   /// Level 2 initialization failed.
   Level2InitFailed,
+  /// Configuration invariant violated (e.g. HD mode
+  /// enabled without TLS).
+  ConfigInvalid,
 };
 
 /// Human-readable name for a ServerError code.
@@ -81,6 +84,8 @@ constexpr auto ServerErrorName(ServerError e)
       return "KtlsInitFailed";
     case ServerError::Level2InitFailed:
       return "Level2InitFailed";
+    case ServerError::ConfigInvalid:
+      return "ConfigInvalid";
   }
   return "Unknown";
 }
