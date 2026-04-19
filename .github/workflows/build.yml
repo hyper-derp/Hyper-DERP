@@ -41,7 +41,7 @@ jobs:
             liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
             libssl-dev libasio-dev \
-            libbpf-dev libmnl-dev libzmq3-dev
+            libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
       - name: Set GCC 14
         run: |
           sudo update-alternatives \
@@ -82,7 +82,7 @@ jobs:
             liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
             libssl-dev libasio-dev \
-            libbpf-dev libmnl-dev libzmq3-dev
+            libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
       - name: Set GCC 14
         run: |
           sudo update-alternatives \

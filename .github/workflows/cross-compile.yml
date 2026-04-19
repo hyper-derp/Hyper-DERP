@@ -38,7 +38,7 @@ jobs:
             libsodium-dev:arm64 \
             libssl-dev:arm64 \
             libbpf-dev:arm64 libmnl-dev:arm64 \
-            libzmq3-dev:arm64 \
+            libzmq3-dev:arm64 cppzmq-dev \
             libcli11-dev \
             libasio-dev
 
