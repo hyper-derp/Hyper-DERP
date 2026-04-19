@@ -102,7 +102,7 @@ static bool ConnectRelay(HdClient* hd, const char* host,
     return false;
   }
 
-  HdClientSetTimeout(hd, 100);
+  HdClientSetTimeout(hd, 10);
   return true;
 }
 
@@ -812,7 +812,7 @@ int main(int argc, char** argv) {
     fds[1].fd = proxy.udp_fd;
     fds[1].events = POLLIN;
 
-    int ret = poll(fds, 2, 200);
+    int ret = poll(fds, 2, 5);
     if (ret < 0) {
       if (errno == EINTR) continue;
       break;
@@ -831,7 +831,17 @@ int main(int argc, char** argv) {
 
     // HD frames.
     if (fds[0].revents & POLLIN) {
+      // Mark whether this was the first RecvFrame call
+      // (where we expect data from the kernel). Subsequent
+      // calls should only process frames that are already
+      // decoded in HdClient's buffer — otherwise we'd block
+      // inside SSL_read for SO_RCVTIMEO.
+      bool first = true;
       while (!g_stop) {
+        if (!first && hd.recv_len == hd.recv_pos) {
+          break;
+        }
+        first = false;
         auto rv = HdClientRecvFrame(
             &hd, &frame_type, frame_buf,
             &frame_len, sizeof(frame_buf));
@@ -894,9 +904,9 @@ int main(int argc, char** argv) {
       }
     }
 
-    // UDP from wireguard.ko.
+    // UDP from wireguard.ko — drain all queued packets.
     if (fds[1].revents & POLLIN) {
-      WgProxyHandleUdp(&proxy);
+      while (WgProxyHandleUdp(&proxy) == 0) {}
     }
 
     // Periodic: check ICE promotions.

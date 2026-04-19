@@ -18,7 +18,7 @@ namespace hyper_derp {
 auto WgProxyInit(WgProxy* proxy, uint16_t port,
                  uint16_t wg_listen_port, HdClient* hd)
     -> std::expected<void, Error<WgProxyError>> {
-  int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
   if (fd < 0) {
     return std::unexpected(MakeError(
         WgProxyError::SocketFailed,
