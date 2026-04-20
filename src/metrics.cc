@@ -23,6 +23,7 @@
 #include "hyper_derp/handshake.h"
 #include "hyper_derp/hd_handshake.h"
 #include "hyper_derp/hd_peers.h"
+#include "hyper_derp/key_format.h"
 #include "hyper_derp/metrics.h"
 #include "hyper_derp/protocol.h"
 
@@ -370,6 +371,7 @@ static void RegisterHdRoutes(MetricsServer* ms) {
       char hex[kKeySize * 2 + 1];
       KeyToHex(s.key, hex);
       pj["key"] = std::string(hex);
+      pj["key_str"] = KeyToCkString(s.key);
       pj["state"] = s.state == HdPeerState::kApproved
           ? "approved"
           : s.state == HdPeerState::kPending
@@ -380,7 +382,10 @@ static void RegisterHdRoutes(MetricsServer* ms) {
       for (int r = 0; r < s.rule_count; r++) {
         char dhex[kKeySize * 2 + 1];
         KeyToHex(s.rules[r], dhex);
-        rules.push_back(std::string(dhex));
+        crow::json::wvalue rule;
+        rule["key"] = std::string(dhex);
+        rule["key_str"] = KeyToCkString(s.rules[r]);
+        rules.push_back(std::move(rule));
       }
       pj["rules"] = std::move(rules);
       peers.push_back(std::move(pj));
@@ -396,12 +401,9 @@ static void RegisterHdRoutes(MetricsServer* ms) {
   .methods("POST"_method)
   ([ms](const std::string& key_hex) {
     Key key{};
-    if (key_hex.size() != kKeySize * 2 ||
-        sodium_hex2bin(
-            key.data(), kKeySize,
-            key_hex.c_str(), key_hex.size(),
-            nullptr, nullptr, nullptr) != 0) {
-      return crow::response(400, "invalid key hex");
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
     }
     int fd = -1;
     uint16_t pid = 0;
@@ -436,12 +438,9 @@ static void RegisterHdRoutes(MetricsServer* ms) {
   .methods("POST"_method)
   ([ms](const std::string& key_hex) {
     Key key{};
-    if (key_hex.size() != kKeySize * 2 ||
-        sodium_hex2bin(
-            key.data(), kKeySize,
-            key_hex.c_str(), key_hex.size(),
-            nullptr, nullptr, nullptr) != 0) {
-      return crow::response(400, "invalid key hex");
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
     }
     int fd = -1;
     {
@@ -466,12 +465,9 @@ static void RegisterHdRoutes(MetricsServer* ms) {
   .methods("DELETE"_method)
   ([ms](const std::string& key_hex) {
     Key key{};
-    if (key_hex.size() != kKeySize * 2 ||
-        sodium_hex2bin(
-            key.data(), kKeySize,
-            key_hex.c_str(), key_hex.size(),
-            nullptr, nullptr, nullptr) != 0) {
-      return crow::response(400, "invalid key hex");
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
     }
     int fd = -1;
     {
@@ -482,7 +478,7 @@ static void RegisterHdRoutes(MetricsServer* ms) {
         return crow::response(404, "peer not found");
       }
       fd = p->fd;
-      HdPeersRemove(ms->hd_peers, key.data());
+      HdPeersRevoke(ms->hd_peers, key.data());
     }
     if (fd >= 0) {
       DpRemovePeer(ms->ctx, key);
@@ -502,18 +498,12 @@ static void RegisterHdRoutes(MetricsServer* ms) {
     }
     std::string dst_hex = body["dst_key"].s();
     Key peer_key{}, dst_key{};
-    if (key_hex.size() != kKeySize * 2 ||
-        sodium_hex2bin(
-            peer_key.data(), kKeySize,
-            key_hex.c_str(), key_hex.size(),
-            nullptr, nullptr, nullptr) != 0) {
+    if (ParseKeyString(key_hex, &peer_key) ==
+        KeyPrefix::kInvalid) {
       return crow::response(400, "invalid peer key");
     }
-    if (dst_hex.size() != kKeySize * 2 ||
-        sodium_hex2bin(
-            dst_key.data(), kKeySize,
-            dst_hex.c_str(), dst_hex.size(),
-            nullptr, nullptr, nullptr) != 0) {
+    if (ParseKeyString(dst_hex, &dst_key) ==
+        KeyPrefix::kInvalid) {
       return crow::response(400, "invalid dst_key");
     }
     {
@@ -529,6 +519,50 @@ static void RegisterHdRoutes(MetricsServer* ms) {
     return crow::response(200, "rule added");
   });
 
+  // Redirect a peer to a different relay.
+  CROW_ROUTE(ms->app, "/api/v1/peers/<string>/redirect")
+  .methods("POST"_method)
+  ([ms](const crow::request& req,
+        const std::string& key_hex) {
+    auto body = crow::json::load(req.body);
+    if (!body || !body.has("target_url")) {
+      return crow::response(400, "need target_url");
+    }
+    std::string target_url = body["target_url"].s();
+    // Default reason: Rebalancing.
+    uint8_t reason_val = static_cast<uint8_t>(
+        HdRedirectReason::kRebalancing);
+    if (body.has("reason")) {
+      reason_val =
+          static_cast<uint8_t>(body["reason"].i());
+    }
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers,
+                               key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+    }
+    if (fd < 0) {
+      return crow::response(409, "peer has no socket");
+    }
+    auto r = HdSendRedirect(
+        fd, static_cast<HdRedirectReason>(reason_val),
+        target_url);
+    if (!r) {
+      return crow::response(500, r.error().message);
+    }
+    return crow::response(200, "redirect sent");
+  });
+
   // Relay status.
   CROW_ROUTE(ms->app, "/api/v1/relay")
   ([ms]() {
@@ -541,9 +575,381 @@ static void RegisterHdRoutes(MetricsServer* ms) {
           ms->hd_peers->enroll_mode ==
               HdEnrollMode::kAutoApprove
           ? "auto" : "manual";
+      j["relay_id"] = ms->hd_peers->relay_id;
+      j["denylist_size"] = static_cast<int>(
+          ms->hd_peers->denylist.size());
     }
     j["workers"] = ms->ctx->num_workers;
     return crow::response(200, j);
+  });
+
+  // Generate a new random relay key. This is a helper for
+  // admins bootstrapping a relay; the returned key must
+  // then be set in the server config and distributed to
+  // clients out of band. Does not mutate server state.
+  CROW_ROUTE(ms->app, "/api/v1/relay/init")
+  .methods("POST"_method)
+  ([]() {
+    Key k{};
+    randombytes_buf(k.data(), kKeySize);
+    crow::json::wvalue j;
+    char hex[kKeySize * 2 + 1];
+    sodium_bin2hex(hex, sizeof(hex),
+                   k.data(), kKeySize);
+    j["relay_key"] = std::string(hex);
+    j["relay_key_str"] = KeyToRkString(k);
+    j["note"] =
+        "this key is shown once — set hd.relay_key in "
+        "the server config and distribute to clients";
+    return crow::response(200, j);
+  });
+
+  // Per-worker + per-peer traffic counters.
+  CROW_ROUTE(ms->app, "/api/v1/counters")
+  ([ms]() {
+    crow::json::wvalue j;
+    uint64_t total_rx = 0, total_tx = 0;
+    uint64_t total_send_drops = 0;
+    uint64_t total_mesh_fwd = 0, total_fleet_fwd = 0;
+    crow::json::wvalue::list workers;
+    for (int i = 0; i < ms->ctx->num_workers; i++) {
+      Worker* w = ms->ctx->workers[i];
+      if (!w) continue;
+      crow::json::wvalue wj;
+      wj["id"] = w->id;
+      wj["recv_bytes"] =
+          static_cast<int64_t>(w->stats.recv_bytes);
+      wj["send_bytes"] =
+          static_cast<int64_t>(w->stats.send_bytes);
+      wj["send_drops"] =
+          static_cast<int64_t>(w->stats.send_drops);
+      wj["hd_mesh_forwards"] = static_cast<int64_t>(
+          w->stats.hd_mesh_forwards);
+      wj["hd_fleet_forwards"] = static_cast<int64_t>(
+          w->stats.hd_fleet_forwards);
+      total_rx += w->stats.recv_bytes;
+      total_tx += w->stats.send_bytes;
+      total_send_drops += w->stats.send_drops;
+      total_mesh_fwd += w->stats.hd_mesh_forwards;
+      total_fleet_fwd += w->stats.hd_fleet_forwards;
+      workers.push_back(std::move(wj));
+    }
+    j["workers"] = std::move(workers);
+    j["total_recv_bytes"] =
+        static_cast<int64_t>(total_rx);
+    j["total_send_bytes"] =
+        static_cast<int64_t>(total_tx);
+    j["total_send_drops"] =
+        static_cast<int64_t>(total_send_drops);
+    j["total_hd_mesh_forwards"] =
+        static_cast<int64_t>(total_mesh_fwd);
+    j["total_hd_fleet_forwards"] =
+        static_cast<int64_t>(total_fleet_fwd);
+    if (ms->hd_counters.enrollments) {
+      j["hd_enrollments"] = static_cast<int64_t>(
+          ms->hd_counters.enrollments->load(
+              std::memory_order_relaxed));
+    }
+    if (ms->hd_counters.auth_failures) {
+      j["hd_auth_failures"] = static_cast<int64_t>(
+          ms->hd_counters.auth_failures->load(
+              std::memory_order_relaxed));
+    }
+    return crow::response(200, j);
+  });
+
+  // Read-only runtime config view. Sensitive fields (keys,
+  // denylist file contents) are redacted.
+  CROW_ROUTE(ms->app, "/api/v1/config")
+  ([ms]() {
+    crow::json::wvalue j;
+    j["workers"] = ms->ctx->num_workers;
+    j["hd_enabled"] = (ms->hd_peers != nullptr);
+    if (ms->hd_peers) {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      j["hd_relay_id"] = ms->hd_peers->relay_id;
+      j["hd_enroll_mode"] =
+          ms->hd_peers->enroll_mode ==
+              HdEnrollMode::kAutoApprove
+          ? "auto" : "manual";
+      const auto& pol = ms->hd_peers->policy;
+      j["hd_policy_max_peers"] = pol.max_peers;
+      j["hd_policy_require_ip_range"] =
+          pol.require_ip_range;
+      crow::json::wvalue::list ak;
+      for (const auto& p : pol.allowed_keys) {
+        ak.push_back(p);
+      }
+      j["hd_policy_allowed_keys"] = std::move(ak);
+      j["hd_denylist_path"] =
+          ms->hd_peers->denylist_path;
+      j["hd_denylist_size"] =
+          static_cast<int>(ms->hd_peers->denylist.size());
+    }
+    return crow::response(200, j);
+  });
+}
+
+// -- HTMX admin UI -----------------------------------------------------------
+
+namespace {
+
+// Minimal HTML shell. The peer table is loaded and
+// refreshed by htmx every 2s; action buttons POST via
+// hx-post and swap the updated fragment in place.
+constexpr const char* kAdminIndexHtml = R"HTML(<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hyper-derp admin</title>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<style>
+body{font:14px/1.4 ui-monospace,monospace;margin:2em;
+  max-width:1100px}
+h1{font-size:1.1em;margin:0 0 1em}
+table{border-collapse:collapse;width:100%;margin:.5em 0}
+th,td{padding:.3em .6em;border-bottom:1px solid #ddd;
+  text-align:left;vertical-align:top}
+th{background:#f6f6f6;font-weight:600}
+.key{font-size:.8em;word-break:break-all;max-width:420px}
+.state{text-transform:uppercase;font-size:.78em;
+  letter-spacing:.05em;padding:.1em .4em;border-radius:3px}
+.state.pending{background:#fef3c7;color:#854d0e}
+.state.approved{background:#dcfce7;color:#166534}
+.state.denied{background:#fee2e2;color:#991b1b}
+button{font:inherit;padding:.2em .6em;margin-right:.3em;
+  cursor:pointer}
+.muted{color:#888}
+.topbar{display:flex;justify-content:space-between;
+  align-items:center;margin-bottom:1em}
+</style>
+</head>
+<body>
+<div class="topbar">
+<h1>hyper-derp admin</h1>
+<div id="relay-status" hx-get="/admin/status"
+  hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+</div>
+<div id="peers" hx-get="/admin/peers"
+  hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+</body>
+</html>
+)HTML";
+
+std::string RenderPeerRow(const std::string& hex,
+                          const std::string& state,
+                          int fd,
+                          int rule_count) {
+  std::string row;
+  row.reserve(512);
+  row += "<tr><td class=\"key\">";
+  row += hex;
+  row += "</td><td><span class=\"state ";
+  row += state;
+  row += "\">";
+  row += state;
+  row += "</span></td><td>";
+  row += std::to_string(fd);
+  row += "</td><td>";
+  row += std::to_string(rule_count);
+  row += "</td><td>";
+  if (state == "pending") {
+    row += "<button hx-post=\"/admin/peers/";
+    row += hex;
+    row += "/approve\" hx-target=\"#peers\" "
+           "hx-swap=\"innerHTML\">approve</button>";
+    row += "<button hx-post=\"/admin/peers/";
+    row += hex;
+    row += "/deny\" hx-target=\"#peers\" "
+           "hx-swap=\"innerHTML\">deny</button>";
+  } else if (state == "approved") {
+    row += "<button hx-delete=\"/admin/peers/";
+    row += hex;
+    row += "\" hx-target=\"#peers\" "
+           "hx-swap=\"innerHTML\" "
+           "hx-confirm=\"Revoke this peer? "
+           "Key will be added to the denylist.\">"
+           "revoke</button>";
+  }
+  row += "</td></tr>";
+  return row;
+}
+
+std::string RenderPeerList(HdPeerRegistry* reg) {
+  struct Snap {
+    std::string hex;
+    std::string state;
+    int fd;
+    int rule_count;
+  };
+  std::vector<Snap> snaps;
+  {
+    std::lock_guard lock(reg->mutex);
+    for (int i = 0; i < kHdMaxPeers; i++) {
+      auto& p = reg->peers[i];
+      if (p.occupied != 1) continue;
+      char hex[kKeySize * 2 + 1];
+      KeyToHex(p.key, hex);
+      Snap s;
+      s.hex = hex;
+      s.state = p.state == HdPeerState::kApproved
+                    ? "approved"
+                    : p.state == HdPeerState::kPending
+                    ? "pending" : "denied";
+      s.fd = p.fd;
+      s.rule_count = p.rule_count;
+      snaps.push_back(std::move(s));
+    }
+  }
+  std::string html;
+  html.reserve(4096);
+  html += "<table><thead><tr><th>peer key</th>"
+          "<th>state</th><th>fd</th><th>rules</th>"
+          "<th>actions</th></tr></thead><tbody>";
+  if (snaps.empty()) {
+    html += "<tr><td colspan=\"5\" class=\"muted\">"
+            "no peers</td></tr>";
+  }
+  for (auto& s : snaps) {
+    html += RenderPeerRow(s.hex, s.state, s.fd,
+                          s.rule_count);
+  }
+  html += "</tbody></table>";
+  return html;
+}
+
+}  // namespace
+
+static void RegisterAdminRoutes(MetricsServer* ms) {
+  if (!ms->hd_peers) return;
+
+  CROW_ROUTE(ms->app, "/admin")
+  ([]() {
+    crow::response r(200, kAdminIndexHtml);
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  CROW_ROUTE(ms->app, "/admin/peers")
+  ([ms]() {
+    crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  CROW_ROUTE(ms->app, "/admin/status")
+  ([ms]() {
+    std::string html;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      html += "<span class=\"muted\">relay_id=";
+      html += std::to_string(ms->hd_peers->relay_id);
+      html += " · peers=";
+      html += std::to_string(ms->hd_peers->peer_count);
+      html += " · denylist=";
+      html += std::to_string(
+          ms->hd_peers->denylist.size());
+      html += " · mode=";
+      html += ms->hd_peers->enroll_mode ==
+                      HdEnrollMode::kAutoApprove
+                  ? "auto"
+                  : "manual";
+      html += "</span>";
+    }
+    crow::response r(200, html);
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  CROW_ROUTE(ms->app,
+             "/admin/peers/<string>/approve")
+  .methods("POST"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    int fd = -1;
+    uint16_t pid = 0;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      if (!HdPeersApprove(ms->hd_peers, key.data())) {
+        return crow::response(404, "peer not found");
+      }
+      auto* p = HdPeersLookup(ms->hd_peers, key.data());
+      if (p) {
+        fd = p->fd;
+        pid = p->peer_id;
+      }
+    }
+    if (fd >= 0) {
+      HdSendApproved(fd, key);
+      timeval tv{.tv_sec = 0, .tv_usec = 0};
+      setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                 &tv, sizeof(tv));
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+                 &tv, sizeof(tv));
+      DpAddPeer(ms->ctx, fd, key,
+                PeerProtocol::kHd, pid);
+    }
+    crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  CROW_ROUTE(ms->app, "/admin/peers/<string>/deny")
+  .methods("POST"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers, key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+      HdPeersDeny(ms->hd_peers, key.data());
+    }
+    if (fd >= 0) {
+      HdSendDenied(fd, 0, "denied by admin");
+      close(fd);
+    }
+    crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  CROW_ROUTE(ms->app, "/admin/peers/<string>")
+  .methods("DELETE"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    int fd = -1;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* p = HdPeersLookup(ms->hd_peers, key.data());
+      if (!p) {
+        return crow::response(404, "peer not found");
+      }
+      fd = p->fd;
+      HdPeersRevoke(ms->hd_peers, key.data());
+    }
+    if (fd >= 0) {
+      DpRemovePeer(ms->ctx, key);
+      close(fd);
+    }
+    crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
   });
 }
 
@@ -565,6 +971,7 @@ MetricsServer* MetricsStart(const MetricsConfig& config,
 
   RegisterRoutes(ms, config.enable_debug);
   RegisterHdRoutes(ms);
+  RegisterAdminRoutes(ms);
 
   // Suppress Crow's internal logging noise.
   ms->app.loglevel(crow::LogLevel::Warning);
