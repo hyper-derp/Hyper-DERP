@@ -169,6 +169,13 @@ auto HdClientTlsConnect(HdClient* c)
   SSL_CTX_set_options(ctx, SSL_OP_ENABLE_KTLS);
   SSL_CTX_set_num_tickets(ctx, 0);
 
+  // Advertise ALPN "hd/1". Servers that don't support
+  // ALPN just ignore it; HD servers pick hd/1 so they
+  // can skip HTTP path sniffing.
+  static const unsigned char kAlpnHd1[] = {
+      4, 'h', 'd', '/', '1'};
+  SSL_CTX_set_alpn_protos(ctx, kAlpnHd1, sizeof(kAlpnHd1));
+
   SSL* ssl = SSL_new(ctx);
   if (!ssl) {
     SSL_CTX_free(ctx);

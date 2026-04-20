@@ -31,6 +31,40 @@ static std::string SslError() {
   return buf;
 }
 
+// ALPN select callback. Picks hd/1 over derp/1 if both
+// are offered. Returns SSL_TLSEXT_ERR_NOACK if neither is
+// offered — OpenSSL then proceeds without ALPN selection
+// (compat fallback for legacy DERP clients).
+static int AlpnSelect(SSL* /*ssl*/,
+                      const unsigned char** out,
+                      unsigned char* outlen,
+                      const unsigned char* in,
+                      unsigned int inlen,
+                      void* /*arg*/) {
+  auto name_matches = [&](const char* name) -> bool {
+    unsigned int nlen = static_cast<unsigned int>(
+        std::strlen(name));
+    for (unsigned int i = 0; i + 1 + nlen <= inlen;) {
+      unsigned int l = in[i];
+      if (l == nlen &&
+          std::memcmp(in + i + 1, name, nlen) == 0) {
+        *out = in + i + 1;
+        *outlen = static_cast<unsigned char>(nlen);
+        return true;
+      }
+      i += 1 + l;
+    }
+    return false;
+  };
+  if (name_matches(kKtlsAlpnHd)) {
+    return SSL_TLSEXT_ERR_OK;
+  }
+  if (name_matches(kKtlsAlpnDerp)) {
+    return SSL_TLSEXT_ERR_OK;
+  }
+  return SSL_TLSEXT_ERR_NOACK;
+}
+
 auto ProbeKtls()
     -> std::expected<void, Error<KtlsError>> {
   int lfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -125,6 +159,12 @@ auto KtlsCtxInit(KtlsCtx* ctx,
   // counter before kTLS takes over.
   SSL_CTX_set_num_tickets(ssl_ctx, 0);
 
+  // ALPN: offer hd/1 and derp/1. Callback returns NOACK
+  // when the client offered neither, preserving the old
+  // HTTP-path-sniff fallback.
+  SSL_CTX_set_alpn_select_cb(ssl_ctx, AlpnSelect,
+                             nullptr);
+
   if (SSL_CTX_use_certificate_chain_file(
           ssl_ctx, cert_path) != 1) {
     SSL_CTX_free(ssl_ctx);
@@ -158,8 +198,11 @@ void KtlsCtxDestroy(KtlsCtx* ctx) {
   }
 }
 
-auto KtlsAccept(KtlsCtx* ctx, int fd)
+auto KtlsAccept(KtlsCtx* ctx, int fd,
+                KtlsProto* out_proto)
     -> std::expected<void, Error<KtlsError>> {
+  if (out_proto) *out_proto = KtlsProto::kUnknown;
+
   SSL* ssl = SSL_new(ctx->ssl_ctx);
   if (!ssl) {
     return MakeError(KtlsError::HandshakeFailed,
@@ -176,6 +219,19 @@ auto KtlsAccept(KtlsCtx* ctx, int fd)
                       SslError();
     SSL_free(ssl);
     return MakeError(KtlsError::HandshakeFailed, msg);
+  }
+
+  if (out_proto) {
+    const unsigned char* alpn = nullptr;
+    unsigned int alpn_len = 0;
+    SSL_get0_alpn_selected(ssl, &alpn, &alpn_len);
+    if (alpn && alpn_len == 4 &&
+        std::memcmp(alpn, kKtlsAlpnHd, 4) == 0) {
+      *out_proto = KtlsProto::kHd;
+    } else if (alpn && alpn_len == 6 &&
+               std::memcmp(alpn, kKtlsAlpnDerp, 6) == 0) {
+      *out_proto = KtlsProto::kDerp;
+    }
   }
 
   // Verify OpenSSL auto-installed kTLS for both
