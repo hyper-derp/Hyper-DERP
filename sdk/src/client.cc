@@ -88,6 +88,7 @@ struct Client::Impl {
   std::mutex cb_mutex;
   PeerCallback on_peer;
   ErrorCallback on_error;
+  RedirectCallback on_redirect;
 
   // Send serialization.
   std::mutex send_mutex;
@@ -394,6 +395,37 @@ void Client::DispatchFrame(Impl* impl,
         it->second->mode.store(Mode::Closed);
       }
     }
+  } else if (ftype == HdFrameType::kRedirect &&
+             buf_len >= 1) {
+    hyper_derp::HdRedirectReason reason;
+    char url[hyper_derp::kHdRedirectMaxUrl + 1];
+    int url_len = hyper_derp::HdParseRedirect(
+        buf, buf_len, &reason, url, sizeof(url));
+    if (url_len < 0) return;
+    std::string target(url, url_len);
+    spdlog::info("sdk redirect: reason={} target={}",
+                 static_cast<int>(reason), target);
+    bool follow = true;
+    {
+      std::lock_guard lock(impl->cb_mutex);
+      if (impl->on_redirect) {
+        follow = impl->on_redirect(reason, target);
+      }
+    }
+    if (!follow || target.empty()) return;
+    std::string new_host;
+    uint16_t new_port = 0;
+    if (!ParseRelayUrl(target, &new_host, &new_port)) {
+      spdlog::warn("sdk redirect: bad target url");
+      return;
+    }
+    impl->host = std::move(new_host);
+    impl->port = new_port;
+    impl->config.relay_url = target;
+    // Trigger the RecvLoop's reconnect path with the
+    // updated host/port.
+    hyper_derp::HdClientClose(&impl->hd);
+    impl->status.store(Status::Disconnected);
   } else if (ftype == HdFrameType::kMeshData &&
              buf_len >= 2) {
     uint16_t src =
@@ -530,6 +562,11 @@ void Client::SetPeerCallback(PeerCallback cb) {
 void Client::SetErrorCallback(ErrorCallback cb) {
   std::lock_guard lock(impl_->cb_mutex);
   impl_->on_error = std::move(cb);
+}
+
+void Client::SetRedirectCallback(RedirectCallback cb) {
+  std::lock_guard lock(impl_->cb_mutex);
+  impl_->on_redirect = std::move(cb);
 }
 
 // -- Raw send ----------------------------------------------------------------

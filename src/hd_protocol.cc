@@ -160,6 +160,41 @@ int HdParseRouteAnnounce(const uint8_t* payload,
   return entry_count;
 }
 
+int HdBuildRedirect(uint8_t* buf,
+                    HdRedirectReason reason,
+                    const char* target_url,
+                    int url_len) {
+  if (url_len < 0 || url_len > kHdRedirectMaxUrl) {
+    return -1;
+  }
+  int payload_len = 1 + url_len;
+  HdWriteFrameHeader(buf, HdFrameType::kRedirect,
+                     static_cast<uint32_t>(payload_len));
+  buf[kHdFrameHeaderSize] = static_cast<uint8_t>(reason);
+  if (url_len > 0) {
+    std::memcpy(buf + kHdFrameHeaderSize + 1,
+                target_url, url_len);
+  }
+  return kHdFrameHeaderSize + payload_len;
+}
+
+int HdParseRedirect(const uint8_t* payload,
+                    int payload_len,
+                    HdRedirectReason* out_reason,
+                    char* out_url,
+                    int out_url_size) {
+  if (payload_len < 1) return -1;
+  int url_len = payload_len - 1;
+  if (url_len > kHdRedirectMaxUrl) return -1;
+  if (out_url_size < url_len + 1) return -1;
+  *out_reason = static_cast<HdRedirectReason>(payload[0]);
+  if (url_len > 0) {
+    std::memcpy(out_url, payload + 1, url_len);
+  }
+  out_url[url_len] = '\0';
+  return url_len;
+}
+
 int HdBuildRelayEnroll(uint8_t* buf,
                        const Key& client_key,
                        const uint8_t* hmac,

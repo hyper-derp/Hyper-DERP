@@ -52,6 +52,7 @@ TEST(HdProtocolTest, AllFrameTypesDistinct) {
       static_cast<uint8_t>(HdFrameType::kDenied),
       static_cast<uint8_t>(HdFrameType::kPeerInfo),
       static_cast<uint8_t>(HdFrameType::kPeerGone),
+      static_cast<uint8_t>(HdFrameType::kRedirect),
       static_cast<uint8_t>(HdFrameType::kRouteAnnounce),
   };
   int count = sizeof(types) / sizeof(types[0]);
@@ -222,6 +223,73 @@ TEST(HdProtocolTest, ReadFleetRelayAndPeerRoundtrip) {
   const uint8_t* payload = buf + kHdFrameHeaderSize;
   EXPECT_EQ(HdReadFleetRelay(payload), 0xFEDC);
   EXPECT_EQ(HdReadFleetPeer(payload), 0xBA98);
+}
+
+TEST(HdProtocolTest, BuildRedirect) {
+  const char* url = "hd://relay-eu-2.example.com:443";
+  int url_len = strlen(url);
+
+  uint8_t buf[kHdFrameHeaderSize + 1 + 256];
+  int n = HdBuildRedirect(buf,
+                          HdRedirectReason::kRebalancing,
+                          url, url_len);
+
+  EXPECT_EQ(n, kHdFrameHeaderSize + 1 + url_len);
+  EXPECT_EQ(HdReadFrameType(buf),
+            HdFrameType::kRedirect);
+  EXPECT_EQ(HdReadPayloadLen(buf),
+            static_cast<uint32_t>(1 + url_len));
+  EXPECT_EQ(buf[kHdFrameHeaderSize],
+            static_cast<uint8_t>(
+                HdRedirectReason::kRebalancing));
+  EXPECT_EQ(
+      memcmp(buf + kHdFrameHeaderSize + 1, url, url_len),
+      0);
+}
+
+TEST(HdProtocolTest, RedirectUrlTooLong) {
+  char url[kHdRedirectMaxUrl + 1];
+  memset(url, 'x', sizeof(url));
+
+  uint8_t buf[kHdFrameHeaderSize + 1 + kHdRedirectMaxUrl +
+              1];
+  int n = HdBuildRedirect(buf,
+                          HdRedirectReason::kDraining,
+                          url, sizeof(url));
+
+  EXPECT_EQ(n, -1);
+}
+
+TEST(HdProtocolTest, ParseRedirectRoundtrip) {
+  const char* url = "hd://target.example:3340";
+  int url_len = strlen(url);
+
+  uint8_t buf[kHdFrameHeaderSize + 1 + 256];
+  HdBuildRedirect(buf,
+                  HdRedirectReason::kGeoCorrection,
+                  url, url_len);
+
+  char out_url[kHdRedirectMaxUrl + 1];
+  HdRedirectReason out_reason;
+  int parsed_len = HdParseRedirect(
+      buf + kHdFrameHeaderSize,
+      HdReadPayloadLen(buf),
+      &out_reason,
+      out_url,
+      sizeof(out_url));
+
+  EXPECT_EQ(parsed_len, url_len);
+  EXPECT_EQ(out_reason,
+            HdRedirectReason::kGeoCorrection);
+  EXPECT_STREQ(out_url, url);
+}
+
+TEST(HdProtocolTest, ParseRedirectRejectsEmpty) {
+  HdRedirectReason r;
+  char out_url[16];
+  EXPECT_EQ(HdParseRedirect(nullptr, 0, &r, out_url,
+                            sizeof(out_url)),
+            -1);
 }
 
 TEST(HdProtocolTest, MeshDataVsDataOverhead) {

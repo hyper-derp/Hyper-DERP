@@ -33,6 +33,14 @@ using PeerCallback =
 using ErrorCallback =
     std::function<void(const Error& error)>;
 
+/// Fired when the relay sends a Redirect (0x22). Gives
+/// the application a chance to veto or log. If the
+/// callback returns true (the default), the SDK auto-
+/// reconnects to `target_url`.
+using RedirectCallback =
+    std::function<bool(hyper_derp::HdRedirectReason reason,
+                       const std::string& target_url)>;
+
 /// HD Protocol client.
 /// Move-only. Manages relay connection, peer discovery,
 /// and tunnel lifecycle.
@@ -93,6 +101,10 @@ class Client {
 
   /// Non-fatal error events (logging, metrics).
   void SetErrorCallback(ErrorCallback cb);
+
+  /// Relay Redirect events. If the callback returns true
+  /// (default), the SDK auto-reconnects to the target URL.
+  void SetRedirectCallback(RedirectCallback cb);
 
   // -- Raw access (advanced) -------------------------------------------------
 

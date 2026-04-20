@@ -31,6 +31,9 @@ inline constexpr int kHdFleetDstSize = 4;
 /// RouteAnnounce entry size (2B relay_id + 1B hops).
 inline constexpr int kHdRouteEntrySize = 3;
 
+/// Maximum Redirect target_relay_url length.
+inline constexpr int kHdRedirectMaxUrl = 256;
+
 // -- Frame types -------------------------------------------------------------
 
 /// HD frame type identifiers (wire values).
@@ -45,7 +48,22 @@ enum class HdFrameType : uint8_t {
   kDenied = 0x12,
   kPeerInfo = 0x20,
   kPeerGone = 0x21,
+  kRedirect = 0x22,
   kRouteAnnounce = 0x30,
+};
+
+/// Redirect reason codes (wire values).
+enum class HdRedirectReason : uint8_t {
+  /// Relay is shutting down for maintenance.
+  kDraining = 0x01,
+  /// Relay is shedding load.
+  kRebalancing = 0x02,
+  /// Peer should use a closer relay.
+  kGeoCorrection = 0x03,
+  /// Peer policy requires a different relay.
+  kPolicyRequired = 0x04,
+  /// Relay is at capacity.
+  kCapacityFull = 0x05,
 };
 
 // -- Frame header codec (operates on raw buffers) ----------------------------
@@ -250,6 +268,35 @@ int HdParseRouteAnnounce(const uint8_t* payload,
                          uint16_t* out_ids,
                          uint8_t* out_hops,
                          int max_out);
+
+/// @brief Builds an HD Redirect frame.
+///
+/// Payload: [1B reason][N bytes target_relay_url].
+/// @param buf Output buffer (must be large enough).
+/// @param reason Redirect reason code.
+/// @param target_url Target relay URL (UTF-8 string).
+/// @param url_len Length of target_url in bytes.
+/// @returns Total frame size written, or -1 if url_len
+///   exceeds kHdRedirectMaxUrl.
+int HdBuildRedirect(uint8_t* buf,
+                    HdRedirectReason reason,
+                    const char* target_url,
+                    int url_len);
+
+/// @brief Parses an HD Redirect frame payload.
+/// @param payload Pointer to the payload start (after
+///   frame header).
+/// @param payload_len Length of the payload.
+/// @param out_reason Output reason code.
+/// @param out_url Output buffer for target URL (at least
+///   kHdRedirectMaxUrl + 1 bytes for NUL).
+/// @param out_url_size Size of out_url buffer in bytes.
+/// @returns Length of URL written, or -1 on parse error.
+int HdParseRedirect(const uint8_t* payload,
+                    int payload_len,
+                    HdRedirectReason* out_reason,
+                    char* out_url,
+                    int out_url_size);
 
 /// Relay enrollment extension magic bytes.
 inline constexpr char kHdRelayMagic[] = "RELAY";
