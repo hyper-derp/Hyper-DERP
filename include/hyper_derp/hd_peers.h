@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #include "hyper_derp/protocol.h"
 
@@ -53,16 +55,51 @@ struct HdPeer {
   uint64_t enrolled_at = 0;
 };
 
+/// Policy constraints applied to auto-approval.
+struct HdEnrollPolicy {
+  /// Hard cap on approved peer count (0 = unlimited).
+  int max_peers = 0;
+  /// Glob patterns matched against the client-key string
+  /// (raw 64-char hex). A single trailing '*' acts as a
+  /// wildcard. Empty list = allow any.
+  std::vector<std::string> allowed_keys;
+  /// IPv4 CIDR the peer's source address must be in. Empty
+  /// string = no restriction.
+  std::string require_ip_range;
+};
+
 /// Top-level HD peer registry.
 struct HdPeerRegistry {
   HdPeer peers[kHdMaxPeers]{};
   int peer_count = 0;
   HdEnrollMode enroll_mode = HdEnrollMode::kManual;
+  HdEnrollPolicy policy;
   Key relay_key{};
   uint16_t next_peer_id = 1;  // Monotonic peer ID counter.
   uint16_t relay_id = 0;      // This relay's ID.
+  /// Persistent list of revoked client keys. A key appears
+  /// here when an admin calls HdPeersRevoke() (or the REST
+  /// DELETE endpoint). Subsequent enrollment attempts by
+  /// the same key are rejected even after the slot is
+  /// freed. Persisted to disk via HdDenylist{Load,Save} if
+  /// `denylist_path` is non-empty.
+  std::vector<Key> denylist;
+  std::string denylist_path;
   std::recursive_mutex mutex;
 };
+
+/// @brief Checks a candidate enrollment against the policy.
+/// @param reg Registry with policy to apply.
+/// @param client_key Candidate client key.
+/// @param peer_ipv4_be Peer's source IPv4 address in
+///   network byte order, or 0 to skip the ip-range check.
+/// @param out_reason If rejected, set to a short reason
+///   string (owned by the caller-visible string literal).
+/// @returns True if the candidate passes policy.
+bool HdPolicyAllows(const HdPeerRegistry* reg,
+                    const Key& client_key,
+                    uint32_t peer_ipv4_be,
+                    const char** out_reason);
 
 /// Initialize the registry with a relay key and mode.
 /// @param reg Registry to initialize.
@@ -115,6 +152,33 @@ bool HdPeersDeny(HdPeerRegistry* reg,
 /// @param key Pointer to 32-byte public key.
 void HdPeersRemove(HdPeerRegistry* reg,
                    const uint8_t* key);
+
+/// Permanently revoke a client key: remove the peer (if
+/// present) and add the key to the persistent denylist.
+/// Enrollment attempts by this key are rejected until the
+/// admin clears the denylist.
+/// @param reg Registry containing the peer.
+/// @param key Pointer to 32-byte public key.
+void HdPeersRevoke(HdPeerRegistry* reg,
+                   const uint8_t* key);
+
+/// Returns true if the key is present in the denylist.
+/// @param reg Registry with denylist.
+/// @param key Pointer to 32-byte public key.
+bool HdPeersIsDenied(const HdPeerRegistry* reg,
+                     const uint8_t* key);
+
+/// Load denylist from disk. File format is raw concatenated
+/// 32-byte keys; a missing file is treated as empty.
+/// @param reg Registry to populate. `reg->denylist_path`
+///   must already be set.
+/// @returns True on success (or when the file is absent).
+bool HdDenylistLoad(HdPeerRegistry* reg);
+
+/// Save the denylist to disk atomically.
+/// @param reg Registry whose denylist to persist.
+/// @returns True on success.
+bool HdDenylistSave(const HdPeerRegistry* reg);
 
 /// Add a forwarding rule for a peer.
 /// @param reg Registry containing the peer.
