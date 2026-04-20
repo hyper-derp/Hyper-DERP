@@ -275,6 +275,10 @@ auto LoadConfig(const char* path, ServerConfig* config)
           }
         }
       }
+      if (h.has_child("denylist_path")) {
+        ReadStr(h["denylist_path"],
+                &config->hd_denylist_path);
+      }
       if (h.has_child("enroll_mode")) {
         auto val = h["enroll_mode"].val();
         std::string_view mode(val.data(), val.len);
@@ -288,6 +292,41 @@ auto LoadConfig(const char* path, ServerConfig* config)
           return MakeError(
               ConfigError::InvalidValue,
               "hd.enroll_mode: expected manual|auto");
+        }
+      }
+      // Optional auto-approve policy block:
+      //   hd.enrollment:
+      //     max_peers: 100
+      //     allowed_keys: [ck_abc*, ...]
+      //     require_ip_range: "10.0.0.0/8"
+      if (h.has_child("enrollment")) {
+        auto e = h["enrollment"];
+        if (e.is_map()) {
+          if (e.has_child("max_peers")) {
+            int v = 0;
+            if (!ReadInt(e["max_peers"],
+                         "hd.enrollment.max_peers",
+                         &v, 0, 100000, &err))
+              return std::unexpected(err);
+            config->hd_enroll_policy.max_peers = v;
+          }
+          if (e.has_child("require_ip_range")) {
+            ReadStr(e["require_ip_range"],
+                    &config->hd_enroll_policy
+                         .require_ip_range);
+          }
+          if (e.has_child("allowed_keys")) {
+            auto ak = e["allowed_keys"];
+            if (ak.is_seq()) {
+              for (auto child : ak.children()) {
+                if (child.has_val()) {
+                  auto v = child.val();
+                  config->hd_enroll_policy.allowed_keys
+                      .emplace_back(v.data(), v.len);
+                }
+              }
+            }
+          }
         }
       }
     }

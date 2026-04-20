@@ -26,6 +26,7 @@
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/http.h"
+#include "hyper_derp/key_format.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/turn.h"
 #include "hyper_derp/xdp_loader.h"
@@ -245,7 +246,8 @@ static void SendAndClose(int fd, const uint8_t* data,
 using std::string_view_literals::operator""sv;
 
 // Handle a single accepted connection.
-static void HandleConnection(Server* server, int fd) {
+static void HandleConnection(Server* server, int fd,
+                             uint32_t peer_ipv4_be = 0) {
   SetTcpNodelay(fd);
 
   // Set a 10-second deadline for the HTTP + handshake
@@ -260,8 +262,10 @@ static void HandleConnection(Server* server, int fd) {
   // OpenSSL auto-installs kTLS during SSL_accept.
   // After this, read()/write() on fd operate on
   // plaintext — the kernel handles AES-GCM.
+  KtlsProto alpn_proto = KtlsProto::kUnknown;
   if (server->ktls_enabled) {
-    auto tls = KtlsAccept(&server->ktls_ctx, fd);
+    auto tls = KtlsAccept(&server->ktls_ctx, fd,
+                          &alpn_proto);
     if (!tls) {
       spdlog::debug("kTLS failed for fd {}: {} ({})",
                     fd, tls.error().message,
@@ -269,6 +273,15 @@ static void HandleConnection(Server* server, int fd) {
       close(fd);
       return;
     }
+  }
+  // Reject mismatches: ALPN said HD but server disabled it,
+  // or the client asked for DERP on an HD-only path.
+  if (alpn_proto == KtlsProto::kHd &&
+      !server->hd_enabled) {
+    spdlog::warn("client negotiated ALPN hd/1 but HD "
+                 "mode is disabled");
+    close(fd);
+    return;
   }
 
   HttpRequest req;
@@ -351,7 +364,7 @@ static void HandleConnection(Server* server, int fd) {
     server->hd_enrollments.fetch_add(
         1, std::memory_order_relaxed);
     auto hs = HdPerformHandshake(
-        fd, &server->hd_peers, &result);
+        fd, &server->hd_peers, &result, peer_ipv4_be);
     if (!hs) {
       server->hd_auth_failures.fetch_add(
           1, std::memory_order_relaxed);
@@ -629,7 +642,7 @@ static void AcceptLoop(Server* server) {
       window_count++;
     }
 
-    HandleConnection(server, fd);
+    HandleConnection(server, fd, addr.sin_addr.s_addr);
   }
 }
 
@@ -718,31 +731,31 @@ auto ServerInit(Server* server,
   }
 
   // Initialize HD protocol if relay key is configured.
+  // Accepts either raw 64-char hex or "rk_<hex>" form.
   if (!config->hd_relay_key.empty()) {
-    if (config->hd_relay_key.size() != kKeySize * 2) {
+    Key relay_key{};
+    KeyPrefix pfx = ParseKeyString(config->hd_relay_key,
+                                   &relay_key);
+    if (pfx == KeyPrefix::kInvalid) {
       spdlog::error(
-          "HD relay key must be {} hex chars, got {}",
+          "HD relay key: expected {} hex chars or "
+          "rk_<hex>, got {} chars",
           kKeySize * 2, config->hd_relay_key.size());
       DpDestroy(&server->data_plane);
       return MakeError(ServerError::DataPlaneInitFailed,
-                       "bad HD relay key length");
-    }
-    Key relay_key{};
-    size_t bin_len = 0;
-    if (sodium_hex2bin(
-            relay_key.data(), kKeySize,
-            config->hd_relay_key.c_str(),
-            config->hd_relay_key.size(),
-            nullptr, &bin_len, nullptr) != 0 ||
-        static_cast<int>(bin_len) != kKeySize) {
-      spdlog::error("HD relay key: invalid hex");
-      DpDestroy(&server->data_plane);
-      return MakeError(ServerError::DataPlaneInitFailed,
-                       "bad HD relay key hex");
+                       "bad HD relay key");
     }
     HdPeersInit(&server->hd_peers, relay_key,
                 config->hd_enroll_mode);
+    server->hd_peers.policy = config->hd_enroll_policy;
     server->hd_peers.relay_id = config->hd_relay_id;
+    server->hd_peers.denylist_path =
+        config->hd_denylist_path;
+    if (!server->hd_peers.denylist_path.empty()) {
+      HdDenylistLoad(&server->hd_peers);
+      spdlog::info("HD denylist loaded: {} entries",
+                   server->hd_peers.denylist.size());
+    }
     server->hd_enabled = true;
 
     // Initialize relay table and set relay_id in data
