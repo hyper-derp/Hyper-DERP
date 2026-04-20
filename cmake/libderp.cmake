@@ -38,6 +38,7 @@ add_library(libderp_obj OBJECT
   src/xdp_loader.cc
   src/ice.cc
   src/ctl_channel.cc
+  src/key_format.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
