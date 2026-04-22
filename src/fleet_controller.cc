@@ -354,14 +354,37 @@ FleetApplyStatus ApplyInner(FleetController* fc,
 
 bool ApplyRevocations(FleetController* fc,
                       const std::string& inner) {
-  // Minimal: look for this relay's own id in the
-  // revocations.relays array as "relay_id": N pairs.
   uint16_t self_id =
       fc->hd_peers ? fc->hd_peers->relay_id : 0;
-  if (self_id == 0) return false;
   auto idx = inner.find("\"revocations\"");
   if (idx == std::string::npos) return false;
   std::string tail = inner.substr(idx);
+
+  // Peer fingerprint list. Simple scan: every
+  // `"peer_fingerprint":"ck_..."` occurrence is a
+  // revocation.
+  std::vector<std::string> peers;
+  size_t pos = 0;
+  const std::string kNeedle = "\"peer_fingerprint\"";
+  while ((pos = tail.find(kNeedle, pos)) !=
+         std::string::npos) {
+    size_t colon = tail.find(':', pos);
+    if (colon == std::string::npos) break;
+    size_t q1 = tail.find('"', colon);
+    if (q1 == std::string::npos) break;
+    size_t q2 = tail.find('"', q1 + 1);
+    if (q2 == std::string::npos) break;
+    peers.push_back(tail.substr(q1 + 1, q2 - q1 - 1));
+    pos = q2 + 1;
+  }
+  if (!peers.empty()) {
+    std::lock_guard lk(fc->revoked_mu);
+    fc->revoked_peers = std::move(peers);
+  }
+
+  // Self-revocation: find `"relay_id"` entries and
+  // match the numeric value against this relay's id.
+  if (self_id == 0) return false;
   auto self_str =
       std::string("\"relay_id\":") +
       std::to_string(self_id);
@@ -555,6 +578,13 @@ bool FleetControllerStart(FleetController* fc,
 void FleetControllerStop(FleetController* fc) {
   fc->running.store(0, std::memory_order_release);
   if (fc->thread.joinable()) fc->thread.join();
+}
+
+void FleetControllerGetRevokedPeers(
+    const FleetController* fc,
+    std::vector<std::string>* out) {
+  std::lock_guard lk(fc->revoked_mu);
+  *out = fc->revoked_peers;
 }
 
 }  // namespace hyper_derp

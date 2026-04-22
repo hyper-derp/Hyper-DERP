@@ -21,8 +21,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "hyper_derp/hd_peers.h"
 
@@ -79,6 +81,11 @@ struct FleetController {
   /// revokes this relay's own relay_id. The control
   /// thread reads this and triggers self-termination.
   std::atomic<bool> self_revoked{false};
+  /// Peer fingerprints revoked by the latest bundle.
+  /// Server consumer drains this on each poll and
+  /// applies it once (disconnect + denylist).
+  mutable std::mutex revoked_mu;
+  std::vector<std::string> revoked_peers;
   /// Main loop state.
   std::atomic<int> running{0};
   std::thread thread;
@@ -107,6 +114,14 @@ void FleetControllerStop(FleetController* fc);
 FleetApplyStatus FleetControllerApplyBundle(
     FleetController* fc, const uint8_t* body,
     int body_len);
+
+/// @brief Extract peer fingerprints listed in the
+///   latest bundle's revocations.peers. Used by the
+///   server to revoke live tunnels + add to denylist.
+///   `out` receives `ck_...` strings.
+void FleetControllerGetRevokedPeers(
+    const FleetController* fc,
+    std::vector<std::string>* out);
 
 }  // namespace hyper_derp
 

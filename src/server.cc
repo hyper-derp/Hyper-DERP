@@ -810,6 +810,39 @@ auto ServerInit(Server* server,
     CpEnableRoutingPolicy(&server->control_plane,
                           &server->hd_peers);
 
+    // Phase 6.2: optional fleet controller (signed
+    // bundle pull).
+    if (!config->hd_fleet_controller.url.empty()) {
+      FleetControllerConfig fcc;
+      fcc.url = config->hd_fleet_controller.url;
+      fcc.signing_pubkey_b64 =
+          config->hd_fleet_controller
+              .signing_pubkey_b64;
+      fcc.client_cert =
+          config->hd_fleet_controller.client_cert;
+      fcc.client_key =
+          config->hd_fleet_controller.client_key;
+      fcc.ca_bundle =
+          config->hd_fleet_controller.ca_bundle;
+      fcc.poll_interval_secs =
+          config->hd_fleet_controller
+              .poll_interval_secs;
+      fcc.bundle_cache_path =
+          config->hd_fleet_controller
+              .bundle_cache_path;
+      fcc.fleet_id =
+          config->hd_federation_policy.local_fleet_id;
+      if (FleetControllerStart(
+              &server->fleet_controller,
+              &server->hd_peers, fcc)) {
+        server->fleet_controller_started = true;
+        spdlog::info("fleet controller polling {} "
+                     "every {}s",
+                     fcc.url,
+                     fcc.poll_interval_secs);
+      }
+    }
+
     // Phase 4.2: optional LD-JSON audit log file sink.
     if (!config->hd_audit_log_path.empty()) {
       CpEnableAuditFile(&server->control_plane,
@@ -1105,6 +1138,53 @@ auto ServerRun(Server* server,
     stop_poller = std::thread([server, stop_flag]() {
       while (!stop_flag->load(
                  std::memory_order_acquire)) {
+        // Watch the fleet controller for self-revocation
+        // and for new peer-revocation entries. This is
+        // the same 100ms cadence we use for the stop
+        // flag.
+        if (server->fleet_controller_started) {
+          if (server->fleet_controller.self_revoked
+                  .load(std::memory_order_acquire)) {
+            spdlog::error(
+                "fleet bundle revoked this relay — "
+                "initiating shutdown");
+            stop_flag->store(
+                1, std::memory_order_release);
+            break;
+          }
+          std::vector<std::string> revoked;
+          FleetControllerGetRevokedPeers(
+              &server->fleet_controller, &revoked);
+          for (const auto& s : revoked) {
+            Key key{};
+            if (ParseKeyString(s, &key) ==
+                KeyPrefix::kInvalid) {
+              continue;
+            }
+            int fd = -1;
+            {
+              std::lock_guard lk(
+                  server->hd_peers.mutex);
+              auto* p = HdPeersLookup(
+                  &server->hd_peers, key.data());
+              if (p) fd = p->fd;
+              HdPeersRevoke(&server->hd_peers,
+                            key.data());
+            }
+            if (fd >= 0) {
+              DpRemovePeer(&server->data_plane, key);
+              close(fd);
+            }
+          }
+          if (!revoked.empty()) {
+            // Drain the controller's list so we don't
+            // revoke the same fingerprints repeatedly.
+            std::lock_guard lk(
+                server->fleet_controller.revoked_mu);
+            server->fleet_controller.revoked_peers
+                .clear();
+          }
+        }
         struct timespec ts {
           .tv_sec = 0, .tv_nsec = 100000000
         };
@@ -1246,6 +1326,10 @@ void ServerStop(Server* server) {
 }
 
 void ServerDestroy(Server* server) {
+  if (server->fleet_controller_started) {
+    FleetControllerStop(&server->fleet_controller);
+    server->fleet_controller_started = false;
+  }
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;
   if (server->level2_enabled) {

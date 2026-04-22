@@ -300,6 +300,55 @@ auto LoadConfig(const char* path, ServerConfig* config)
         config->hd_audit_log_max_bytes =
             static_cast<uint64_t>(v);
       }
+      if (h.has_child("fleet_controller")) {
+        auto ctl = h["fleet_controller"];
+        if (ctl.is_map()) {
+          if (ctl.has_child("url")) {
+            ReadStr(ctl["url"],
+                    &config->hd_fleet_controller.url);
+          }
+          if (ctl.has_child("signing_pubkey_b64")) {
+            ReadStr(
+                ctl["signing_pubkey_b64"],
+                &config->hd_fleet_controller
+                     .signing_pubkey_b64);
+          }
+          if (ctl.has_child("client_cert")) {
+            ReadStr(
+                ctl["client_cert"],
+                &config->hd_fleet_controller
+                     .client_cert);
+          }
+          if (ctl.has_child("client_key")) {
+            ReadStr(
+                ctl["client_key"],
+                &config->hd_fleet_controller
+                     .client_key);
+          }
+          if (ctl.has_child("ca_bundle")) {
+            ReadStr(
+                ctl["ca_bundle"],
+                &config->hd_fleet_controller.ca_bundle);
+          }
+          if (ctl.has_child("bundle_cache_path")) {
+            ReadStr(
+                ctl["bundle_cache_path"],
+                &config->hd_fleet_controller
+                     .bundle_cache_path);
+          }
+          if (ctl.has_child("poll_interval_secs")) {
+            int v = 60;
+            if (!ReadInt(
+                    ctl["poll_interval_secs"],
+                    "hd.fleet_controller."
+                    "poll_interval_secs",
+                    &v, 10, 3600, &err))
+              return std::unexpected(err);
+            config->hd_fleet_controller
+                .poll_interval_secs = v;
+          }
+        }
+      }
       if (h.has_child("federation")) {
         auto fd = h["federation"];
         if (fd.is_map()) {

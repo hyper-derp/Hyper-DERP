@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "hyper_derp/control_plane.h"
+#include "hyper_derp/fleet_controller.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
@@ -141,6 +142,17 @@ struct ServerConfig {
   uint64_t hd_audit_log_max_bytes = 100 * 1024 * 1024;
   /// Number of rotated files to keep (.1..N).
   int hd_audit_log_keep = 10;
+  /// Fleet controller (signed-bundle puller). Empty URL
+  /// disables.
+  struct FleetControllerOptions {
+    std::string url;
+    std::string signing_pubkey_b64;
+    std::string client_cert;
+    std::string client_key;
+    std::string ca_bundle;
+    int poll_interval_secs = 60;
+    std::string bundle_cache_path;
+  } hd_fleet_controller;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").
@@ -180,6 +192,8 @@ struct Server {
   std::thread control_thread;
   std::thread seed_thread;
   MetricsServer* metrics_server = nullptr;
+  FleetController fleet_controller{};
+  bool fleet_controller_started = false;
 
   // Level 2 (direct path) subsystems.
   IceAgent ice_agent{};

@@ -156,6 +156,28 @@ TEST_F(FleetControllerTest, RejectsFleetMismatch) {
   EXPECT_EQ(st, FleetApplyStatus::kFleetMismatch);
 }
 
+TEST_F(FleetControllerTest, PeerRevocationListPopulated) {
+  std::string inner =
+      "{\"fleet_id\":\"company-a\",\"version\":1,"
+      "\"policy\":{},"
+      "\"revocations\":{\"peers\":["
+      "{\"peer_fingerprint\":\"ck_abc123\"},"
+      "{\"peer_fingerprint\":\"ck_def456\"}]}}";
+  std::string bundle = MakeBundle(inner, sk_,
+                                   "company-a", 1);
+  auto st = FleetControllerApplyBundle(
+      &fc_,
+      reinterpret_cast<const uint8_t*>(bundle.data()),
+      static_cast<int>(bundle.size()));
+  EXPECT_EQ(st, FleetApplyStatus::kOk);
+
+  std::vector<std::string> revoked;
+  FleetControllerGetRevokedPeers(&fc_, &revoked);
+  ASSERT_EQ(revoked.size(), 2u);
+  EXPECT_EQ(revoked[0], "ck_abc123");
+  EXPECT_EQ(revoked[1], "ck_def456");
+}
+
 TEST_F(FleetControllerTest, SelfRevocationTriggers) {
   // Relay id 7 revoked in the bundle.
   std::string inner =
