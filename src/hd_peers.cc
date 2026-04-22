@@ -58,6 +58,49 @@ bool ParseCidrV4(const std::string& cidr,
 
 }  // namespace
 
+bool HdFederationAllows(
+    const HdFederationPolicy& policy,
+    std::string_view origin_fleet_id,
+    const Key& target_key,
+    const char** out_reason) {
+  // Hard reject list first.
+  for (const auto& r : policy.reject_from) {
+    if (GlobMatch(r, std::string(origin_fleet_id))) {
+      if (out_reason) *out_reason = "origin rejected";
+      return false;
+    }
+  }
+  if (policy.accept_from.empty()) {
+    if (out_reason) {
+      *out_reason = "no accept_from rules";
+    }
+    return false;
+  }
+  std::string key_str = KeyToCkString(target_key);
+  std::string key_hex = key_str.substr(kKeyPrefixLen);
+  for (const auto& rule : policy.accept_from) {
+    if (!GlobMatch(rule.fleet_id,
+                   std::string(origin_fleet_id))) {
+      continue;
+    }
+    if (rule.allowed_destinations.empty()) return true;
+    for (const auto& pat : rule.allowed_destinations) {
+      if (GlobMatch(pat, key_str) ||
+          GlobMatch(pat, key_hex)) {
+        return true;
+      }
+    }
+    if (out_reason) {
+      *out_reason = "destination not allowed";
+    }
+    return false;
+  }
+  if (out_reason) {
+    *out_reason = "fleet not in accept_from";
+  }
+  return false;
+}
+
 bool HdPolicyAllows(const HdPeerRegistry* reg,
                     const Key& client_key,
                     uint32_t peer_ipv4_be,

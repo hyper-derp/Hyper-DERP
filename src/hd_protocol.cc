@@ -383,6 +383,90 @@ bool HdParseIncomingConnResult(const uint8_t* payload,
   return true;
 }
 
+int HdBuildFleetOpenConnection(uint8_t* buf,
+                               int buf_size,
+                               uint16_t origin_relay_id,
+                               const char* origin_fleet_id,
+                               int origin_fleet_id_len,
+                               const Key& target_key,
+                               const uint8_t* inner_conn,
+                               int inner_conn_len) {
+  if (origin_fleet_id_len < 0 ||
+      origin_fleet_id_len > kHdMaxFleetIdLen) {
+    return -1;
+  }
+  if (inner_conn_len != kHdOpenConnSize) return -1;
+  int payload_len =
+      2 + 2 + origin_fleet_id_len + kKeySize +
+      kHdOpenConnSize;
+  int total = kHdFrameHeaderSize + payload_len;
+  if (total > buf_size) return -1;
+  HdWriteFrameHeader(buf,
+                     HdFrameType::kFleetOpenConnection,
+                     static_cast<uint32_t>(payload_len));
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  WriteU16(p, origin_relay_id);
+  WriteU16(p + 2,
+           static_cast<uint16_t>(origin_fleet_id_len));
+  if (origin_fleet_id_len > 0) {
+    std::memcpy(p + 4, origin_fleet_id,
+                origin_fleet_id_len);
+  }
+  std::memcpy(p + 4 + origin_fleet_id_len,
+              target_key.data(), kKeySize);
+  std::memcpy(p + 4 + origin_fleet_id_len + kKeySize,
+              inner_conn, inner_conn_len);
+  return total;
+}
+
+bool HdParseFleetOpenConnection(
+    const uint8_t* payload, int payload_len,
+    HdFleetOpenConnection* out) {
+  if (payload_len <
+      2 + 2 + kKeySize + kHdOpenConnSize) {
+    return false;
+  }
+  out->origin_relay_id = ReadU16(payload);
+  int fid_len = ReadU16(payload + 2);
+  if (fid_len < 0 || fid_len > kHdMaxFleetIdLen) {
+    return false;
+  }
+  int need = 2 + 2 + fid_len + kKeySize +
+             kHdOpenConnSize;
+  if (payload_len != need) return false;
+  if (fid_len > 0) {
+    std::memcpy(out->origin_fleet_id, payload + 4,
+                fid_len);
+  }
+  out->origin_fleet_id[fid_len] = '\0';
+  out->origin_fleet_id_len = fid_len;
+  std::memcpy(out->target_key.data(),
+              payload + 4 + fid_len, kKeySize);
+  std::memcpy(out->inner_conn,
+              payload + 4 + fid_len + kKeySize,
+              kHdOpenConnSize);
+  return true;
+}
+
+int HdBuildFleetOpenConnectionResult(
+    uint8_t* buf, int buf_size,
+    uint64_t correlation_id, HdConnMode mode,
+    HdDenyReason deny_reason, uint8_t sub_reason,
+    const uint16_t* relay_path, int relay_path_len,
+    const char* endpoint_hint, int endpoint_hint_len) {
+  // Same layout as OpenConnectionResult; reuse builder
+  // then fix the frame type byte.
+  int total = HdBuildOpenConnectionResult(
+      buf, buf_size, correlation_id, mode, deny_reason,
+      sub_reason, relay_path, relay_path_len,
+      endpoint_hint, endpoint_hint_len);
+  if (total > 0) {
+    buf[0] = static_cast<uint8_t>(
+        HdFrameType::kFleetOpenConnectionResult);
+  }
+  return total;
+}
+
 int HdBuildRedirect(uint8_t* buf,
                     HdRedirectReason reason,
                     const char* target_url,

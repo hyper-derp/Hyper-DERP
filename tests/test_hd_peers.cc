@@ -410,6 +410,68 @@ TEST_F(HdPeersTest, PeerPolicyPersistsAcrossRegistries) {
   unlink(file.c_str());
 }
 
+TEST_F(HdPeersTest, FederationAcceptsListedFleet) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "company-a";
+  pol.accept_from.push_back(rule);
+  Key k{};
+  const char* reason = nullptr;
+  EXPECT_TRUE(HdFederationAllows(pol, "company-a", k,
+                                 &reason));
+}
+
+TEST_F(HdPeersTest, FederationRejectsUnknownFleet) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "company-a";
+  pol.accept_from.push_back(rule);
+  Key k{};
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdFederationAllows(pol, "unknown", k,
+                                  &reason));
+  EXPECT_NE(reason, nullptr);
+}
+
+TEST_F(HdPeersTest, FederationDestinationGlob) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "partner-b";
+  rule.allowed_destinations = {"ck_aa*"};
+  pol.accept_from.push_back(rule);
+
+  Key good{};
+  good[0] = 0xAA;
+  EXPECT_TRUE(HdFederationAllows(pol, "partner-b", good,
+                                 nullptr));
+
+  Key bad{};
+  bad[0] = 0xBB;
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdFederationAllows(pol, "partner-b", bad,
+                                  &reason));
+  EXPECT_NE(reason, nullptr);
+}
+
+TEST_F(HdPeersTest, FederationRejectListOverrides) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "everyone";
+  pol.accept_from.push_back(rule);
+  pol.reject_from.push_back("hostile");
+  Key k{};
+  EXPECT_FALSE(HdFederationAllows(pol, "hostile", k,
+                                  nullptr));
+}
+
+TEST_F(HdPeersTest, FederationEmptyAcceptDenies) {
+  HdFederationPolicy pol;
+  Key k{};
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdFederationAllows(pol, "any", k,
+                                  &reason));
+}
+
 TEST_F(HdPeersTest, PolicyIpRange) {
   HdPeerRegistry reg;
   Key relay_key{};

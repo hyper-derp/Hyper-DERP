@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "hyper_derp/hd_protocol.h"
@@ -108,6 +109,35 @@ struct HdFleetPolicy {
   bool require_relay_for_cross_region = false;
 };
 
+/// One accept rule: which origin fleet is trusted, and
+/// which target peers they may reach.
+struct HdFederationAccept {
+  /// Remote fleet_id that this rule applies to (exact
+  /// match against the FleetOpenConnection's origin
+  /// field).
+  std::string fleet_id;
+  /// Glob patterns (trailing `*` wildcard) matched
+  /// against the target's ck_ prefixed key string and
+  /// raw 64-hex tail. Empty list = allow all keys from
+  /// this fleet.
+  std::vector<std::string> allowed_destinations;
+};
+
+/// Per-relay federation policy. Applied at the gateway
+/// (the relay receiving a FleetOpenConnection).
+struct HdFederationPolicy {
+  /// Local fleet_id. Identifies the relay's fleet on
+  /// outgoing FleetOpenConnection envelopes.
+  std::string local_fleet_id;
+  /// Rules for accepting cross-fleet traffic. An origin
+  /// fleet that does not match any rule is rejected
+  /// with kFederationDenied.
+  std::vector<HdFederationAccept> accept_from;
+  /// Hard reject list; matched before accept_from. Takes
+  /// precedence.
+  std::vector<std::string> reject_from;
+};
+
 /// Policy constraints applied to auto-approval.
 struct HdEnrollPolicy {
   /// Hard cap on approved peer count (0 = unlimited).
@@ -148,6 +178,9 @@ struct HdPeerRegistry {
   HdRelayPolicy relay_policy;
   /// Fleet-wide policy. Cold path; read per OpenConnection.
   HdFleetPolicy fleet_policy;
+  /// Federation policy — applied at the gateway on
+  /// inbound FleetOpenConnection frames.
+  HdFederationPolicy federation_policy;
   /// Counter of currently-established direct tunnels.
   /// Incremented when HdResolve returns Direct, released
   /// when a tunnel closes. Used for max_direct_peers.
@@ -195,6 +228,20 @@ bool HdPeerPolicyLoad(HdPeerRegistry* reg);
 /// @brief Atomically persists peer policies to disk.
 /// @returns True on success.
 bool HdPeerPolicySave(const HdPeerRegistry* reg);
+
+/// @brief Checks whether an origin fleet is allowed to
+///   route to `target_key` according to the policy.
+/// @param policy Federation policy to apply.
+/// @param origin_fleet_id Origin fleet string.
+/// @param target_key Target peer's public key.
+/// @param out_reason On denial, set to a short static
+///   string.
+/// @returns True if allowed.
+bool HdFederationAllows(
+    const HdFederationPolicy& policy,
+    std::string_view origin_fleet_id,
+    const Key& target_key,
+    const char** out_reason);
 
 /// @brief Checks a candidate enrollment against the policy.
 /// @param reg Registry with policy to apply.

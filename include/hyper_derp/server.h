@@ -130,6 +130,9 @@ struct ServerConfig {
   /// Path to a fleet-policy YAML file. Empty = no fleet
   /// policy configured.
   std::string hd_fleet_policy_path;
+  /// Federation policy (applied at the gateway on
+  /// inbound FleetOpenConnection frames).
+  HdFederationPolicy hd_federation_policy;
   /// Path to the routing-policy audit log. Empty = no
   /// file sink (ring-only, still queryable via REST).
   std::string hd_audit_log_path;

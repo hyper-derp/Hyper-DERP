@@ -300,6 +300,61 @@ auto LoadConfig(const char* path, ServerConfig* config)
         config->hd_audit_log_max_bytes =
             static_cast<uint64_t>(v);
       }
+      if (h.has_child("federation")) {
+        auto fd = h["federation"];
+        if (fd.is_map()) {
+          if (fd.has_child("fleet_id")) {
+            ReadStr(
+                fd["fleet_id"],
+                &config->hd_federation_policy
+                     .local_fleet_id);
+          }
+          if (fd.has_child("accept_from")) {
+            auto af = fd["accept_from"];
+            if (af.is_seq()) {
+              for (auto child : af.children()) {
+                if (!child.is_map()) continue;
+                HdFederationAccept entry;
+                if (child.has_child("fleet_id")) {
+                  ReadStr(child["fleet_id"],
+                          &entry.fleet_id);
+                }
+                if (child.has_child(
+                        "allowed_destinations")) {
+                  auto dests =
+                      child["allowed_destinations"];
+                  if (dests.is_seq()) {
+                    for (auto d : dests.children()) {
+                      if (d.has_val()) {
+                        auto v = d.val();
+                        entry.allowed_destinations
+                            .emplace_back(v.data(),
+                                          v.len);
+                      }
+                    }
+                  }
+                }
+                config->hd_federation_policy
+                    .accept_from.push_back(
+                        std::move(entry));
+              }
+            }
+          }
+          if (fd.has_child("reject_from")) {
+            auto rf = fd["reject_from"];
+            if (rf.is_seq()) {
+              for (auto child : rf.children()) {
+                if (child.has_val()) {
+                  auto v = child.val();
+                  config->hd_federation_policy
+                      .reject_from.emplace_back(
+                          v.data(), v.len);
+                }
+              }
+            }
+          }
+        }
+      }
       if (h.has_child("audit_log_keep")) {
         int v = 10;
         if (!ReadInt(h["audit_log_keep"],

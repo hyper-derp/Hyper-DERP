@@ -55,6 +55,9 @@ enum class HdFrameType : uint8_t {
   kIncomingConnection = 0x25,
   kIncomingConnResponse = 0x26,
   kIncomingConnResult = 0x27,
+  // Cross-relay transit (Phase 5).
+  kFleetOpenConnection = 0x28,
+  kFleetOpenConnectionResult = 0x29,
   kRouteAnnounce = 0x30,
 };
 
@@ -345,6 +348,10 @@ inline constexpr int kHdMaxRelayPath = 32;
 /// Maximum endpoint_hint string length.
 inline constexpr int kHdMaxEndpointHint = 128;
 
+/// Maximum fleet_id string length carried in
+/// FleetOpenConnection.
+inline constexpr int kHdMaxFleetIdLen = 64;
+
 /// @brief Builds an OpenConnection frame.
 ///
 /// Payload layout:
@@ -492,6 +499,50 @@ struct HdIncomingConnResult {
 bool HdParseIncomingConnResult(const uint8_t* payload,
                                int payload_len,
                                HdIncomingConnResult* out);
+
+/// @brief Builds a FleetOpenConnection frame.
+///
+/// Payload:
+///   [2B origin_relay_id][2B origin_fleet_id_len]
+///   [N bytes origin_fleet_id (UTF-8)]
+///   [32B target_client_key][14B inner OpenConnection]
+/// The target_client_key is carried so the gateway can
+/// look up the peer directly (its local peer_id is set
+/// as the target_peer_id in the inner OpenConnection
+/// by the gateway before dispatch).
+/// @returns Total frame size written, or -1 on overflow.
+int HdBuildFleetOpenConnection(uint8_t* buf,
+                               int buf_size,
+                               uint16_t origin_relay_id,
+                               const char* origin_fleet_id,
+                               int origin_fleet_id_len,
+                               const Key& target_key,
+                               const uint8_t* inner_conn,
+                               int inner_conn_len);
+
+/// Parsed view of a FleetOpenConnection payload.
+struct HdFleetOpenConnection {
+  uint16_t origin_relay_id;
+  char origin_fleet_id[kHdMaxFleetIdLen + 1];
+  int origin_fleet_id_len;
+  Key target_key;
+  uint8_t inner_conn[kHdOpenConnSize];
+};
+
+bool HdParseFleetOpenConnection(const uint8_t* payload,
+                                int payload_len,
+                                HdFleetOpenConnection* out);
+
+/// @brief Builds a FleetOpenConnectionResult frame.
+/// Payload mirrors the non-envelope part of
+/// OpenConnectionResult: `[correlation_id][mode]
+/// [deny_reason][sub_reason][relay_path][endpoint_hint]`.
+int HdBuildFleetOpenConnectionResult(
+    uint8_t* buf, int buf_size,
+    uint64_t correlation_id, HdConnMode mode,
+    HdDenyReason deny_reason, uint8_t sub_reason,
+    const uint16_t* relay_path, int relay_path_len,
+    const char* endpoint_hint, int endpoint_hint_len);
 
 /// @brief Builds an HD Redirect frame.
 ///

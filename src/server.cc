@@ -774,6 +774,8 @@ auto ServerInit(Server* server,
         config->hd_relay_policy;
     server->hd_peers.fleet_policy =
         config->hd_fleet_policy;
+    server->hd_peers.federation_policy =
+        config->hd_federation_policy;
     if (!config->hd_fleet_policy_path.empty()) {
       auto fp = LoadFleetPolicy(
           config->hd_fleet_policy_path.c_str(),

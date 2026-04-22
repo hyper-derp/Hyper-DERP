@@ -62,6 +62,10 @@ TEST(HdProtocolTest, AllFrameTypesDistinct) {
           HdFrameType::kIncomingConnResponse),
       static_cast<uint8_t>(
           HdFrameType::kIncomingConnResult),
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnection),
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnectionResult),
       static_cast<uint8_t>(HdFrameType::kRouteAnnounce),
   };
   int count = sizeof(types) / sizeof(types[0]);
@@ -439,6 +443,49 @@ TEST(HdProtocolTest, IncomingConnResultRoundtrip) {
   EXPECT_EQ(out.mode, HdConnMode::kDenied);
   EXPECT_EQ(out.deny_reason,
             HdDenyReason::kIntentConflict);
+}
+
+TEST(HdProtocolTest, FleetOpenConnectionRoundtrip) {
+  uint8_t raw_frame[kHdFrameHeaderSize +
+                    kHdOpenConnSize];
+  HdBuildOpenConnection(raw_frame, 7, 0,
+                        HdIntent::kPreferRelay, 3,
+                        0xABCDu);
+  Key key{};
+  for (int i = 0; i < kKeySize; i++) {
+    key[i] = static_cast<uint8_t>(i);
+  }
+  uint8_t buf[256];
+  const char* fid = "company-a";
+  int n = HdBuildFleetOpenConnection(
+      buf, sizeof(buf), 42, fid,
+      static_cast<int>(strlen(fid)), key,
+      raw_frame + kHdFrameHeaderSize,
+      kHdOpenConnSize);
+  ASSERT_GT(n, 0);
+
+  HdFleetOpenConnection out;
+  ASSERT_TRUE(HdParseFleetOpenConnection(
+      buf + kHdFrameHeaderSize, HdReadPayloadLen(buf),
+      &out));
+  EXPECT_EQ(out.origin_relay_id, 42u);
+  EXPECT_STREQ(out.origin_fleet_id, "company-a");
+  EXPECT_EQ(out.target_key, key);
+  // The inner bytes should match what we packed.
+  EXPECT_EQ(memcmp(out.inner_conn,
+                   raw_frame + kHdFrameHeaderSize,
+                   kHdOpenConnSize),
+            0);
+}
+
+TEST(HdProtocolTest, FleetOpenConnectionResultType) {
+  uint8_t buf[64];
+  int n = HdBuildFleetOpenConnectionResult(
+      buf, sizeof(buf), 1, HdConnMode::kRelayed,
+      HdDenyReason::kNone, 0, nullptr, 0, nullptr, 0);
+  ASSERT_GT(n, 0);
+  EXPECT_EQ(HdReadFrameType(buf),
+            HdFrameType::kFleetOpenConnectionResult);
 }
 
 TEST(HdProtocolTest, OpenConnectionBadPayloadLen) {
