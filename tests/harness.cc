@@ -140,7 +140,12 @@ pid_t StartRelay(uint16_t port, int num_workers,
 
 pid_t StartHdRelay(uint16_t port, int num_workers,
                    const Key& relay_key,
-                   uint16_t metrics_port) {
+                   uint16_t metrics_port,
+                   uint16_t hd_relay_id,
+                   const char* seed_host,
+                   uint16_t seed_port,
+                   const char* local_fleet_id,
+                   const char* accept_fleet_id) {
   // Generate once in the parent so every forked child
   // reads the same paths (static locals don't survive the
   // fork, but the files on disk do).
@@ -174,6 +179,24 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
     if (metrics_port != 0) {
       config.metrics.port = metrics_port;
       config.metrics.enable_debug = true;
+    }
+    config.hd_relay_id = hd_relay_id;
+    if (seed_host && seed_host[0] != '\0' &&
+        seed_port != 0) {
+      char seed[128];
+      std::snprintf(seed, sizeof(seed), "%s:%u",
+                    seed_host, seed_port);
+      config.seed_relays.emplace_back(seed);
+    }
+    if (local_fleet_id && local_fleet_id[0] != '\0') {
+      config.hd_federation_policy.local_fleet_id =
+          local_fleet_id;
+    }
+    if (accept_fleet_id && accept_fleet_id[0] != '\0') {
+      HdFederationAccept rule;
+      rule.fleet_id = accept_fleet_id;
+      config.hd_federation_policy.accept_from.push_back(
+          std::move(rule));
     }
 
     Server server;

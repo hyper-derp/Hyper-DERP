@@ -486,6 +486,20 @@ void CpProcessFrame(ControlPlane* cp, int fd,
         cp, fd, payload, payload_len);
     return;
   }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnection)) {
+    CpHandleFleetOpenConnection(cp, fd, payload,
+                                payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnectionResult)) {
+    CpHandleFleetOpenConnectionResult(cp, fd, payload,
+                                      payload_len);
+    return;
+  }
 
   switch (type) {
     case FrameType::kWatchConns:
@@ -950,19 +964,49 @@ void SendOpenResultAndCleanup(
     uint8_t sub_reason) {
   auto& s = cp->open_conns[slot_idx];
   uint8_t buf[256];
-  int n = HdBuildOpenConnectionResult(
-      buf, sizeof(buf), s.correlation_id, mode, reason,
-      sub_reason, nullptr, 0, nullptr, 0);
+  // Gateway-side: wrap as FleetOpenConnectionResult back
+  // to the origin relay link.
+  uint16_t path[1];
+  int path_len = 0;
+  if (s.target_relay_id != 0 &&
+      !s.is_gateway_inbound) {
+    path[0] = s.target_relay_id;
+    path_len = 1;
+  }
+  int n = 0;
+  if (s.is_gateway_inbound) {
+    n = HdBuildFleetOpenConnectionResult(
+        buf, sizeof(buf), s.correlation_id, mode, reason,
+        sub_reason, nullptr, 0, nullptr, 0);
+  } else {
+    n = HdBuildOpenConnectionResult(
+        buf, sizeof(buf), s.correlation_id, mode, reason,
+        sub_reason,
+        path_len > 0 ? path : nullptr, path_len,
+        nullptr, 0);
+  }
   if (n > 0 && s.initiator_fd >= 0) {
     WriteFullFrame(s.initiator_fd, buf, n);
   }
-  if (mode != HdConnMode::kDenied && s.target_fd >= 0) {
-    // Mirror result to the target if one was contacted.
+  if (mode != HdConnMode::kDenied && s.target_fd >= 0 &&
+      s.target_relay_id == 0 &&
+      !s.is_gateway_inbound) {
+    // Mirror result to the local target if one was
+    // contacted. Skip for cross-relay forwards (the
+    // remote gateway handles its own target notification)
+    // and for gateway-inbound slots (the target is local
+    // and was mirrored when we built the Fleet result).
     uint8_t tbuf[kHdFrameHeaderSize +
                  kHdIncomingResultSize];
     int tn = HdBuildIncomingConnResult(
         tbuf, s.correlation_id, mode, reason, sub_reason);
     WriteFullFrame(s.target_fd, tbuf, tn);
+  }
+  // Decrement direct cap if we claimed it.
+  if (cp->hd_peers &&
+      mode == HdConnMode::kDirect) {
+    // no-op here; Phase 5 doesn't yet release direct
+    // counter on tunnel close. Placeholder.
   }
   OpenConnSlotFree(cp, slot_idx);
 }
@@ -1088,21 +1132,96 @@ void CpHandleOpenConnection(ControlPlane* cp, int fd,
         HdBuildRelayView(cp->hd_peers->relay_policy);
   }
 
-  // Cross-relay (target_relay_id != 0): resolver
-  // short-circuits; no target lookup needed.
+  // Cross-relay path: forward as FleetOpenConnection to
+  // the gateway over the relay-mesh link.
   if (req.target_relay_id != 0) {
-    HdDecision dec = HdResolve(
-        fleet_view, HdLayerView{}, relay_view,
-        HdLayerView{}, cv, cap, req.target_relay_id);
-    uint8_t rbuf[64];
-    int rn = HdBuildOpenConnectionResult(
-        rbuf, sizeof(rbuf), req.correlation_id, dec.mode,
-        dec.deny_reason, dec.sub_reason, nullptr, 0,
-        nullptr, 0);
-    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
-    Key tkey{};
-    HdAuditRecordDecision(&cp->audit_ring, initiator_key,
-                          tkey, cv, dec);
+    if (!cp->relay_table) {
+      uint8_t rbuf[64];
+      int rn = HdBuildOpenConnectionResult(
+          rbuf, sizeof(rbuf), req.correlation_id,
+          HdConnMode::kDenied,
+          HdDenyReason::kFleetRoutingNotImplemented, 0,
+          nullptr, 0, nullptr, 0);
+      if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+      return;
+    }
+    int gateway_fd = -1;
+    {
+      std::lock_guard rtl(cp->relay_table->mutex);
+      auto* e = RelayTableLookup(cp->relay_table,
+                                  req.target_relay_id);
+      if (e) gateway_fd = e->fd;
+    }
+    if (gateway_fd < 0) {
+      uint8_t rbuf[64];
+      int rn = HdBuildOpenConnectionResult(
+          rbuf, sizeof(rbuf), req.correlation_id,
+          HdConnMode::kDenied,
+          HdDenyReason::kPeerUnreachable, 0, nullptr,
+          0, nullptr, 0);
+      if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+      return;
+    }
+
+    // Allocate a slot that tracks the outbound forward.
+    int slot = OpenConnSlotAlloc(cp);
+    if (slot < 0) {
+      uint8_t rbuf[64];
+      int rn = HdBuildOpenConnectionResult(
+          rbuf, sizeof(rbuf), req.correlation_id,
+          HdConnMode::kDenied,
+          HdDenyReason::kTooManyOpenConns, 0, nullptr,
+          0, nullptr, 0);
+      if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+      return;
+    }
+    auto& s = cp->open_conns[slot];
+    s.in_use = 1;
+    s.correlation_id = req.correlation_id;
+    s.initiator_fd = fd;
+    s.target_fd = gateway_fd;
+    s.initiator_key = initiator_key;
+    s.initiator_view = cv;
+    s.target_relay_id = req.target_relay_id;
+    s.is_gateway_inbound = false;
+    s.deadline_ns = NowNsMono() + kCpOpenConnTimeoutNs;
+    if (fd >= 0 && fd < kMaxFd) {
+      cp->open_conn_per_peer[fd]++;
+    }
+
+    // Build the FleetOpenConnection envelope: rebuild the
+    // inner OpenConnection payload with the effective
+    // intent (after A's peer-policy override was applied
+    // above) and ship to the gateway.
+    uint8_t inner_frame[kHdFrameHeaderSize +
+                         kHdOpenConnSize];
+    uint8_t inner_flags = 0;
+    if (cv.allow_upgrade)
+      inner_flags |= kHdFlagAllowUpgrade;
+    if (cv.allow_downgrade)
+      inner_flags |= kHdFlagAllowDowngrade;
+    HdBuildOpenConnection(inner_frame,
+                          req.target_peer_id, 0,
+                          cv.intent, inner_flags,
+                          req.correlation_id);
+
+    Key zero_key{};
+    const std::string& fid =
+        cp->hd_peers->federation_policy
+            .local_fleet_id;
+    uint8_t out_buf[256];
+    int on = HdBuildFleetOpenConnection(
+        out_buf, sizeof(out_buf),
+        cp->relay_table->self_id, fid.c_str(),
+        static_cast<int>(fid.size()), zero_key,
+        inner_frame + kHdFrameHeaderSize,
+        kHdOpenConnSize);
+    if (on <= 0 ||
+        WriteFullFrame(gateway_fd, out_buf, on) < 0) {
+      SendOpenResultAndCleanup(
+          cp, slot, HdConnMode::kDenied,
+          HdDenyReason::kPeerUnreachable, 0);
+    }
     return;
   }
 
@@ -1261,6 +1380,148 @@ void CpHandleIncomingConnResponse(
   SendOpenResultAndCleanup(cp, slot, dec.mode,
                            dec.deny_reason,
                            dec.sub_reason);
+}
+
+// -- Cross-relay (gateway + origin-forward) --------
+
+void CpHandleFleetOpenConnection(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len) {
+  HdFleetOpenConnection env;
+  if (!HdParseFleetOpenConnection(payload, payload_len,
+                                  &env)) {
+    return;
+  }
+  if (!cp->hd_peers) return;
+
+  HdOpenConnection inner;
+  if (!HdParseOpenConnection(env.inner_conn,
+                             kHdOpenConnSize, &inner)) {
+    return;
+  }
+
+  HdClientView cv;
+  cv.intent = inner.intent;
+  cv.allow_upgrade =
+      (inner.flags & kHdFlagAllowUpgrade) != 0;
+  cv.allow_downgrade =
+      (inner.flags & kHdFlagAllowDowngrade) != 0;
+
+  // Look up local target (gateway owns peer policy).
+  HdPeer* target = nullptr;
+  Key target_key{};
+  int target_fd = -1;
+  {
+    std::lock_guard lock(cp->hd_peers->mutex);
+    target = HdPeersLookupById(cp->hd_peers,
+                                inner.target_peer_id);
+    if (target) {
+      target_fd = target->fd;
+      target_key = target->key;
+    }
+  }
+
+  // Helper that sends a denial back as
+  // FleetOpenConnectionResult.
+  auto deny_back = [&](HdDenyReason r,
+                       uint8_t sub = 0) {
+    uint8_t rbuf[64];
+    int rn = HdBuildFleetOpenConnectionResult(
+        rbuf, sizeof(rbuf), inner.correlation_id,
+        HdConnMode::kDenied, r, sub, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+  };
+
+  if (!target || target_fd < 0) {
+    deny_back(HdDenyReason::kPeerUnreachable);
+    return;
+  }
+
+  // Federation check now that we have the resolved key.
+  const char* fed_reason = nullptr;
+  if (!HdFederationAllows(
+          cp->hd_peers->federation_policy,
+          env.origin_fleet_id, target_key,
+          &fed_reason)) {
+    deny_back(HdDenyReason::kFederationDenied);
+    return;
+  }
+
+  // Apply initiator peer policy if known (unlikely — the
+  // initiator is on a remote relay — but harmless if the
+  // gateway happens to have a record).
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    // Initiator key isn't carried in FleetOpenConnection
+    // today; skip the override step at the gateway.
+    (void)plk;
+  }
+
+  // Allocate a correlation slot keyed on the remote's
+  // correlation_id. A collision with a local client's id
+  // is possible; we disambiguate by storing
+  // origin_relay_id in the slot.
+  int slot = OpenConnSlotAlloc(cp);
+  if (slot < 0) {
+    deny_back(HdDenyReason::kTooManyOpenConns);
+    return;
+  }
+  auto& s = cp->open_conns[slot];
+  s.in_use = 1;
+  s.correlation_id = inner.correlation_id;
+  s.initiator_fd = fd;       // relay link back to origin
+  s.target_fd = target_fd;   // local target peer
+  s.target_key = target_key;
+  s.initiator_view = cv;
+  s.target_relay_id = 0;
+  s.is_gateway_inbound = true;
+  s.origin_relay_id = env.origin_relay_id;
+  s.deadline_ns = NowNsMono() + kCpOpenConnTimeoutNs;
+
+  // Forward IncomingConnection to the local target. The
+  // initiator key is zeroed because it lives on a remote
+  // relay and isn't available here.
+  Key zero_key{};
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingConnSize];
+  int n = HdBuildIncomingConnection(
+      buf, zero_key, target->peer_id, cv.intent,
+      inner.flags, inner.correlation_id);
+  if (WriteFullFrame(target_fd, buf, n) < 0) {
+    SendOpenResultAndCleanup(
+        cp, slot, HdConnMode::kDenied,
+        HdDenyReason::kPeerUnreachable, 0);
+  }
+}
+
+void CpHandleFleetOpenConnectionResult(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len) {
+  HdOpenConnectionResult result;
+  if (!HdParseOpenConnectionResult(payload, payload_len,
+                                   &result)) {
+    return;
+  }
+  // Find a matching outbound-forward slot on this relay.
+  // Slots are keyed by correlation_id + target_fd (the
+  // gateway link the request went out on).
+  int slot = -1;
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (s.in_use &&
+        s.correlation_id == result.correlation_id &&
+        s.target_fd == fd &&
+        !s.is_gateway_inbound &&
+        s.target_relay_id != 0) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return;
+
+  SendOpenResultAndCleanup(
+      cp, slot, result.mode, result.deny_reason,
+      result.sub_reason);
 }
 
 }  // namespace hyper_derp

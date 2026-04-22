@@ -43,10 +43,24 @@ pid_t StartRelay(uint16_t port, int num_workers,
 /// @param metrics_port If non-zero, also starts the
 ///   metrics/admin HTTP server on that port. Tests use
 ///   this to poke the REST API mid-flight.
+/// @param hd_relay_id Fleet identifier for this relay
+///   (0 = standalone, no fleet).
+/// @param seed_host:seed_port Optional seed relay to
+///   connect to on startup. Ignored when empty.
+/// @param local_fleet_id Federation identifier used in
+///   outbound FleetOpenConnection envelopes.
+/// @param accept_fleet_id If non-empty, federation
+///   accept_from is seeded with a single rule allowing
+///   this fleet_id with no destination restriction.
 /// @returns Child PID, or -1 on error.
 pid_t StartHdRelay(uint16_t port, int num_workers,
                    const Key& relay_key,
-                   uint16_t metrics_port = 0);
+                   uint16_t metrics_port = 0,
+                   uint16_t hd_relay_id = 0,
+                   const char* seed_host = "",
+                   uint16_t seed_port = 0,
+                   const char* local_fleet_id = "",
+                   const char* accept_fleet_id = "");
 
 /// @brief Wait until relay accepts TCP connections.
 /// @param port Relay port.

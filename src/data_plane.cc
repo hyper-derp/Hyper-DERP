@@ -1312,7 +1312,12 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
   } else if (hd_type == HdFrameType::kRouteAnnounce ||
              hd_type == HdFrameType::kOpenConnection ||
              hd_type ==
-                 HdFrameType::kIncomingConnResponse) {
+                 HdFrameType::kIncomingConnResponse ||
+             hd_type ==
+                 HdFrameType::kFleetOpenConnection ||
+             hd_type ==
+                 HdFrameType::
+                     kFleetOpenConnectionResult) {
     // Forward to control plane.
     // Pipe format: [4B fd BE][1B type][4B len BE][payload].
     uint8_t fd_buf[4];

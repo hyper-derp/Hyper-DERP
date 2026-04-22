@@ -115,7 +115,22 @@ struct ControlPlane {
     Key initiator_key{};
     Key target_key{};
     HdClientView initiator_view;
+    /// Non-zero means this slot is tracking an outbound
+    /// FleetOpenConnection sent to a remote relay; the
+    /// Result wrapping is FleetOpenConnectionResult and
+    /// the final reply populates relay_path with this
+    /// id.
     uint16_t target_relay_id = 0;
+    /// True on the gateway side: the slot was created by
+    /// receiving a FleetOpenConnection, so the final
+    /// result must be wrapped as FleetOpenConnectionResult
+    /// back to `initiator_fd` (the relay link), not as a
+    /// client-level OpenConnectionResult.
+    bool is_gateway_inbound = false;
+    /// On the gateway side: which remote relay originated
+    /// this tunnel attempt. Used to key the slot alongside
+    /// correlation_id.
+    uint16_t origin_relay_id = 0;
     uint64_t deadline_ns = 0;
   };
   OpenConnEntry open_conns[kCpMaxOpenConns]{};
@@ -247,6 +262,19 @@ void CpHandleOpenConnection(ControlPlane* cp, int fd,
 /// @brief Process an IncomingConnResponse from the
 ///   target peer of an earlier OpenConnection.
 void CpHandleIncomingConnResponse(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len);
+
+/// @brief Process a FleetOpenConnection received from an
+///   origin relay (gateway role).
+void CpHandleFleetOpenConnection(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len);
+
+/// @brief Process a FleetOpenConnectionResult received
+///   from a gateway relay in response to an outbound
+///   forward (origin role).
+void CpHandleFleetOpenConnectionResult(
     ControlPlane* cp, int fd,
     const uint8_t* payload, int payload_len);
 
