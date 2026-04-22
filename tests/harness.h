@@ -40,9 +40,13 @@ pid_t StartRelay(uint16_t port, int num_workers,
 /// @param port Port to listen on.
 /// @param num_workers Number of data plane workers.
 /// @param relay_key 32-byte shared secret for enrollment.
+/// @param metrics_port If non-zero, also starts the
+///   metrics/admin HTTP server on that port. Tests use
+///   this to poke the REST API mid-flight.
 /// @returns Child PID, or -1 on error.
 pid_t StartHdRelay(uint16_t port, int num_workers,
-                   const Key& relay_key);
+                   const Key& relay_key,
+                   uint16_t metrics_port = 0);
 
 /// @brief Wait until relay accepts TCP connections.
 /// @param port Relay port.

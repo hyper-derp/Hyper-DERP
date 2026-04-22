@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 #include <sodium.h>
 
+#include "hyper_derp/handshake.h"
 #include "hyper_derp/hd_client.h"
 #include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_protocol.h"
@@ -178,6 +179,88 @@ TEST_F(OpenConnTest, TargetUnresponsiveTimesOut) {
             HdDenyReason::kTargetUnresponsive);
 
   HdClientClose(&a);
+  HdClientClose(&b);
+}
+
+// -- Peer policy E2E (Phase 3.3) -----------------------
+
+class PeerPolicyE2ETest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_GE(sodium_init(), 0);
+    randombytes_buf(relay_key_.data(), kKeySize);
+    port_ = test::FindFreePort();
+    metrics_port_ = test::FindFreePort();
+    ASSERT_NE(port_, 0);
+    ASSERT_NE(metrics_port_, 0);
+    relay_pid_ = test::StartHdRelay(port_, 1, relay_key_,
+                                    metrics_port_);
+    ASSERT_GT(relay_pid_, 0);
+    ASSERT_EQ(test::WaitRelayReady(port_, 5000), 0);
+    // Metrics server starts asynchronously.
+    usleep(300000);
+  }
+
+  void TearDown() override {
+    if (relay_pid_ > 0) test::StopRelay(relay_pid_);
+  }
+
+  Key relay_key_{};
+  uint16_t port_ = 0;
+  uint16_t metrics_port_ = 0;
+  pid_t relay_pid_ = -1;
+};
+
+TEST_F(PeerPolicyE2ETest, PutPolicyOverridesIntent) {
+  // Enroll B so the registry has a slot for its key.
+  uint8_t pub_b[kKeySize], priv_b[kKeySize];
+  crypto_box_keypair(pub_b, priv_b);
+  HdClient b;
+  HdClientInitWithKeys(&b, pub_b, priv_b, relay_key_);
+  ASSERT_TRUE(test::ConnectHdClient(&b, "127.0.0.1",
+                                    port_)
+                  .has_value());
+  ASSERT_TRUE(HdClientUpgrade(&b).has_value());
+  ASSERT_TRUE(HdClientEnroll(&b).has_value());
+  usleep(100000);
+
+  // PUT B's policy to require_relay + override_client.
+  char hex[kKeySize * 2 + 1];
+  KeyToHex(b.public_key, hex);
+  char cmd[1024];
+  snprintf(cmd, sizeof(cmd),
+           "curl -s -o /dev/null -w '%%{http_code}' "
+           "-X PUT -H 'Content-Type: application/json' "
+           "-d '{\"has_pin\":true,\"override_client\":"
+           "true,\"pinned_intent\":\"require_relay\","
+           "\"audit_tag\":\"zoneA\"}' "
+           "http://127.0.0.1:%u/api/v1/peers/%s/policy",
+           metrics_port_, hex);
+  FILE* pipe = popen(cmd, "r");
+  ASSERT_NE(pipe, nullptr);
+  char code[8] = {};
+  fread(code, 1, sizeof(code) - 1, pipe);
+  pclose(pipe);
+  EXPECT_STREQ(code, "200");
+
+  // Read it back.
+  snprintf(cmd, sizeof(cmd),
+           "curl -s "
+           "http://127.0.0.1:%u/api/v1/peers/%s/policy",
+           metrics_port_, hex);
+  pipe = popen(cmd, "r");
+  ASSERT_NE(pipe, nullptr);
+  char body[1024] = {};
+  fread(body, 1, sizeof(body) - 1, pipe);
+  pclose(pipe);
+  EXPECT_NE(std::string(body).find("require_relay"),
+            std::string::npos);
+  EXPECT_NE(std::string(body).find("\"override_client\":"
+                                    "true"),
+            std::string::npos);
+  EXPECT_NE(std::string(body).find("zoneA"),
+            std::string::npos);
+
   HdClientClose(&b);
 }
 

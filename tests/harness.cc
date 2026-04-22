@@ -139,7 +139,8 @@ pid_t StartRelay(uint16_t port, int num_workers,
 }
 
 pid_t StartHdRelay(uint16_t port, int num_workers,
-                   const Key& relay_key) {
+                   const Key& relay_key,
+                   uint16_t metrics_port) {
   // Generate once in the parent so every forked child
   // reads the same paths (static locals don't survive the
   // fork, but the files on disk do).
@@ -170,6 +171,10 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
     config.hd_enroll_mode = HdEnrollMode::kAutoApprove;
     config.tls_cert = cert.cert;
     config.tls_key = cert.key;
+    if (metrics_port != 0) {
+      config.metrics.port = metrics_port;
+      config.metrics.enable_debug = true;
+    }
 
     Server server;
     if (!ServerInit(&server, &config)) {

@@ -563,6 +563,106 @@ static void RegisterHdRoutes(MetricsServer* ms) {
     return crow::response(200, "redirect sent");
   });
 
+  // Peer routing-policy read.
+  CROW_ROUTE(ms->app,
+             "/api/v1/peers/<string>/policy")
+  .methods("GET"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    HdPeerPolicy pol;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* got =
+          HdPeersLookupPolicy(ms->hd_peers, key.data());
+      if (!got) {
+        return crow::response(404, "peer not found");
+      }
+      pol = *got;
+    }
+    static const char* kIntentNames[] = {
+        "prefer_direct", "require_direct",
+        "prefer_relay", "require_relay"};
+    crow::json::wvalue j;
+    j["has_pin"] = pol.has_pin;
+    j["override_client"] = pol.override_client;
+    j["pinned_intent"] = kIntentNames[static_cast<int>(
+        pol.pinned_intent) & 3];
+    j["audit_tag"] = pol.audit_tag;
+    j["reason"] = pol.reason;
+    return crow::response(200, j);
+  });
+
+  // Peer routing-policy write.
+  CROW_ROUTE(ms->app,
+             "/api/v1/peers/<string>/policy")
+  .methods("PUT"_method)
+  ([ms](const crow::request& req,
+        const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    auto body = crow::json::load(req.body);
+    if (!body) {
+      return crow::response(400, "invalid json");
+    }
+    HdPeerPolicy pol;
+    if (body.has("has_pin")) {
+      pol.has_pin = body["has_pin"].b();
+    }
+    if (body.has("override_client")) {
+      pol.override_client =
+          body["override_client"].b();
+    }
+    if (body.has("pinned_intent")) {
+      std::string s = body["pinned_intent"].s();
+      if (s == "prefer_direct") {
+        pol.pinned_intent = HdIntent::kPreferDirect;
+      } else if (s == "require_direct") {
+        pol.pinned_intent = HdIntent::kRequireDirect;
+      } else if (s == "prefer_relay") {
+        pol.pinned_intent = HdIntent::kPreferRelay;
+      } else if (s == "require_relay") {
+        pol.pinned_intent = HdIntent::kRequireRelay;
+      } else {
+        return crow::response(
+            400, "invalid pinned_intent");
+      }
+    }
+    if (body.has("audit_tag")) {
+      pol.audit_tag = body["audit_tag"].s();
+    }
+    if (body.has("reason")) {
+      pol.reason = body["reason"].s();
+    }
+    if (!HdPeersSetPolicy(ms->hd_peers, key.data(),
+                          pol)) {
+      return crow::response(404, "peer not found");
+    }
+    return crow::response(200, "policy updated");
+  });
+
+  // Peer routing-policy clear.
+  CROW_ROUTE(ms->app,
+             "/api/v1/peers/<string>/policy")
+  .methods("DELETE"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    if (!HdPeersClearPolicy(ms->hd_peers, key.data())) {
+      return crow::response(404, "peer not found");
+    }
+    return crow::response(200, "policy cleared");
+  });
+
   // Relay status.
   CROW_ROUTE(ms->app, "/api/v1/relay")
   ([ms]() {
@@ -736,12 +836,50 @@ button{font:inherit;padding:.2em .6em;margin-right:.3em;
 </html>
 )HTML";
 
+const char* IntentName(HdIntent i) {
+  switch (i) {
+    case HdIntent::kPreferDirect:
+      return "prefer_direct";
+    case HdIntent::kRequireDirect:
+      return "require_direct";
+    case HdIntent::kPreferRelay:
+      return "prefer_relay";
+    case HdIntent::kRequireRelay:
+      return "require_relay";
+  }
+  return "?";
+}
+
+std::string RenderPolicyCell(const HdPeerPolicy& pol) {
+  std::string out;
+  if (!pol.has_pin && !pol.override_client &&
+      pol.audit_tag.empty()) {
+    out = "<span class=\"muted\">—</span>";
+  } else {
+    if (pol.has_pin) {
+      out += IntentName(pol.pinned_intent);
+      if (pol.override_client) {
+        out += " (override)";
+      }
+    } else {
+      out += "<span class=\"muted\">no pin</span>";
+    }
+    if (!pol.audit_tag.empty()) {
+      out += " <em>[";
+      out += pol.audit_tag;
+      out += "]</em>";
+    }
+  }
+  return out;
+}
+
 std::string RenderPeerRow(const std::string& hex,
                           const std::string& state,
                           int fd,
-                          int rule_count) {
+                          int rule_count,
+                          const HdPeerPolicy& pol) {
   std::string row;
-  row.reserve(512);
+  row.reserve(768);
   row += "<tr><td class=\"key\">";
   row += hex;
   row += "</td><td><span class=\"state ";
@@ -753,6 +891,8 @@ std::string RenderPeerRow(const std::string& hex,
   row += "</td><td>";
   row += std::to_string(rule_count);
   row += "</td><td>";
+  row += RenderPolicyCell(pol);
+  row += "</td><td>";
   if (state == "pending") {
     row += "<button hx-post=\"/admin/peers/";
     row += hex;
@@ -763,6 +903,10 @@ std::string RenderPeerRow(const std::string& hex,
     row += "/deny\" hx-target=\"#peers\" "
            "hx-swap=\"innerHTML\">deny</button>";
   } else if (state == "approved") {
+    row += "<button hx-get=\"/admin/peers/";
+    row += hex;
+    row += "/policy\" hx-target=\"#peers\" "
+           "hx-swap=\"innerHTML\">edit policy</button>";
     row += "<button hx-delete=\"/admin/peers/";
     row += hex;
     row += "\" hx-target=\"#peers\" "
@@ -775,12 +919,72 @@ std::string RenderPeerRow(const std::string& hex,
   return row;
 }
 
+std::string RenderPolicyForm(const std::string& hex,
+                             const HdPeerPolicy& pol) {
+  auto opt = [&](const char* v,
+                 HdIntent want) -> std::string {
+    std::string o = "<option value=\"";
+    o += v;
+    if (pol.has_pin && pol.pinned_intent == want) {
+      o += "\" selected>";
+    } else {
+      o += "\">";
+    }
+    o += v;
+    o += "</option>";
+    return o;
+  };
+  std::string h;
+  h.reserve(1024);
+  h += "<div style=\"padding:1em;border:1px solid #ccc;"
+       "border-radius:4px\">";
+  h += "<h3 style=\"margin-top:0\">policy for ";
+  h += hex;
+  h += "</h3>";
+  h += "<form hx-put=\"/admin/peers/";
+  h += hex;
+  h += "/policy\" hx-ext=\"json-enc\" "
+       "hx-target=\"#peers\" hx-swap=\"innerHTML\">";
+  h += "<label><input type=\"checkbox\" name=\"has_pin\"";
+  if (pol.has_pin) h += " checked";
+  h += "> has_pin</label><br>";
+  h += "<label><input type=\"checkbox\" "
+       "name=\"override_client\"";
+  if (pol.override_client) h += " checked";
+  h += "> override_client</label><br>";
+  h += "<label>pinned_intent: "
+       "<select name=\"pinned_intent\">";
+  h += opt("prefer_direct", HdIntent::kPreferDirect);
+  h += opt("require_direct", HdIntent::kRequireDirect);
+  h += opt("prefer_relay", HdIntent::kPreferRelay);
+  h += opt("require_relay", HdIntent::kRequireRelay);
+  h += "</select></label><br>";
+  h += "<label>audit_tag: <input name=\"audit_tag\" "
+       "value=\"";
+  h += pol.audit_tag;
+  h += "\"></label><br>";
+  h += "<label>reason: <input name=\"reason\" value=\"";
+  h += pol.reason;
+  h += "\"></label><br>";
+  h += "<button type=\"submit\">save</button> ";
+  h += "<button type=\"button\" "
+       "hx-get=\"/admin/peers\" hx-target=\"#peers\" "
+       "hx-swap=\"innerHTML\">cancel</button> ";
+  h += "<button type=\"button\" hx-delete=\"/admin/peers/";
+  h += hex;
+  h += "/policy\" hx-target=\"#peers\" "
+       "hx-swap=\"innerHTML\">clear</button>";
+  h += "</form></div>";
+  return h;
+}
+
 std::string RenderPeerList(HdPeerRegistry* reg) {
   struct Snap {
     std::string hex;
     std::string state;
     int fd;
     int rule_count;
+    HdPeerPolicy policy;
   };
   std::vector<Snap> snaps;
   {
@@ -798,6 +1002,7 @@ std::string RenderPeerList(HdPeerRegistry* reg) {
                     ? "pending" : "denied";
       s.fd = p.fd;
       s.rule_count = p.rule_count;
+      s.policy = reg->policies[i];
       snaps.push_back(std::move(s));
     }
   }
@@ -805,14 +1010,15 @@ std::string RenderPeerList(HdPeerRegistry* reg) {
   html.reserve(4096);
   html += "<table><thead><tr><th>peer key</th>"
           "<th>state</th><th>fd</th><th>rules</th>"
+          "<th>policy</th>"
           "<th>actions</th></tr></thead><tbody>";
   if (snaps.empty()) {
-    html += "<tr><td colspan=\"5\" class=\"muted\">"
+    html += "<tr><td colspan=\"6\" class=\"muted\">"
             "no peers</td></tr>";
   }
   for (auto& s : snaps) {
     html += RenderPeerRow(s.hex, s.state, s.fd,
-                          s.rule_count);
+                          s.rule_count, s.policy);
   }
   html += "</tbody></table>";
   return html;
@@ -919,6 +1125,120 @@ static void RegisterAdminRoutes(MetricsServer* ms) {
     if (fd >= 0) {
       HdSendDenied(fd, 0, "denied by admin");
       close(fd);
+    }
+    crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  // Admin: GET policy — returns an edit-form fragment.
+  CROW_ROUTE(ms->app,
+             "/admin/peers/<string>/policy")
+  .methods("GET"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    HdPeerPolicy pol;
+    {
+      std::lock_guard lock(ms->hd_peers->mutex);
+      auto* got =
+          HdPeersLookupPolicy(ms->hd_peers, key.data());
+      if (!got) {
+        return crow::response(404, "peer not found");
+      }
+      pol = *got;
+    }
+    crow::response r(200, RenderPolicyForm(key_hex, pol));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  // Admin: PUT policy — form-url-encoded from HTMX.
+  CROW_ROUTE(ms->app,
+             "/admin/peers/<string>/policy")
+  .methods("PUT"_method)
+  ([ms](const crow::request& req,
+        const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    // Parse application/x-www-form-urlencoded body.
+    HdPeerPolicy pol;
+    std::string body = req.body;
+    auto field = [&](const std::string& name)
+        -> std::string {
+      size_t pos = 0;
+      while (pos < body.size()) {
+        size_t eq = body.find('=', pos);
+        size_t amp = body.find('&', pos);
+        if (amp == std::string::npos) amp = body.size();
+        if (eq != std::string::npos && eq < amp) {
+          if (body.compare(pos, eq - pos, name) == 0) {
+            std::string v =
+                body.substr(eq + 1, amp - eq - 1);
+            // Minimal URL-decode: + -> space, %XX -> byte.
+            std::string out;
+            for (size_t i = 0; i < v.size(); i++) {
+              char c = v[i];
+              if (c == '+') {
+                out += ' ';
+              } else if (c == '%' && i + 2 < v.size()) {
+                int hi = std::stoi(
+                    v.substr(i + 1, 2), nullptr, 16);
+                out += static_cast<char>(hi);
+                i += 2;
+              } else {
+                out += c;
+              }
+            }
+            return out;
+          }
+        }
+        pos = amp + 1;
+      }
+      return {};
+    };
+    pol.has_pin = !field("has_pin").empty();
+    pol.override_client =
+        !field("override_client").empty();
+    std::string pin = field("pinned_intent");
+    if (pin == "prefer_direct") {
+      pol.pinned_intent = HdIntent::kPreferDirect;
+    } else if (pin == "require_direct") {
+      pol.pinned_intent = HdIntent::kRequireDirect;
+    } else if (pin == "prefer_relay") {
+      pol.pinned_intent = HdIntent::kPreferRelay;
+    } else if (pin == "require_relay") {
+      pol.pinned_intent = HdIntent::kRequireRelay;
+    }
+    pol.audit_tag = field("audit_tag");
+    pol.reason = field("reason");
+    if (!HdPeersSetPolicy(ms->hd_peers, key.data(),
+                          pol)) {
+      return crow::response(404, "peer not found");
+    }
+    crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  // Admin: DELETE policy — clears to defaults.
+  CROW_ROUTE(ms->app,
+             "/admin/peers/<string>/policy")
+  .methods("DELETE"_method)
+  ([ms](const std::string& key_hex) {
+    Key key{};
+    if (ParseKeyString(key_hex, &key) ==
+        KeyPrefix::kInvalid) {
+      return crow::response(400, "invalid key");
+    }
+    if (!HdPeersClearPolicy(ms->hd_peers, key.data())) {
+      return crow::response(404, "peer not found");
     }
     crow::response r(200, RenderPeerList(ms->hd_peers));
     r.add_header("Content-Type", "text/html");
