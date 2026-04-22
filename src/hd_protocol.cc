@@ -160,6 +160,229 @@ int HdParseRouteAnnounce(const uint8_t* payload,
   return entry_count;
 }
 
+namespace {
+
+inline void WriteU16(uint8_t* p, uint16_t v) {
+  p[0] = static_cast<uint8_t>(v >> 8);
+  p[1] = static_cast<uint8_t>(v);
+}
+
+inline uint16_t ReadU16(const uint8_t* p) {
+  return static_cast<uint16_t>((p[0] << 8) | p[1]);
+}
+
+inline void WriteU64(uint8_t* p, uint64_t v) {
+  for (int i = 0; i < 8; i++) {
+    p[i] = static_cast<uint8_t>(v >> (56 - i * 8));
+  }
+}
+
+inline uint64_t ReadU64(const uint8_t* p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; i++) {
+    v = (v << 8) | p[i];
+  }
+  return v;
+}
+
+}  // namespace
+
+// -- Routing policy frames ---------------------------------------------------
+
+int HdBuildOpenConnection(uint8_t* buf,
+                          uint16_t target_peer_id,
+                          uint16_t target_relay_id,
+                          HdIntent intent,
+                          uint8_t flags,
+                          uint64_t correlation_id) {
+  HdWriteFrameHeader(buf, HdFrameType::kOpenConnection,
+                     kHdOpenConnSize);
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  WriteU16(p, target_peer_id);
+  WriteU16(p + 2, target_relay_id);
+  p[4] = static_cast<uint8_t>(intent);
+  p[5] = flags;
+  WriteU64(p + 6, correlation_id);
+  return kHdFrameHeaderSize + kHdOpenConnSize;
+}
+
+bool HdParseOpenConnection(const uint8_t* payload,
+                           int payload_len,
+                           HdOpenConnection* out) {
+  if (payload_len != kHdOpenConnSize) return false;
+  out->target_peer_id = ReadU16(payload);
+  out->target_relay_id = ReadU16(payload + 2);
+  out->intent = static_cast<HdIntent>(payload[4]);
+  out->flags = payload[5];
+  out->correlation_id = ReadU64(payload + 6);
+  return true;
+}
+
+int HdBuildOpenConnectionResult(uint8_t* buf,
+                                int buf_size,
+                                uint64_t correlation_id,
+                                HdConnMode mode,
+                                HdDenyReason deny_reason,
+                                uint8_t sub_reason,
+                                const uint16_t* relay_path,
+                                int relay_path_len,
+                                const char* endpoint_hint,
+                                int endpoint_hint_len) {
+  if (relay_path_len < 0 ||
+      relay_path_len > kHdMaxRelayPath) {
+    return -1;
+  }
+  if (endpoint_hint_len < 0 ||
+      endpoint_hint_len > kHdMaxEndpointHint) {
+    return -1;
+  }
+  int payload_len = kHdOpenResultMinSize +
+                    relay_path_len * 2 +
+                    endpoint_hint_len;
+  int total = kHdFrameHeaderSize + payload_len;
+  if (total > buf_size) return -1;
+  HdWriteFrameHeader(buf,
+                     HdFrameType::kOpenConnectionResult,
+                     static_cast<uint32_t>(payload_len));
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  WriteU64(p, correlation_id);
+  p[8] = static_cast<uint8_t>(mode);
+  WriteU16(p + 9, static_cast<uint16_t>(deny_reason));
+  p[11] = sub_reason;
+  WriteU16(p + 12,
+           static_cast<uint16_t>(relay_path_len));
+  uint8_t* q = p + 14;
+  for (int i = 0; i < relay_path_len; i++) {
+    WriteU16(q, relay_path[i]);
+    q += 2;
+  }
+  WriteU16(q, static_cast<uint16_t>(endpoint_hint_len));
+  q += 2;
+  if (endpoint_hint_len > 0) {
+    std::memcpy(q, endpoint_hint, endpoint_hint_len);
+  }
+  return total;
+}
+
+bool HdParseOpenConnectionResult(
+    const uint8_t* payload,
+    int payload_len,
+    HdOpenConnectionResult* out) {
+  if (payload_len < kHdOpenResultMinSize) return false;
+  out->correlation_id = ReadU64(payload);
+  out->mode = static_cast<HdConnMode>(payload[8]);
+  out->deny_reason = static_cast<HdDenyReason>(
+      ReadU16(payload + 9));
+  out->sub_reason = payload[11];
+  int path_len = ReadU16(payload + 12);
+  if (path_len > kHdMaxRelayPath) return false;
+  // Minimum covers everything up through hint_len.
+  int fixed = kHdOpenResultMinSize + path_len * 2;
+  if (payload_len < fixed) return false;
+  for (int i = 0; i < path_len; i++) {
+    out->relay_path[i] = ReadU16(payload + 14 + i * 2);
+  }
+  out->relay_path_len = path_len;
+  const uint8_t* hint_len_off =
+      payload + 14 + path_len * 2;
+  int hint_len = ReadU16(hint_len_off);
+  if (hint_len > kHdMaxEndpointHint) return false;
+  if (payload_len != fixed + hint_len) return false;
+  if (hint_len > 0) {
+    std::memcpy(out->endpoint_hint, hint_len_off + 2,
+                hint_len);
+  }
+  out->endpoint_hint[hint_len] = '\0';
+  out->endpoint_hint_len = hint_len;
+  return true;
+}
+
+int HdBuildIncomingConnection(uint8_t* buf,
+                              const Key& initiator_key,
+                              uint16_t initiator_peer_id,
+                              HdIntent intent,
+                              uint8_t flags,
+                              uint64_t correlation_id) {
+  HdWriteFrameHeader(buf, HdFrameType::kIncomingConnection,
+                     kHdIncomingConnSize);
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  std::memcpy(p, initiator_key.data(), kKeySize);
+  WriteU16(p + 32, initiator_peer_id);
+  p[34] = static_cast<uint8_t>(intent);
+  p[35] = flags;
+  WriteU64(p + 36, correlation_id);
+  return kHdFrameHeaderSize + kHdIncomingConnSize;
+}
+
+bool HdParseIncomingConnection(const uint8_t* payload,
+                               int payload_len,
+                               HdIncomingConnection* out) {
+  if (payload_len != kHdIncomingConnSize) return false;
+  std::memcpy(out->initiator_key.data(), payload,
+              kKeySize);
+  out->initiator_peer_id = ReadU16(payload + 32);
+  out->intent = static_cast<HdIntent>(payload[34]);
+  out->flags = payload[35];
+  out->correlation_id = ReadU64(payload + 36);
+  return true;
+}
+
+int HdBuildIncomingConnResponse(uint8_t* buf,
+                                uint64_t correlation_id,
+                                HdIntent intent,
+                                uint8_t flags,
+                                uint8_t accept) {
+  HdWriteFrameHeader(buf,
+                     HdFrameType::kIncomingConnResponse,
+                     kHdIncomingRespSize);
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  WriteU64(p, correlation_id);
+  p[8] = static_cast<uint8_t>(intent);
+  p[9] = flags;
+  p[10] = accept;
+  return kHdFrameHeaderSize + kHdIncomingRespSize;
+}
+
+bool HdParseIncomingConnResponse(
+    const uint8_t* payload,
+    int payload_len,
+    HdIncomingConnResponse* out) {
+  if (payload_len != kHdIncomingRespSize) return false;
+  out->correlation_id = ReadU64(payload);
+  out->intent = static_cast<HdIntent>(payload[8]);
+  out->flags = payload[9];
+  out->accept = payload[10];
+  return true;
+}
+
+int HdBuildIncomingConnResult(uint8_t* buf,
+                              uint64_t correlation_id,
+                              HdConnMode mode,
+                              HdDenyReason deny_reason,
+                              uint8_t sub_reason) {
+  HdWriteFrameHeader(buf,
+                     HdFrameType::kIncomingConnResult,
+                     kHdIncomingResultSize);
+  uint8_t* p = buf + kHdFrameHeaderSize;
+  WriteU64(p, correlation_id);
+  p[8] = static_cast<uint8_t>(mode);
+  WriteU16(p + 9, static_cast<uint16_t>(deny_reason));
+  p[11] = sub_reason;
+  return kHdFrameHeaderSize + kHdIncomingResultSize;
+}
+
+bool HdParseIncomingConnResult(const uint8_t* payload,
+                               int payload_len,
+                               HdIncomingConnResult* out) {
+  if (payload_len != kHdIncomingResultSize) return false;
+  out->correlation_id = ReadU64(payload);
+  out->mode = static_cast<HdConnMode>(payload[8]);
+  out->deny_reason = static_cast<HdDenyReason>(
+      ReadU16(payload + 9));
+  out->sub_reason = payload[11];
+  return true;
+}
+
 int HdBuildRedirect(uint8_t* buf,
                     HdRedirectReason reason,
                     const char* target_url,
