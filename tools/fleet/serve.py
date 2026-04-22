@@ -54,8 +54,19 @@ def _load():
     _cache["mtime"] = st.st_mtime
     _cache["body"] = body
     _cache["version"] = int(parsed.get("version", 0))
-    _cache["revocations"] = parsed.get(
-        "revocations", {})
+    # Revocations live inside signed_body_b64 and are
+    # only exposed to already-trusted clients; decode
+    # lazily so the server has zero crypto logic.
+    revs = {}
+    try:
+      import base64
+      inner = json.loads(
+          base64.b64decode(
+              parsed["signed_body_b64"]))
+      revs = inner.get("revocations", {})
+    except (KeyError, ValueError):
+      revs = {}
+    _cache["revocations"] = revs
     return _cache
 
 

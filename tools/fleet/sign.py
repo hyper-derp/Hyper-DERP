@@ -8,14 +8,32 @@ FleetController verifies on pull.
 Bundle format:
 
   {
-    "version":    <int64>,
-    "issued_at":  "<RFC3339 UTC>",
-    "fleet_id":   "<string>",
-    "policy":     { ... },
-    "revocations": { ... },
-    "signature":  "<base64 Ed25519 sig of the bundle
-                   without the signature field>"
+    "version":         <int64>,        # duplicated for
+                                       # quick filtering
+    "fleet_id":        "<string>",     # ditto
+    "signed_body_b64": "<base64>",     # canonical JSON
+                                       # (sort_keys,
+                                       # no whitespace)
+                                       # of the signed
+                                       # payload
+    "signature_b64":   "<base64 Ed25519 sig of the
+                        raw bytes that signed_body_b64
+                        decodes to>"
   }
+
+The signed payload decodes to:
+
+  {
+    "version":     <int64>,
+    "issued_at":   "<RFC3339 UTC>",
+    "fleet_id":    "<string>",
+    "policy":      { ... },
+    "revocations": { ... }
+  }
+
+Keeping the signed payload opaque-to-the-relay as raw
+bytes avoids having to re-canonicalize JSON in C++ for
+verification.
 
 The signing key stays offline (USB stick, HSM, or
 dedicated signing machine). Online compromise of the
@@ -96,7 +114,7 @@ def main():
   version = (args.version if args.version > 0
              else next_version(args.out))
 
-  bundle_unsigned = {
+  signed_payload = {
       "version": version,
       "issued_at":
           datetime.datetime.now(
@@ -107,11 +125,16 @@ def main():
       "policy": policy,
       "revocations": revocations,
   }
-  sig = signing_key.sign(
-      canonical(bundle_unsigned)).signature
-  bundle = dict(bundle_unsigned)
-  bundle["signature"] = base64.b64encode(sig).decode(
-      "ascii")
+  signed_bytes = canonical(signed_payload)
+  sig = signing_key.sign(signed_bytes).signature
+  bundle = {
+      "version": version,
+      "fleet_id": args.fleet_id,
+      "signed_body_b64": base64.b64encode(
+          signed_bytes).decode("ascii"),
+      "signature_b64": base64.b64encode(sig).decode(
+          "ascii"),
+  }
 
   tmp = args.out + ".tmp"
   with open(tmp, "w") as f:
