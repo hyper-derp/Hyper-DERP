@@ -288,6 +288,10 @@ static constexpr uint32_t kEpollTagStunUdp =
     kMaxWorkers + 1;
 static constexpr uint32_t kEpollTagRouteAnnounce =
     kMaxWorkers + 2;
+static constexpr uint32_t kEpollTagOpenConnTimer =
+    kMaxWorkers + 3;
+
+static void ScanOpenConnTimeouts(ControlPlane* cp);
 
 /// Process STUN responses received on the UDP socket.
 static void HandleStunResponse(ControlPlane* cp) {
@@ -416,6 +420,10 @@ void CpInit(ControlPlane* cp, Ctx* dp) {
 }
 
 void CpDestroy(ControlPlane* cp) {
+  if (cp->open_conn_timer_fd >= 0) {
+    close(cp->open_conn_timer_fd);
+    cp->open_conn_timer_fd = -1;
+  }
   if (cp->route_announce_fd >= 0) {
     close(cp->route_announce_fd);
     cp->route_announce_fd = -1;
@@ -463,6 +471,18 @@ void CpProcessFrame(ControlPlane* cp, int fd,
   if (static_cast<uint8_t>(type) ==
       static_cast<uint8_t>(HdFrameType::kRouteAnnounce)) {
     CpHandleRouteAnnounce(cp, fd, payload, payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(HdFrameType::kOpenConnection)) {
+    CpHandleOpenConnection(cp, fd, payload, payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(
+          HdFrameType::kIncomingConnResponse)) {
+    CpHandleIncomingConnResponse(
+        cp, fd, payload, payload_len);
     return;
   }
 
@@ -563,12 +583,24 @@ void CpRunLoop(ControlPlane* cp) {
     }
   }
 
+  // Register routing-policy deadline timer.
+  if (cp->open_conn_timer_fd >= 0) {
+    epoll_event oct{};
+    oct.events = EPOLLIN;
+    oct.data.u32 = kEpollTagOpenConnTimer;
+    if (epoll_ctl(cp->epoll_fd, EPOLL_CTL_ADD,
+                  cp->open_conn_timer_fd, &oct) < 0) {
+      spdlog::error("epoll_ctl ADD open_conn_timer: {}",
+                    strerror(errno));
+    }
+  }
+
   cp->running.store(1, std::memory_order_release);
   spdlog::info("control plane running ({} pipes)",
                nworkers);
 
-  // Extra slots for ICE timer + STUN UDP + route timer.
-  constexpr int kMaxEpollEvents = kMaxWorkers + 3;
+  // Extra slots for ICE + STUN + route + open-conn timer.
+  constexpr int kMaxEpollEvents = kMaxWorkers + 4;
   epoll_event events[kMaxEpollEvents];
 
   while (cp->running.load(std::memory_order_acquire)) {
@@ -596,6 +628,13 @@ void CpRunLoop(ControlPlane* cp) {
       }
       if (tag == kEpollTagRouteAnnounce) {
         HandleRouteAnnounce(cp);
+        continue;
+      }
+      if (tag == kEpollTagOpenConnTimer) {
+        uint64_t ticks;
+        (void)read(cp->open_conn_timer_fd,
+                   &ticks, sizeof(ticks));
+        ScanOpenConnTimeouts(cp);
         continue;
       }
 
@@ -846,6 +885,314 @@ void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
     spdlog::info("ICE: formed {} pairs, checking",
                  session->pair_count);
   }
+}
+
+// -- Routing policy (Phase 2) -------------------------
+
+namespace {
+
+uint64_t NowNsMono() {
+  timespec ts{};
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
+         static_cast<uint64_t>(ts.tv_nsec);
+}
+
+// Blocking write of exactly n bytes; best-effort, no
+// retry on partial failures beyond EINTR/EAGAIN.
+int WriteFullFrame(int fd, const uint8_t* buf, int n) {
+  int total = 0;
+  while (total < n) {
+    int w = ::write(fd, buf + total, n - total);
+    if (w < 0) {
+      if (errno == EINTR || errno == EAGAIN) continue;
+      return -1;
+    }
+    if (w == 0) return -1;
+    total += w;
+  }
+  return 0;
+}
+
+int OpenConnSlotFind(ControlPlane* cp,
+                     uint64_t correlation_id,
+                     int initiator_fd) {
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (s.in_use && s.correlation_id == correlation_id &&
+        s.initiator_fd == initiator_fd) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int OpenConnSlotAlloc(ControlPlane* cp) {
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    if (!cp->open_conns[i].in_use) return i;
+  }
+  return -1;
+}
+
+void OpenConnSlotFree(ControlPlane* cp, int idx) {
+  auto& s = cp->open_conns[idx];
+  if (s.in_use && s.initiator_fd >= 0 &&
+      s.initiator_fd < kMaxFd) {
+    cp->open_conn_per_peer[s.initiator_fd]--;
+  }
+  s = ControlPlane::OpenConnEntry{};
+}
+
+void SendOpenResultAndCleanup(
+    ControlPlane* cp, int slot_idx,
+    HdConnMode mode, HdDenyReason reason,
+    uint8_t sub_reason) {
+  auto& s = cp->open_conns[slot_idx];
+  uint8_t buf[256];
+  int n = HdBuildOpenConnectionResult(
+      buf, sizeof(buf), s.correlation_id, mode, reason,
+      sub_reason, nullptr, 0, nullptr, 0);
+  if (n > 0 && s.initiator_fd >= 0) {
+    WriteFullFrame(s.initiator_fd, buf, n);
+  }
+  if (mode != HdConnMode::kDenied && s.target_fd >= 0) {
+    // Mirror result to the target if one was contacted.
+    uint8_t tbuf[kHdFrameHeaderSize +
+                 kHdIncomingResultSize];
+    int tn = HdBuildIncomingConnResult(
+        tbuf, s.correlation_id, mode, reason, sub_reason);
+    WriteFullFrame(s.target_fd, tbuf, tn);
+  }
+  OpenConnSlotFree(cp, slot_idx);
+}
+
+}  // namespace
+
+void CpEnableRoutingPolicy(ControlPlane* cp,
+                           HdPeerRegistry* hd_peers) {
+  cp->hd_peers = hd_peers;
+  HdAuditInit(&cp->audit_ring);
+  cp->open_conn_timer_fd =
+      timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+  if (cp->open_conn_timer_fd < 0) {
+    spdlog::error("open_conn timerfd: {}",
+                  strerror(errno));
+    return;
+  }
+  itimerspec its{};
+  its.it_interval.tv_sec = 1;
+  its.it_value.tv_sec = 1;
+  if (timerfd_settime(cp->open_conn_timer_fd, 0, &its,
+                      nullptr) < 0) {
+    spdlog::error("open_conn timer_settime: {}",
+                  strerror(errno));
+  }
+}
+
+static void ScanOpenConnTimeouts(ControlPlane* cp) {
+  uint64_t now = NowNsMono();
+  std::lock_guard lock(cp->mutex);
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (!s.in_use) continue;
+    if (now < s.deadline_ns) continue;
+    SendOpenResultAndCleanup(
+        cp, i, HdConnMode::kDenied,
+        HdDenyReason::kTargetUnresponsive, 0);
+  }
+}
+
+void CpHandleOpenConnection(ControlPlane* cp, int fd,
+                            const uint8_t* payload,
+                            int payload_len) {
+  HdOpenConnection req;
+  if (!HdParseOpenConnection(payload, payload_len,
+                             &req)) {
+    spdlog::debug("OpenConnection parse failed from fd {}",
+                  fd);
+    return;
+  }
+  spdlog::debug(
+      "OpenConnection from fd {}: target_peer_id={} "
+      "target_relay_id={} intent={} corr={:x}",
+      fd, req.target_peer_id, req.target_relay_id,
+      static_cast<int>(req.intent), req.correlation_id);
+  if (!cp->hd_peers) return;
+
+  // Per-peer outstanding-cap guard.
+  if (fd >= 0 && fd < kMaxFd &&
+      cp->open_conn_per_peer[fd] >=
+          kCpMaxOpenConnsPerPeer) {
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id,
+        HdConnMode::kDenied,
+        HdDenyReason::kTooManyOpenConns, 0, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    return;
+  }
+
+  // Look up initiator key by fd via cp->fd_map.
+  Key initiator_key{};
+  CpPeer* initiator =
+      (fd >= 0 && fd < kMaxFd) ? cp->fd_map[fd] : nullptr;
+  if (initiator) initiator_key = initiator->key;
+
+  // Build the client view from the wire request.
+  HdClientView cv;
+  cv.intent = req.intent;
+  cv.allow_upgrade =
+      (req.flags & kHdFlagAllowUpgrade) != 0;
+  cv.allow_downgrade =
+      (req.flags & kHdFlagAllowDowngrade) != 0;
+
+  // Cross-relay (target_relay_id != 0): resolver
+  // short-circuits; no target lookup needed.
+  if (req.target_relay_id != 0) {
+    HdDecision dec = HdResolve(
+        HdLayerView{}, HdLayerView{}, HdLayerView{},
+        HdLayerView{}, cv, HdCapability{},
+        req.target_relay_id);
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id, dec.mode,
+        dec.deny_reason, dec.sub_reason, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    Key tkey{};
+    HdAuditRecordDecision(&cp->audit_ring, initiator_key,
+                          tkey, cv, dec);
+    return;
+  }
+
+  // Local target: find by peer_id.
+  HdPeer* target = nullptr;
+  int target_fd = -1;
+  {
+    std::lock_guard lock(cp->hd_peers->mutex);
+    target = HdPeersLookupById(cp->hd_peers,
+                                req.target_peer_id);
+    if (target) target_fd = target->fd;
+  }
+  if (!target || target_fd < 0) {
+    HdDecision dec;
+    dec.mode = HdConnMode::kDenied;
+    dec.deny_reason = HdDenyReason::kPeerUnreachable;
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id,
+        dec.mode, dec.deny_reason, 0, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    Key tkey{};
+    HdAuditRecordDecision(&cp->audit_ring, initiator_key,
+                          tkey, cv, dec);
+    return;
+  }
+
+  // Allocate correlation slot.
+  int slot = OpenConnSlotAlloc(cp);
+  if (slot < 0) {
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id,
+        HdConnMode::kDenied,
+        HdDenyReason::kTooManyOpenConns, 0, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    return;
+  }
+  auto& s = cp->open_conns[slot];
+  s.in_use = 1;
+  s.correlation_id = req.correlation_id;
+  s.initiator_fd = fd;
+  s.target_fd = target_fd;
+  s.initiator_key = initiator_key;
+  s.target_key = target->key;
+  s.initiator_view = cv;
+  s.target_relay_id = req.target_relay_id;
+  s.deadline_ns = NowNsMono() + kCpOpenConnTimeoutNs;
+  if (fd >= 0 && fd < kMaxFd) {
+    cp->open_conn_per_peer[fd]++;
+  }
+
+  // Forward IncomingConnection to the target.
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingConnSize];
+  int n = HdBuildIncomingConnection(
+      buf, initiator_key,
+      initiator ? target->peer_id : 0, cv.intent,
+      req.flags, req.correlation_id);
+  if (WriteFullFrame(target_fd, buf, n) < 0) {
+    SendOpenResultAndCleanup(
+        cp, slot, HdConnMode::kDenied,
+        HdDenyReason::kPeerUnreachable, 0);
+  }
+}
+
+void CpHandleIncomingConnResponse(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len) {
+  HdIncomingConnResponse resp;
+  if (!HdParseIncomingConnResponse(payload, payload_len,
+                                   &resp)) {
+    return;
+  }
+  // Find slot by correlation_id + target_fd.
+  int slot = -1;
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (s.in_use &&
+        s.correlation_id == resp.correlation_id &&
+        s.target_fd == fd) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return;
+
+  auto& entry = cp->open_conns[slot];
+
+  HdClientView b_cv;
+  b_cv.intent = resp.intent;
+  b_cv.allow_upgrade =
+      (resp.flags & kHdFlagAllowUpgrade) != 0;
+  b_cv.allow_downgrade =
+      (resp.flags & kHdFlagAllowDowngrade) != 0;
+
+  if (!(resp.accept & kHdFlagAccept)) {
+    SendOpenResultAndCleanup(
+        cp, slot, HdConnMode::kDenied,
+        HdDenyReason::kPolicyForbids, 0);
+    return;
+  }
+
+  // Intersect A's and B's intents: the more restrictive
+  // wins. Model B as a pin: if B says require_*, force
+  // it; otherwise leave peer pin empty.
+  HdLayerView peer_view;
+  if (resp.intent == HdIntent::kRequireDirect ||
+      resp.intent == HdIntent::kRequireRelay) {
+    peer_view.pinned_intent = resp.intent;
+  } else if (resp.intent == HdIntent::kPreferRelay) {
+    // Prefer-relay doesn't pin but narrows to relayed on
+    // conflict.
+    peer_view.allowed = kModeRelayed;
+  }
+
+  HdDecision dec = HdResolve(
+      HdLayerView{}, HdLayerView{}, HdLayerView{},
+      peer_view, entry.initiator_view, HdCapability{},
+      entry.target_relay_id);
+
+  HdAuditRecordDecision(&cp->audit_ring,
+                        entry.initiator_key,
+                        entry.target_key,
+                        entry.initiator_view, dec);
+
+  SendOpenResultAndCleanup(cp, slot, dec.mode,
+                           dec.deny_reason,
+                           dec.sub_reason);
 }
 
 }  // namespace hyper_derp

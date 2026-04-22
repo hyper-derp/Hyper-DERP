@@ -17,7 +17,10 @@
 #include <cstdint>
 #include <mutex>
 
+#include "hyper_derp/hd_audit.h"
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_relay_table.h"
+#include "hyper_derp/hd_resolver.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/protocol.h"
 #include "hyper_derp/types.h"
@@ -32,6 +35,16 @@ inline constexpr int kCpMaxWatchers = 64;
 
 /// Per-pipe read buffer size.
 inline constexpr int kPipeBufSize = 65536 + 64;
+
+/// Maximum concurrent OpenConnection round-trips.
+inline constexpr int kCpMaxOpenConns = 256;
+
+/// Maximum outstanding per initiator. Rejects the 17th.
+inline constexpr int kCpMaxOpenConnsPerPeer = 16;
+
+/// Timeout for target response.
+inline constexpr uint64_t kCpOpenConnTimeoutNs =
+    5'000'000'000ULL;
 
 /// Pipe message header: [4B fd][1B type][4B len].
 inline constexpr int kPipeMsgHeader = 9;
@@ -89,6 +102,26 @@ struct ControlPlane {
   int route_announce_fd = -1;
   // Relay routing table (owned by Server).
   RelayTable* relay_table = nullptr;
+
+  // -- Routing policy (Phase 2) ---------------------
+  HdPeerRegistry* hd_peers = nullptr;
+  HdAuditRing audit_ring;
+  struct OpenConnEntry {
+    uint8_t in_use = 0;
+    uint64_t correlation_id = 0;
+    int initiator_fd = -1;
+    int target_fd = -1;
+    Key initiator_key{};
+    Key target_key{};
+    HdClientView initiator_view;
+    uint16_t target_relay_id = 0;
+    uint64_t deadline_ns = 0;
+  };
+  OpenConnEntry open_conns[kCpMaxOpenConns]{};
+  // Count of outstanding entries per initiator_fd.
+  int open_conn_per_peer[kMaxFd]{};
+  // Timerfd firing every second for deadline scan.
+  int open_conn_timer_fd = -1;
 };
 
 /// @brief Initialize the control plane.
@@ -179,6 +212,30 @@ void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
 /// @param rt Relay routing table (owned by Server).
 void CpEnableFleetRouting(ControlPlane* cp,
                           RelayTable* rt);
+
+/// @brief Enable routing-policy handling on the control
+///   plane. Connects the HD peer registry and creates the
+///   deadline-scan timerfd. Must be called before
+///   CpRunLoop.
+/// @param cp Control plane.
+/// @param hd_peers HD peer registry.
+void CpEnableRoutingPolicy(ControlPlane* cp,
+                           HdPeerRegistry* hd_peers);
+
+/// @brief Process an OpenConnection from an initiator.
+/// @param cp Control plane.
+/// @param fd Initiator's fd.
+/// @param payload OpenConnection payload.
+/// @param payload_len Payload length.
+void CpHandleOpenConnection(ControlPlane* cp, int fd,
+                            const uint8_t* payload,
+                            int payload_len);
+
+/// @brief Process an IncomingConnResponse from the
+///   target peer of an earlier OpenConnection.
+void CpHandleIncomingConnResponse(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len);
 
 /// @brief Process a RouteAnnounce from a neighbor relay.
 ///

@@ -771,6 +771,11 @@ auto ServerInit(Server* server,
                    config->hd_relay_id);
     }
 
+    // Phase 2: enable routing-policy resolver on the
+    // control plane.
+    CpEnableRoutingPolicy(&server->control_plane,
+                          &server->hd_peers);
+
     spdlog::info("HD protocol enabled (mode={}, "
                  "relay_id={})",
                  config->hd_enroll_mode ==

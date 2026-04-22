@@ -1309,8 +1309,11 @@ static void DispatchHdFrame(Worker* w, Peer* peer,
         EnqueueSend(w, dst, buf, frame_len);
       }
     }
-  } else if (hd_type == HdFrameType::kRouteAnnounce) {
-    // Forward RouteAnnounce to control plane.
+  } else if (hd_type == HdFrameType::kRouteAnnounce ||
+             hd_type == HdFrameType::kOpenConnection ||
+             hd_type ==
+                 HdFrameType::kIncomingConnResponse) {
+    // Forward to control plane.
     // Pipe format: [4B fd BE][1B type][4B len BE][payload].
     uint8_t fd_buf[4];
     fd_buf[0] = static_cast<uint8_t>(peer->fd >> 24);
