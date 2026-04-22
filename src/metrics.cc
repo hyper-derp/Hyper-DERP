@@ -35,6 +35,7 @@ struct MetricsServer {
   Ctx* ctx;
   HdPeerRegistry* hd_peers;
   HdServerCounters hd_counters;
+  HdAuditRing* audit_ring = nullptr;
   std::chrono::steady_clock::time_point start_time;
 };
 
@@ -788,6 +789,61 @@ static void RegisterHdRoutes(MetricsServer* ms) {
     }
     return crow::response(200, j);
   });
+
+  // Routing-policy audit records (newest first).
+  CROW_ROUTE(ms->app, "/api/v1/audit/recent")
+  ([ms](const crow::request& req) {
+    if (!ms->audit_ring) {
+      return crow::response(503,
+                            "audit ring not wired");
+    }
+    int limit = 100;
+    auto qs_limit = req.url_params.get("limit");
+    if (qs_limit) {
+      try {
+        limit = std::stoi(qs_limit);
+      } catch (...) {}
+    }
+    if (limit <= 0) limit = 1;
+    if (limit > kHdAuditRingSize) {
+      limit = kHdAuditRingSize;
+    }
+    auto qs_peer = req.url_params.get("peer");
+    Key filter_key{};
+    bool have_filter = false;
+    if (qs_peer) {
+      if (ParseKeyString(qs_peer, &filter_key) !=
+          KeyPrefix::kInvalid) {
+        have_filter = true;
+      } else {
+        return crow::response(400, "invalid peer key");
+      }
+    }
+    std::vector<HdAuditRecord> snap(limit);
+    int n = HdAuditSnapshot(ms->audit_ring, snap.data(),
+                            limit);
+    crow::json::wvalue::list arr;
+    for (int i = 0; i < n; i++) {
+      const auto& r = snap[i];
+      if (have_filter &&
+          std::memcmp(r.client_key.data(),
+                      filter_key.data(), kKeySize) != 0 &&
+          std::memcmp(r.target_key.data(),
+                      filter_key.data(), kKeySize) != 0) {
+        continue;
+      }
+      // Parse the LD-JSON line back to crow JSON so the
+      // top-level response is a proper JSON array rather
+      // than a string blob.
+      std::string line = HdAuditToJson(r);
+      arr.push_back(
+          crow::json::load(line.data(), line.size()));
+    }
+    crow::json::wvalue j;
+    j["count"] = static_cast<int>(arr.size());
+    j["records"] = std::move(arr);
+    return crow::response(200, j);
+  });
 }
 
 // -- HTMX admin UI -----------------------------------------------------------
@@ -830,6 +886,12 @@ button{font:inherit;padding:.2em .6em;margin-right:.3em;
 <div id="relay-status" hx-get="/admin/status"
   hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 </div>
+<nav style="margin-bottom:1em">
+<a href="#" hx-get="/admin/peers" hx-target="#peers"
+  hx-swap="innerHTML">peers</a> |
+<a href="#" hx-get="/admin/audit" hx-target="#peers"
+  hx-swap="innerHTML">audit</a>
+</nav>
 <div id="peers" hx-get="/admin/peers"
   hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
 </body>
@@ -1039,6 +1101,78 @@ static void RegisterAdminRoutes(MetricsServer* ms) {
   CROW_ROUTE(ms->app, "/admin/peers")
   ([ms]() {
     crow::response r(200, RenderPeerList(ms->hd_peers));
+    r.add_header("Content-Type", "text/html");
+    return r;
+  });
+
+  CROW_ROUTE(ms->app, "/admin/audit")
+  ([ms]() {
+    std::string html;
+    html.reserve(8192);
+    html += "<table><thead><tr><th>ts</th>"
+            "<th>client</th><th>target</th>"
+            "<th>intent</th><th>decision</th>"
+            "<th>reason</th></tr></thead><tbody>";
+    if (!ms->audit_ring) {
+      html += "<tr><td colspan=\"6\" class=\"muted\">"
+              "audit ring not wired</td></tr>";
+    } else {
+      std::vector<HdAuditRecord> snap(50);
+      int n = HdAuditSnapshot(ms->audit_ring,
+                              snap.data(), 50);
+      if (n == 0) {
+        html += "<tr><td colspan=\"6\" "
+                "class=\"muted\">no decisions "
+                "yet</td></tr>";
+      }
+      for (int i = 0; i < n; i++) {
+        const auto& r = snap[i];
+        time_t secs = static_cast<time_t>(
+            r.ts_ns / 1000000000ULL);
+        char ts[32];
+        struct tm tmv{};
+        gmtime_r(&secs, &tmv);
+        strftime(ts, sizeof(ts), "%H:%M:%S", &tmv);
+        static const char* kIntent[] = {
+            "prefer_direct", "require_direct",
+            "prefer_relay", "require_relay"};
+        static const char* kMode[] = {"denied",
+                                       "direct",
+                                       "relayed"};
+        char ck[kKeySize * 2 + 1];
+        char tk[kKeySize * 2 + 1];
+        KeyToHex(r.client_key, ck);
+        KeyToHex(r.target_key, tk);
+        html += "<tr><td>";
+        html += ts;
+        html += "</td><td class=\"key\">";
+        html += std::string(ck, 16);
+        html += "...</td><td class=\"key\">";
+        html += std::string(tk, 16);
+        html += "...</td><td>";
+        html += kIntent[
+            static_cast<int>(r.client_intent) & 3];
+        html += "</td><td><span class=\"state ";
+        html += kMode[
+            static_cast<int>(r.mode) & 3];
+        html += "\">";
+        html += kMode[
+            static_cast<int>(r.mode) & 3];
+        html += "</span></td><td>";
+        if (r.deny_reason != HdDenyReason::kNone) {
+          html += "0x";
+          char hex[8];
+          snprintf(hex, sizeof(hex), "%04x",
+                   static_cast<int>(r.deny_reason));
+          html += hex;
+        } else {
+          html += "—";
+        }
+        html += "</td></tr>";
+      }
+    }
+    html += "</tbody></table>";
+    crow::response r(200, html);
     r.add_header("Content-Type", "text/html");
     return r;
   });
@@ -1278,7 +1412,8 @@ static void RegisterAdminRoutes(MetricsServer* ms) {
 MetricsServer* MetricsStart(const MetricsConfig& config,
                             Ctx* ctx,
                             HdPeerRegistry* hd_peers,
-                            HdServerCounters hd_counters) {
+                            HdServerCounters hd_counters,
+                            HdAuditRing* audit_ring) {
   if (config.port == 0) {
     return nullptr;
   }
@@ -1287,6 +1422,7 @@ MetricsServer* MetricsStart(const MetricsConfig& config,
   ms->ctx = ctx;
   ms->hd_peers = hd_peers;
   ms->hd_counters = hd_counters;
+  ms->audit_ring = audit_ring;
   ms->start_time = std::chrono::steady_clock::now();
 
   RegisterRoutes(ms, config.enable_debug);

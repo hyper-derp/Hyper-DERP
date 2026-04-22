@@ -968,7 +968,10 @@ auto ServerRun(Server* server,
   server->metrics_server = MetricsStart(
       server->config.metrics, &server->data_plane,
       server->hd_enabled ? &server->hd_peers : nullptr,
-      hd_counters);
+      hd_counters,
+      server->hd_enabled
+          ? &server->control_plane.audit_ring
+          : nullptr);
 
   // Connect to seed relays in a background thread.
   if (!server->config.seed_relays.empty() &&
