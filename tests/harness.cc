@@ -146,7 +146,8 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
                    uint16_t seed_port,
                    const char* local_fleet_id,
                    const char* accept_fleet_id,
-                   const char* einheit_ctl) {
+                   const char* einheit_ctl,
+                   const char* einheit_pub) {
   // Generate once in the parent so every forked child
   // reads the same paths (static locals don't survive the
   // fork, but the files on disk do).
@@ -201,6 +202,9 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
     }
     if (einheit_ctl && einheit_ctl[0] != '\0') {
       config.einheit_ctl_endpoint = einheit_ctl;
+    }
+    if (einheit_pub && einheit_pub[0] != '\0') {
+      config.einheit_pub_endpoint = einheit_pub;
     }
 
     Server server;

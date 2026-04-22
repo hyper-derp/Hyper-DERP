@@ -150,6 +150,64 @@ TEST_F(EinheitChannelTest, RelayInitReturnsKey) {
             std::string::npos);
 }
 
+TEST_F(EinheitChannelTest, PubSocketStreamsMetrics) {
+  // Re-launch a relay with the PUB endpoint enabled; the
+  // default SetUp() skips it because of the ipc-path
+  // collision concern on shared test runners.
+  test::StopRelay(relay_pid_);
+  relay_pid_ = -1;
+
+  char ipc_ctl[128], ipc_pub[128];
+  std::snprintf(ipc_ctl, sizeof(ipc_ctl),
+                "ipc:///tmp/einheit-hd-%d-pub.ctl",
+                getpid());
+  std::snprintf(ipc_pub, sizeof(ipc_pub),
+                "ipc:///tmp/einheit-hd-%d-pub.pub",
+                getpid());
+  ctl_endpoint_ = ipc_ctl;
+
+  port_ = test::FindFreePort();
+  ASSERT_NE(port_, 0);
+  relay_pid_ = test::StartHdRelay(
+      port_, 1, relay_key_, 0, 0, "", 0, "", "",
+      ipc_ctl, ipc_pub);
+  ASSERT_GT(relay_pid_, 0);
+  ASSERT_EQ(test::WaitRelayReady(port_, 5000), 0);
+  // Channel + PUB bind happen in the child; wait for it.
+  usleep(600000);
+
+  zmq::context_t ctx{1};
+  zmq::socket_t sub(ctx, zmq::socket_type::sub);
+  sub.set(zmq::sockopt::rcvtimeo, 3000);
+  sub.set(zmq::sockopt::subscribe, "state.");
+  sub.connect(ipc_pub);
+
+  // Give SUB a moment to complete its handshake.
+  usleep(300000);
+
+  zmq::message_t topic;
+  auto got = sub.recv(topic, zmq::recv_flags::none);
+  ASSERT_TRUE(got.has_value())
+      << "expected a metrics event within 3s";
+  std::string topic_str(
+      static_cast<const char*>(topic.data()),
+      topic.size());
+  EXPECT_TRUE(topic_str.starts_with("state.metrics."));
+
+  zmq::message_t body;
+  got = sub.recv(body, zmq::recv_flags::none);
+  ASSERT_TRUE(got.has_value());
+
+  std::span<const std::uint8_t> view(
+      static_cast<const std::uint8_t*>(body.data()),
+      body.size());
+  auto decoded = einheit::DecodeEventBody(topic_str, view);
+  ASSERT_TRUE(decoded.has_value())
+      << decoded.error().message;
+  EXPECT_EQ(decoded->topic, topic_str);
+  EXPECT_FALSE(decoded->timestamp.empty());
+}
+
 TEST_F(EinheitChannelTest, PeerApproveRejectsBadKey) {
   einheit::Request req;
   req.id = "t5";

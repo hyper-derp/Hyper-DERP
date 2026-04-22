@@ -28,6 +28,21 @@ EinheitChannel* EinheitChannelStart(
 /// Stop and free the channel.
 void EinheitChannelStop(EinheitChannel* ch);
 
+/// Publish one event on the PUB socket.
+///
+/// Two ZMQ frames: `topic` then a MessagePack Event body
+/// containing the current timestamp and `data`. Safe to
+/// call from any thread; serialised internally so ZMQ's
+/// single-writer rule is respected.
+/// @param ch Channel (no-op on nullptr or if PUB is
+///   disabled).
+/// @param topic Hierarchical topic, e.g.
+///   "state.peers.ck_<hex>".
+/// @param data UTF-8 event payload (may be empty).
+void EinheitPublish(EinheitChannel* ch,
+                    const std::string& topic,
+                    const std::string& data);
+
 }  // namespace hyper_derp
 
 #endif  // INCLUDE_HYPER_DERP_EINHEIT_CHANNEL_H_

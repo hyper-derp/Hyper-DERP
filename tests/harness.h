@@ -61,7 +61,8 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
                    uint16_t seed_port = 0,
                    const char* local_fleet_id = "",
                    const char* accept_fleet_id = "",
-                   const char* einheit_ctl = "");
+                   const char* einheit_ctl = "",
+                   const char* einheit_pub = "");
 
 /// @brief Wait until relay accepts TCP connections.
 /// @param port Relay port.

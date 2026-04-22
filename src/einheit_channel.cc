@@ -10,9 +10,11 @@
 #include "hyper_derp/einheit_channel.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <format>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -382,6 +384,18 @@ void ShowFleet(Server* s, const Request& /*req*/,
   SetBody(r, b);
 }
 
+// Forward-declared in the header; emits `state.peers.*`
+// events from handler call sites.
+void EmitPeerEvent(Server* s, const std::string& key_ck,
+                   const char* state) {
+  if (!s->einheit_channel) return;
+  std::string body = std::format(
+      "key={}\nstate={}\n", key_ck, state);
+  EinheitPublish(s->einheit_channel,
+                  std::string("state.peers.") + key_ck,
+                  body);
+}
+
 // -- Peer lifecycle --------------------------------------
 
 void PeerApprove(Server* s, const Request& req,
@@ -408,6 +422,7 @@ void PeerApprove(Server* s, const Request& req,
     DpAddPeer(&s->data_plane, fd, k, PeerProtocol::kHd,
               pid);
   }
+  EmitPeerEvent(s, KeyToCkString(k), "approved");
   SetBody(r, std::format("status=approved\nkey={}\n",
                           KeyToCkString(k)));
 }
@@ -432,6 +447,7 @@ void PeerDeny(Server* s, const Request& req,
     HdSendDenied(fd, 0, "denied by admin");
     ::close(fd);
   }
+  EmitPeerEvent(s, KeyToCkString(k), "denied");
   SetBody(r, std::format("status=denied\nkey={}\n",
                           KeyToCkString(k)));
 }
@@ -456,6 +472,7 @@ void PeerRevoke(Server* s, const Request& req,
     DpRemovePeer(&s->data_plane, k);
     ::close(fd);
   }
+  EmitPeerEvent(s, KeyToCkString(k), "revoked");
   SetBody(r, std::format("status=revoked\nkey={}\n",
                           KeyToCkString(k)));
 }
@@ -653,11 +670,39 @@ Registry MakeRegistry() {
 struct EinheitChannel {
   zmq::context_t zmq_ctx{1};
   std::thread thread;
+  std::thread metrics_thread;
   std::atomic<bool> running{true};
   Server* server = nullptr;
   Registry registry;
   std::string pub_endpoint;
+  // PUB socket + guarding mutex. PUB is a single-writer
+  // socket; any caller of EinheitPublish serialises on
+  // this mutex.
+  std::unique_ptr<zmq::socket_t> pub_sock;
+  std::mutex pub_mu;
 };
+
+namespace {
+
+std::string NowRfc3339() {
+  auto now = std::chrono::system_clock::now();
+  auto secs =
+      std::chrono::system_clock::to_time_t(now);
+  auto ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          now.time_since_epoch())
+          .count() %
+      1000;
+  char buf[40];
+  struct tm tmv{};
+  gmtime_r(&secs, &tmv);
+  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S",
+                &tmv);
+  return std::format("{}.{:03d}Z", buf,
+                     static_cast<int>(ms));
+}
+
+}  // namespace
 
 namespace {
 
@@ -734,6 +779,39 @@ void RunLoop(EinheitChannel* ch,
 
 }  // namespace
 
+void MetricsPublishLoop(EinheitChannel* ch) {
+  while (ch->running.load(std::memory_order_acquire)) {
+    if (ch->server) {
+      uint64_t rx = 0, tx = 0;
+      int peers = 0;
+      for (int i = 0;
+           i < ch->server->data_plane.num_workers; i++) {
+        auto* w = ch->server->data_plane.workers[i];
+        if (!w) continue;
+        rx += __atomic_load_n(&w->stats.recv_bytes,
+                               __ATOMIC_RELAXED);
+        tx += __atomic_load_n(&w->stats.send_bytes,
+                               __ATOMIC_RELAXED);
+        for (int j = 0; j < kHtCapacity; j++) {
+          if (w->ht[j].occupied == 1) peers++;
+        }
+      }
+      EinheitPublish(ch, "state.metrics.recv_bytes",
+                      std::to_string(rx));
+      EinheitPublish(ch, "state.metrics.send_bytes",
+                      std::to_string(tx));
+      EinheitPublish(ch, "state.metrics.peers_active",
+                      std::to_string(peers));
+    }
+    for (int i = 0;
+         i < 10 && ch->running.load(
+                       std::memory_order_acquire);
+         i++) {
+      usleep(100000);
+    }
+  }
+}
+
 EinheitChannel* EinheitChannelStart(
     const std::string& ctl_endpoint,
     const std::string& pub_endpoint, Server* server) {
@@ -741,8 +819,24 @@ EinheitChannel* EinheitChannelStart(
   ch->server = server;
   ch->registry = MakeRegistry();
   ch->pub_endpoint = pub_endpoint;
+  if (!pub_endpoint.empty()) {
+    try {
+      ch->pub_sock = std::make_unique<zmq::socket_t>(
+          ch->zmq_ctx, zmq::socket_type::pub);
+      ch->pub_sock->set(zmq::sockopt::linger, 0);
+      ch->pub_sock->bind(pub_endpoint);
+    } catch (const zmq::error_t& e) {
+      spdlog::warn("einheit pub bind {} failed: {}",
+                   pub_endpoint, e.what());
+      ch->pub_sock.reset();
+    }
+  }
   try {
     ch->thread = std::thread(RunLoop, ch, ctl_endpoint);
+    if (ch->pub_sock) {
+      ch->metrics_thread =
+          std::thread(MetricsPublishLoop, ch);
+    }
   } catch (const std::exception& e) {
     spdlog::error("einheit channel start: {}", e.what());
     delete ch;
@@ -755,7 +849,33 @@ void EinheitChannelStop(EinheitChannel* ch) {
   if (!ch) return;
   ch->running.store(false, std::memory_order_release);
   if (ch->thread.joinable()) ch->thread.join();
+  if (ch->metrics_thread.joinable()) {
+    ch->metrics_thread.join();
+  }
   delete ch;
+}
+
+void EinheitPublish(EinheitChannel* ch,
+                    const std::string& topic,
+                    const std::string& data) {
+  if (!ch || !ch->pub_sock) return;
+  einheit::Event ev;
+  ev.topic = topic;
+  ev.timestamp = NowRfc3339();
+  ev.data.assign(data.begin(), data.end());
+  auto encoded = einheit::EncodeEventBody(ev);
+  if (!encoded) return;
+  std::lock_guard lk(ch->pub_mu);
+  try {
+    zmq::message_t tframe(topic.data(), topic.size());
+    ch->pub_sock->send(tframe, zmq::send_flags::sndmore);
+    zmq::message_t bframe(encoded->data(),
+                          encoded->size());
+    ch->pub_sock->send(bframe, zmq::send_flags::none);
+  } catch (const zmq::error_t&) {
+    // Best-effort publish; nothing to do on transient
+    // failure.
+  }
 }
 
 }  // namespace hyper_derp
