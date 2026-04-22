@@ -3,6 +3,10 @@
 
 #include "hyper_derp/hd_audit.h"
 
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <cstdio>
 #include <cstring>
 
 #include <gtest/gtest.h>
@@ -97,6 +101,84 @@ TEST(HdAuditTest, JsonNoReasonWhenPermitted) {
   rec.deny_reason = HdDenyReason::kNone;
   std::string j = HdAuditToJson(rec);
   EXPECT_EQ(j.find("\"reason\""), std::string::npos);
+}
+
+TEST(HdAuditFlusherTest, WritesLdJsonToFile) {
+  char path[] = "/tmp/hd_audit_XXXXXX";
+  int tfd = mkstemp(path);
+  ASSERT_GE(tfd, 0);
+  close(tfd);
+  std::string file = path;
+
+  HdAuditRing ring;
+  HdAuditInit(&ring);
+  HdAuditFlusher flusher;
+  HdAuditFlusherStart(&flusher, &ring, file, 0, 3);
+
+  Key c{}, t{};
+  c[0] = 0x11;
+  t[0] = 0x22;
+  HdClientView cv;
+  HdDecision d;
+  d.mode = HdConnMode::kRelayed;
+  HdAuditRecordDecision(&ring, c, t, cv, d);
+
+  // Let the flusher pick it up.
+  for (int i = 0; i < 50; i++) {
+    usleep(10000);
+    uint64_t idx = ring.flush_idx.load();
+    if (idx >= 1) break;
+  }
+  HdAuditFlusherStop(&flusher);
+
+  FILE* f = std::fopen(file.c_str(), "r");
+  ASSERT_NE(f, nullptr);
+  char buf[1024] = {};
+  std::fread(buf, 1, sizeof(buf) - 1, f);
+  std::fclose(f);
+  std::string s = buf;
+  EXPECT_NE(s.find("\"decision\":\"relayed\""),
+            std::string::npos);
+  EXPECT_EQ(s.back(), '\n');
+  unlink(file.c_str());
+}
+
+TEST(HdAuditFlusherTest, RotatesAtThreshold) {
+  char path[] = "/tmp/hd_audit_rot_XXXXXX";
+  int tfd = mkstemp(path);
+  ASSERT_GE(tfd, 0);
+  close(tfd);
+  std::string file = path;
+  ::unlink(file.c_str());
+
+  HdAuditRing ring;
+  HdAuditInit(&ring);
+  HdAuditFlusher flusher;
+  // Tiny cap forces rotation after one record.
+  HdAuditFlusherStart(&flusher, &ring, file, 256, 3);
+
+  Key c{}, t{};
+  HdClientView cv;
+  HdDecision d;
+  d.mode = HdConnMode::kDirect;
+  for (int i = 0; i < 5; i++) {
+    c[0] = static_cast<uint8_t>(i);
+    HdAuditRecordDecision(&ring, c, t, cv, d);
+  }
+  for (int i = 0; i < 100; i++) {
+    usleep(10000);
+    if (ring.flush_idx.load() >= 5) break;
+  }
+  HdAuditFlusherStop(&flusher);
+
+  struct stat st{};
+  EXPECT_EQ(::stat(file.c_str(), &st), 0);
+  std::string rotated = file + ".1";
+  EXPECT_EQ(::stat(rotated.c_str(), &st), 0);
+
+  ::unlink(file.c_str());
+  ::unlink(rotated.c_str());
+  ::unlink((file + ".2").c_str());
 }
 
 }  // namespace

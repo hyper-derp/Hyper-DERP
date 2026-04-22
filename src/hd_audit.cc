@@ -3,9 +3,19 @@
 
 #include "hyper_derp/hd_audit.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <time.h>
+#include <unistd.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <sstream>
+
+#include <spdlog/spdlog.h>
 
 #include "hyper_derp/key_format.h"
 
@@ -181,6 +191,145 @@ std::string HdAuditToJson(const HdAuditRecord& rec) {
   }
   o << ']' << '}';
   return o.str();
+}
+
+// -- File sink + rotation -----------------------------
+
+namespace {
+
+void RotateFiles(HdAuditFlusher* f) {
+  // Unlink the oldest, shift 1..N-1 up by one, then
+  // rename the active file to .1.
+  std::string oldest =
+      f->path + "." + std::to_string(f->keep);
+  ::unlink(oldest.c_str());
+  for (int i = f->keep - 1; i >= 1; i--) {
+    std::string from =
+        f->path + "." + std::to_string(i);
+    std::string to =
+        f->path + "." + std::to_string(i + 1);
+    ::rename(from.c_str(), to.c_str());
+  }
+  std::string first = f->path + ".1";
+  ::rename(f->path.c_str(), first.c_str());
+}
+
+int OpenForAppend(const std::string& path,
+                  uint64_t* current_bytes) {
+  int fd = ::open(path.c_str(),
+                  O_WRONLY | O_APPEND | O_CREAT,
+                  0600);
+  if (fd < 0) return -1;
+  struct stat st{};
+  if (::fstat(fd, &st) == 0) {
+    *current_bytes = static_cast<uint64_t>(st.st_size);
+  } else {
+    *current_bytes = 0;
+  }
+  return fd;
+}
+
+bool WriteAllBytes(int fd, const char* data, size_t n) {
+  size_t total = 0;
+  while (total < n) {
+    ssize_t w = ::write(fd, data + total, n - total);
+    if (w < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    if (w == 0) return false;
+    total += static_cast<size_t>(w);
+  }
+  return true;
+}
+
+void FlushOnce(HdAuditFlusher* f) {
+  uint64_t write_idx =
+      f->ring->write_idx.load(std::memory_order_acquire);
+  uint64_t flush_idx = f->ring->flush_idx.load(
+      std::memory_order_relaxed);
+  // Drop any records we've already been lapped on.
+  if (write_idx - flush_idx > kHdAuditRingSize) {
+    flush_idx = write_idx - kHdAuditRingSize;
+  }
+  while (flush_idx < write_idx) {
+    const HdAuditRecord& rec =
+        f->ring->slots[flush_idx % kHdAuditRingSize];
+    std::string line = HdAuditToJson(rec);
+    line.push_back('\n');
+    if (f->max_bytes > 0 && f->fd >= 0 &&
+        f->current_bytes + line.size() >
+            f->max_bytes) {
+      ::close(f->fd);
+      f->fd = -1;
+      RotateFiles(f);
+      f->fd = OpenForAppend(f->path, &f->current_bytes);
+      if (f->fd < 0) break;
+    }
+    if (f->fd < 0) break;
+    if (!WriteAllBytes(f->fd, line.data(),
+                       line.size())) {
+      spdlog::warn("audit log write failed: {}",
+                   strerror(errno));
+      break;
+    }
+    f->current_bytes += line.size();
+    flush_idx++;
+  }
+  f->ring->flush_idx.store(flush_idx,
+                           std::memory_order_release);
+}
+
+void FlushLoop(HdAuditFlusher* f) {
+  while (f->running.load(std::memory_order_acquire)) {
+    FlushOnce(f);
+    // Cheap sleep; not latency-critical.
+    usleep(100000);
+  }
+  // Final drain on stop.
+  FlushOnce(f);
+}
+
+}  // namespace
+
+void HdAuditFlusherStart(HdAuditFlusher* flusher,
+                         HdAuditRing* ring,
+                         const std::string& path,
+                         uint64_t max_bytes,
+                         int keep) {
+  flusher->ring = ring;
+  flusher->path = path;
+  flusher->max_bytes = max_bytes;
+  flusher->keep = keep > 0 ? keep : 10;
+  flusher->fd = -1;
+  flusher->current_bytes = 0;
+  if (path.empty()) return;
+  flusher->fd =
+      OpenForAppend(path, &flusher->current_bytes);
+  if (flusher->fd < 0) {
+    spdlog::error("audit log open {}: {}", path,
+                  strerror(errno));
+    return;
+  }
+  // Skip any pre-existing ring contents: we only want
+  // decisions made after startup.
+  flusher->ring->flush_idx.store(
+      flusher->ring->write_idx.load(
+          std::memory_order_acquire),
+      std::memory_order_release);
+  flusher->running.store(1, std::memory_order_release);
+  flusher->thread = std::thread(FlushLoop, flusher);
+}
+
+void HdAuditFlusherStop(HdAuditFlusher* flusher) {
+  flusher->running.store(0, std::memory_order_release);
+  if (flusher->thread.joinable()) {
+    flusher->thread.join();
+  }
+  if (flusher->fd >= 0) {
+    ::close(flusher->fd);
+    flusher->fd = -1;
+  }
 }
 
 }  // namespace hyper_derp

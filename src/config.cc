@@ -287,6 +287,27 @@ auto LoadConfig(const char* path, ServerConfig* config)
         ReadStr(h["fleet_policy_path"],
                 &config->hd_fleet_policy_path);
       }
+      if (h.has_child("audit_log_path")) {
+        ReadStr(h["audit_log_path"],
+                &config->hd_audit_log_path);
+      }
+      if (h.has_child("audit_log_max_bytes")) {
+        int v = 0;
+        if (!ReadInt(h["audit_log_max_bytes"],
+                     "hd.audit_log_max_bytes", &v, 0,
+                     2'000'000'000, &err))
+          return std::unexpected(err);
+        config->hd_audit_log_max_bytes =
+            static_cast<uint64_t>(v);
+      }
+      if (h.has_child("audit_log_keep")) {
+        int v = 10;
+        if (!ReadInt(h["audit_log_keep"],
+                     "hd.audit_log_keep", &v, 1, 100,
+                     &err))
+          return std::unexpected(err);
+        config->hd_audit_log_keep = v;
+      }
       if (h.has_child("relay_policy")) {
         auto rp = h["relay_policy"];
         if (rp.is_map()) {

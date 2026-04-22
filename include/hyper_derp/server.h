@@ -130,6 +130,14 @@ struct ServerConfig {
   /// Path to a fleet-policy YAML file. Empty = no fleet
   /// policy configured.
   std::string hd_fleet_policy_path;
+  /// Path to the routing-policy audit log. Empty = no
+  /// file sink (ring-only, still queryable via REST).
+  std::string hd_audit_log_path;
+  /// Rotate audit log when it reaches this size, keeping
+  /// `hd_audit_log_keep` rotated files.
+  uint64_t hd_audit_log_max_bytes = 100 * 1024 * 1024;
+  /// Number of rotated files to keep (.1..N).
+  int hd_audit_log_keep = 10;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").

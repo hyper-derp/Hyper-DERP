@@ -420,6 +420,7 @@ void CpInit(ControlPlane* cp, Ctx* dp) {
 }
 
 void CpDestroy(ControlPlane* cp) {
+  HdAuditFlusherStop(&cp->audit_flusher);
   if (cp->open_conn_timer_fd >= 0) {
     close(cp->open_conn_timer_fd);
     cp->open_conn_timer_fd = -1;
@@ -967,6 +968,14 @@ void SendOpenResultAndCleanup(
 }
 
 }  // namespace
+
+void CpEnableAuditFile(ControlPlane* cp,
+                       const std::string& path,
+                       uint64_t max_bytes, int keep) {
+  HdAuditFlusherStart(&cp->audit_flusher,
+                      &cp->audit_ring, path, max_bytes,
+                      keep);
+}
 
 void CpEnableRoutingPolicy(ControlPlane* cp,
                            HdPeerRegistry* hd_peers) {

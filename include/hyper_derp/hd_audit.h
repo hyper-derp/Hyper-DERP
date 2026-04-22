@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <thread>
 
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/hd_resolver.h"
@@ -44,13 +45,20 @@ struct HdAuditRecord {
 /// Lock-free single-producer-multiple-consumer ring.
 /// Writes come from the server's control plane thread
 /// (single producer). Readers are the metrics HTTP
-/// server (may be multiple, all read-only).
+/// server (may be multiple, all read-only) and the
+/// background flusher (single reader — kept separate so
+/// it doesn't race with HTTP snapshots).
 struct HdAuditRing {
   HdAuditRecord slots[kHdAuditRingSize]{};
   // `write_idx` is the sequence number of the next slot
   // to write. Monotonic, wraps after 2^64 writes (never
   // in practice).
   std::atomic<uint64_t> write_idx{0};
+  // Next sequence number the flusher has not yet sent to
+  // disk. Lags behind `write_idx`. Under normal load the
+  // gap is small; on startup with no file sink it equals
+  // write_idx and no flushing happens.
+  std::atomic<uint64_t> flush_idx{0};
 };
 
 /// @brief Initialize the audit ring. Call once at
@@ -78,6 +86,38 @@ int HdAuditSnapshot(const HdAuditRing* ring,
 /// @brief Serializes a record to a single-line JSON
 ///   string matching the schema in HD_ROUTING_POLICY.
 std::string HdAuditToJson(const HdAuditRecord& rec);
+
+/// @brief Background flusher state. Owns the file fd +
+///   rotation counters + dedicated thread.
+struct HdAuditFlusher {
+  HdAuditRing* ring = nullptr;
+  std::string path;
+  uint64_t max_bytes = 0;
+  int keep = 10;
+  std::thread thread;
+  std::atomic<int> running{0};
+  int fd = -1;
+  uint64_t current_bytes = 0;
+};
+
+/// @brief Starts the background flusher if `path` is
+///   non-empty. Silently no-ops on empty path.
+/// @param flusher State struct (owned by caller).
+/// @param ring Audit ring to drain from.
+/// @param path Target file path (appended with O_APPEND).
+/// @param max_bytes Rotate when the active file reaches
+///   this size. 0 disables rotation.
+/// @param keep Number of rotated files to keep
+///   (audit.log.1 .. audit.log.N). Excess is unlinked.
+void HdAuditFlusherStart(HdAuditFlusher* flusher,
+                         HdAuditRing* ring,
+                         const std::string& path,
+                         uint64_t max_bytes,
+                         int keep);
+
+/// @brief Stops and joins the flusher thread, flushing
+///   any remaining buffered records.
+void HdAuditFlusherStop(HdAuditFlusher* flusher);
 
 }  // namespace hyper_derp
 

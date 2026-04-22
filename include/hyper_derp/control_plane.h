@@ -106,6 +106,7 @@ struct ControlPlane {
   // -- Routing policy (Phase 2) ---------------------
   HdPeerRegistry* hd_peers = nullptr;
   HdAuditRing audit_ring;
+  HdAuditFlusher audit_flusher;
   struct OpenConnEntry {
     uint8_t in_use = 0;
     uint64_t correlation_id = 0;
@@ -221,6 +222,18 @@ void CpEnableFleetRouting(ControlPlane* cp,
 /// @param hd_peers HD peer registry.
 void CpEnableRoutingPolicy(ControlPlane* cp,
                            HdPeerRegistry* hd_peers);
+
+/// @brief Start the audit log file-sink flusher thread.
+///   Must be called after CpEnableRoutingPolicy; no-ops
+///   on empty path.
+/// @param cp Control plane.
+/// @param path Target file path; empty disables the sink.
+/// @param max_bytes Rotate at this size (0 = no
+///   rotation).
+/// @param keep Number of rotated files to keep.
+void CpEnableAuditFile(ControlPlane* cp,
+                       const std::string& path,
+                       uint64_t max_bytes, int keep);
 
 /// @brief Process an OpenConnection from an initiator.
 /// @param cp Control plane.

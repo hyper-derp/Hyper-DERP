@@ -808,6 +808,17 @@ auto ServerInit(Server* server,
     CpEnableRoutingPolicy(&server->control_plane,
                           &server->hd_peers);
 
+    // Phase 4.2: optional LD-JSON audit log file sink.
+    if (!config->hd_audit_log_path.empty()) {
+      CpEnableAuditFile(&server->control_plane,
+                        config->hd_audit_log_path,
+                        config->hd_audit_log_max_bytes,
+                        config->hd_audit_log_keep);
+      spdlog::info("audit log -> {} (rotate at {}B)",
+                   config->hd_audit_log_path,
+                   config->hd_audit_log_max_bytes);
+    }
+
     spdlog::info("HD protocol enabled (mode={}, "
                  "relay_id={})",
                  config->hd_enroll_mode ==
