@@ -756,6 +756,17 @@ auto ServerInit(Server* server,
       spdlog::info("HD denylist loaded: {} entries",
                    server->hd_peers.denylist.size());
     }
+    server->hd_peers.peer_policy_path =
+        config->hd_peer_policy_path;
+    if (!server->hd_peers.peer_policy_path.empty()) {
+      // Deferred: peer slots are populated on enrollment;
+      // we reload after each enrollment to pick up the
+      // policy for that key. At startup, just touch the
+      // file to fail-fast on unreadable paths.
+      HdPeerPolicyLoad(&server->hd_peers);
+      spdlog::info("HD peer-policy path: {}",
+                   server->hd_peers.peer_policy_path);
+    }
     server->hd_enabled = true;
 
     // Initialize relay table and set relay_id in data

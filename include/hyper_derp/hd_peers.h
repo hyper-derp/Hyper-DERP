@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/protocol.h"
 
 namespace hyper_derp {
@@ -40,6 +41,25 @@ inline constexpr int kHdHmacSize = 32;
 struct HdForwardRule {
   Key dst_key{};
   uint8_t occupied = 0;
+};
+
+/// Per-peer routing policy (cold path — read only at
+/// OpenConnection time). Kept in a parallel array so the
+/// hot HdPeer struct stays cache-friendly.
+struct HdPeerPolicy {
+  /// If true, `pinned_intent` replaces whatever the
+  /// client asked for; if false, the pin acts as a
+  /// narrowing constraint within the allowed set.
+  bool override_client = false;
+  /// True when `pinned_intent` is meaningful.
+  bool has_pin = false;
+  /// Intent pinned by this peer (ignored unless has_pin).
+  HdIntent pinned_intent = HdIntent::kPreferDirect;
+  /// Admin tag, surfaced in audit logs (e.g.
+  /// "compliance-zone-A").
+  std::string audit_tag;
+  /// Human-readable rationale ("IP is sensitive").
+  std::string reason;
 };
 
 /// Per-peer enrollment and forwarding state.
@@ -85,8 +105,54 @@ struct HdPeerRegistry {
   /// `denylist_path` is non-empty.
   std::vector<Key> denylist;
   std::string denylist_path;
+  /// Per-peer routing policies, indexed by the same slot
+  /// as `peers[]`. Cold path; never touched on packet
+  /// forwarding.
+  HdPeerPolicy policies[kHdMaxPeers]{};
+  std::string peer_policy_path;
   std::recursive_mutex mutex;
 };
+
+/// @brief Looks up the routing policy for a peer by key.
+/// @param reg Registry to search.
+/// @param key Pointer to 32-byte peer key.
+/// @returns Pointer to the peer's HdPeerPolicy slot, or
+///   nullptr if the peer is not registered.
+HdPeerPolicy* HdPeersLookupPolicy(HdPeerRegistry* reg,
+                                   const uint8_t* key);
+
+/// @brief Sets the routing policy for a peer.
+/// @param reg Registry containing the peer.
+/// @param key Peer's 32-byte public key.
+/// @param policy New policy (copied).
+/// @returns True if the peer exists and the policy was
+///   updated.
+bool HdPeersSetPolicy(HdPeerRegistry* reg,
+                      const uint8_t* key,
+                      const HdPeerPolicy& policy);
+
+/// @brief Clears the routing policy for a peer to
+///   defaults.
+/// @returns True if the peer exists.
+bool HdPeersClearPolicy(HdPeerRegistry* reg,
+                        const uint8_t* key);
+
+/// @brief Loads peer policies from disk.
+///
+/// File format: `[4B count LE]` then `count` records:
+///   `[32B peer_key][1B has_pin][1B pinned_intent]
+///    [1B override_client][2B audit_tag_len LE][N bytes]
+///    [2B reason_len LE][M bytes]`.
+/// Records whose key is not present in the registry are
+/// silently skipped (enrollment will assign a policy
+/// slot, but the admin config is only relevant once the
+/// peer enrolls). Missing file is treated as empty.
+/// @returns True on success (or missing file).
+bool HdPeerPolicyLoad(HdPeerRegistry* reg);
+
+/// @brief Atomically persists peer policies to disk.
+/// @returns True on success.
+bool HdPeerPolicySave(const HdPeerRegistry* reg);
 
 /// @brief Checks a candidate enrollment against the policy.
 /// @param reg Registry with policy to apply.

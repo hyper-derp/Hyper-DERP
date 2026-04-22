@@ -331,6 +331,85 @@ TEST_F(HdPeersTest, DenylistPersistsAcrossRegistries) {
   unlink(file.c_str());
 }
 
+TEST_F(HdPeersTest, PeerPolicyLookupAndSet) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key, HdEnrollMode::kManual);
+  Key k{};
+  k[0] = 0x77;
+  HdPeersInsert(&reg, k, 42);
+
+  HdPeerPolicy pol;
+  pol.has_pin = true;
+  pol.pinned_intent = HdIntent::kRequireRelay;
+  pol.override_client = true;
+  pol.audit_tag = "zoneA";
+  pol.reason = "sensitive";
+  EXPECT_TRUE(HdPeersSetPolicy(&reg, k.data(), pol));
+
+  auto* got = HdPeersLookupPolicy(&reg, k.data());
+  ASSERT_NE(got, nullptr);
+  EXPECT_TRUE(got->has_pin);
+  EXPECT_EQ(got->pinned_intent, HdIntent::kRequireRelay);
+  EXPECT_TRUE(got->override_client);
+  EXPECT_EQ(got->audit_tag, "zoneA");
+  EXPECT_EQ(got->reason, "sensitive");
+
+  EXPECT_TRUE(HdPeersClearPolicy(&reg, k.data()));
+  auto* cleared = HdPeersLookupPolicy(&reg, k.data());
+  ASSERT_NE(cleared, nullptr);
+  EXPECT_FALSE(cleared->has_pin);
+  EXPECT_TRUE(cleared->audit_tag.empty());
+}
+
+TEST_F(HdPeersTest, PeerPolicyPersistsAcrossRegistries) {
+  char path[] = "/tmp/hd_peer_policy_XXXXXX";
+  int fd = mkstemp(path);
+  ASSERT_GE(fd, 0);
+  close(fd);
+  std::string file = path;
+
+  Key k{};
+  k[0] = 0xCC;
+
+  {
+    HdPeerRegistry reg;
+    Key relay_key{};
+    HdPeersInit(&reg, relay_key,
+                HdEnrollMode::kManual);
+    reg.peer_policy_path = file;
+    HdPeersInsert(&reg, k, 1);
+    HdPeerPolicy pol;
+    pol.has_pin = true;
+    pol.pinned_intent = HdIntent::kRequireRelay;
+    pol.override_client = true;
+    pol.audit_tag = "compliance-zone-A";
+    pol.reason = "sensor ip confidential";
+    ASSERT_TRUE(HdPeersSetPolicy(&reg, k.data(), pol));
+  }
+
+  // Second registry loads from disk after enrollment.
+  {
+    HdPeerRegistry reg2;
+    Key relay_key{};
+    HdPeersInit(&reg2, relay_key,
+                HdEnrollMode::kManual);
+    reg2.peer_policy_path = file;
+    HdPeersInsert(&reg2, k, 2);
+    EXPECT_TRUE(HdPeerPolicyLoad(&reg2));
+    auto* got = HdPeersLookupPolicy(&reg2, k.data());
+    ASSERT_NE(got, nullptr);
+    EXPECT_TRUE(got->has_pin);
+    EXPECT_EQ(got->pinned_intent,
+              HdIntent::kRequireRelay);
+    EXPECT_TRUE(got->override_client);
+    EXPECT_EQ(got->audit_tag, "compliance-zone-A");
+    EXPECT_EQ(got->reason, "sensor ip confidential");
+  }
+
+  unlink(file.c_str());
+}
+
 TEST_F(HdPeersTest, PolicyIpRange) {
   HdPeerRegistry reg;
   Key relay_key{};

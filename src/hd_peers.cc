@@ -128,6 +128,53 @@ HdPeer* HdPeersLookup(HdPeerRegistry* reg,
   return nullptr;
 }
 
+HdPeerPolicy* HdPeersLookupPolicy(HdPeerRegistry* reg,
+                                   const uint8_t* key) {
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    HdPeer& p = reg->peers[i];
+    if (p.occupied != 1) continue;
+    if (sodium_memcmp(p.key.data(), key, kKeySize) == 0) {
+      return &reg->policies[i];
+    }
+  }
+  return nullptr;
+}
+
+bool HdPeersSetPolicy(HdPeerRegistry* reg,
+                      const uint8_t* key,
+                      const HdPeerPolicy& policy) {
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    HdPeer& p = reg->peers[i];
+    if (p.occupied != 1) continue;
+    if (sodium_memcmp(p.key.data(), key, kKeySize) == 0) {
+      reg->policies[i] = policy;
+      if (!reg->peer_policy_path.empty()) {
+        HdPeerPolicySave(reg);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+bool HdPeersClearPolicy(HdPeerRegistry* reg,
+                        const uint8_t* key) {
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    HdPeer& p = reg->peers[i];
+    if (p.occupied != 1) continue;
+    if (sodium_memcmp(p.key.data(), key, kKeySize) == 0) {
+      reg->policies[i] = HdPeerPolicy{};
+      if (!reg->peer_policy_path.empty()) {
+        HdPeerPolicySave(reg);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 HdPeer* HdPeersLookupById(HdPeerRegistry* reg,
                            uint16_t peer_id) {
   for (int i = 0; i < kHdMaxPeers; ++i) {
@@ -246,6 +293,157 @@ bool HdDenylistLoad(HdPeerRegistry* reg) {
     reg->denylist.push_back(k);
   }
   std::fclose(f);
+  return true;
+}
+
+namespace {
+
+void WriteU16LE(FILE* f, uint16_t v) {
+  uint8_t b[2] = {
+      static_cast<uint8_t>(v),
+      static_cast<uint8_t>(v >> 8)};
+  std::fwrite(b, 1, 2, f);
+}
+
+void WriteU32LE(FILE* f, uint32_t v) {
+  uint8_t b[4] = {
+      static_cast<uint8_t>(v),
+      static_cast<uint8_t>(v >> 8),
+      static_cast<uint8_t>(v >> 16),
+      static_cast<uint8_t>(v >> 24)};
+  std::fwrite(b, 1, 4, f);
+}
+
+bool ReadExact(FILE* f, uint8_t* buf, size_t n) {
+  return std::fread(buf, 1, n, f) == n;
+}
+
+bool ReadU16LE(FILE* f, uint16_t* out) {
+  uint8_t b[2];
+  if (!ReadExact(f, b, 2)) return false;
+  *out = static_cast<uint16_t>(b[0]) |
+         (static_cast<uint16_t>(b[1]) << 8);
+  return true;
+}
+
+bool ReadU32LE(FILE* f, uint32_t* out) {
+  uint8_t b[4];
+  if (!ReadExact(f, b, 4)) return false;
+  *out = static_cast<uint32_t>(b[0]) |
+         (static_cast<uint32_t>(b[1]) << 8) |
+         (static_cast<uint32_t>(b[2]) << 16) |
+         (static_cast<uint32_t>(b[3]) << 24);
+  return true;
+}
+
+}  // namespace
+
+bool HdPeerPolicyLoad(HdPeerRegistry* reg) {
+  std::lock_guard<std::recursive_mutex> lock(reg->mutex);
+  if (reg->peer_policy_path.empty()) return true;
+  FILE* f =
+      std::fopen(reg->peer_policy_path.c_str(), "rb");
+  if (!f) return true;
+  uint32_t count = 0;
+  if (!ReadU32LE(f, &count)) {
+    std::fclose(f);
+    return true;
+  }
+  for (uint32_t i = 0; i < count; i++) {
+    uint8_t key[kKeySize];
+    if (!ReadExact(f, key, kKeySize)) break;
+    uint8_t hdr[3];
+    if (!ReadExact(f, hdr, 3)) break;
+    uint16_t tag_len = 0;
+    if (!ReadU16LE(f, &tag_len)) break;
+    std::string tag(tag_len, '\0');
+    if (tag_len &&
+        !ReadExact(f,
+                   reinterpret_cast<uint8_t*>(tag.data()),
+                   tag_len)) {
+      break;
+    }
+    uint16_t reason_len = 0;
+    if (!ReadU16LE(f, &reason_len)) break;
+    std::string reason(reason_len, '\0');
+    if (reason_len &&
+        !ReadExact(
+            f,
+            reinterpret_cast<uint8_t*>(reason.data()),
+            reason_len)) {
+      break;
+    }
+    // Apply if the peer is currently registered.
+    for (int j = 0; j < kHdMaxPeers; ++j) {
+      HdPeer& p = reg->peers[j];
+      if (p.occupied != 1) continue;
+      if (sodium_memcmp(p.key.data(), key,
+                        kKeySize) == 0) {
+        HdPeerPolicy pol;
+        pol.has_pin = hdr[0] != 0;
+        pol.pinned_intent =
+            static_cast<HdIntent>(hdr[1]);
+        pol.override_client = hdr[2] != 0;
+        pol.audit_tag = std::move(tag);
+        pol.reason = std::move(reason);
+        reg->policies[j] = std::move(pol);
+        break;
+      }
+    }
+  }
+  std::fclose(f);
+  return true;
+}
+
+bool HdPeerPolicySave(const HdPeerRegistry* reg) {
+  if (reg->peer_policy_path.empty()) return false;
+  std::string tmp = reg->peer_policy_path + ".tmp";
+  FILE* f = std::fopen(tmp.c_str(), "wb");
+  if (!f) return false;
+  uint32_t count = 0;
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    const auto& p = reg->peers[i];
+    const auto& pol = reg->policies[i];
+    if (p.occupied != 1) continue;
+    if (!pol.has_pin && !pol.override_client &&
+        pol.audit_tag.empty() && pol.reason.empty()) {
+      continue;
+    }
+    count++;
+  }
+  WriteU32LE(f, count);
+  for (int i = 0; i < kHdMaxPeers; ++i) {
+    const auto& p = reg->peers[i];
+    const auto& pol = reg->policies[i];
+    if (p.occupied != 1) continue;
+    if (!pol.has_pin && !pol.override_client &&
+        pol.audit_tag.empty() && pol.reason.empty()) {
+      continue;
+    }
+    std::fwrite(p.key.data(), 1, kKeySize, f);
+    uint8_t hdr[3] = {
+        static_cast<uint8_t>(pol.has_pin ? 1 : 0),
+        static_cast<uint8_t>(pol.pinned_intent),
+        static_cast<uint8_t>(
+            pol.override_client ? 1 : 0)};
+    std::fwrite(hdr, 1, 3, f);
+    WriteU16LE(
+        f, static_cast<uint16_t>(pol.audit_tag.size()));
+    std::fwrite(pol.audit_tag.data(), 1,
+                pol.audit_tag.size(), f);
+    WriteU16LE(
+        f, static_cast<uint16_t>(pol.reason.size()));
+    std::fwrite(pol.reason.data(), 1,
+                pol.reason.size(), f);
+  }
+  std::fflush(f);
+  fsync(fileno(f));
+  std::fclose(f);
+  if (std::rename(tmp.c_str(),
+                  reg->peer_policy_path.c_str()) != 0) {
+    std::remove(tmp.c_str());
+    return false;
+  }
   return true;
 }
 

@@ -279,6 +279,10 @@ auto LoadConfig(const char* path, ServerConfig* config)
         ReadStr(h["denylist_path"],
                 &config->hd_denylist_path);
       }
+      if (h.has_child("peer_policy_path")) {
+        ReadStr(h["peer_policy_path"],
+                &config->hd_peer_policy_path);
+      }
       if (h.has_child("enroll_mode")) {
         auto val = h["enroll_mode"].val();
         std::string_view mode(val.data(), val.len);

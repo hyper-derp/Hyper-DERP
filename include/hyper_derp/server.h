@@ -118,6 +118,9 @@ struct ServerConfig {
   /// Path to persistent denylist file (empty = in-memory
   /// only, no persistence across restarts).
   std::string hd_denylist_path;
+  /// Path to per-peer policy file (empty = in-memory
+  /// only, admin changes do not survive restart).
+  std::string hd_peer_policy_path;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").
