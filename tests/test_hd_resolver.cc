@@ -172,5 +172,73 @@ TEST(HdResolverTest, ExhaustiveIntentCapabilityMatrix) {
   }
 }
 
+TEST(HdPeerPolicyMergeTest, OverrideClientWins) {
+  HdPeerPolicy pol;
+  pol.has_pin = true;
+  pol.override_client = true;
+  pol.pinned_intent = HdIntent::kRequireRelay;
+  auto eff = HdApplyPeerPolicyIntent(
+      pol, HdIntent::kRequireDirect);
+  EXPECT_EQ(eff, HdIntent::kRequireRelay);
+}
+
+TEST(HdPeerPolicyMergeTest, NoPinLeavesWireIntentAlone) {
+  HdPeerPolicy pol;
+  pol.has_pin = false;
+  pol.override_client = true;
+  auto eff = HdApplyPeerPolicyIntent(
+      pol, HdIntent::kPreferDirect);
+  EXPECT_EQ(eff, HdIntent::kPreferDirect);
+}
+
+TEST(HdPeerPolicyMergeTest, NarrowingPinRestrictsAllowed) {
+  HdPeerPolicy pol;
+  pol.has_pin = true;
+  pol.override_client = false;
+  pol.pinned_intent = HdIntent::kRequireRelay;
+  auto view = HdBuildPeerView(pol, HdIntent::kPreferDirect);
+  EXPECT_EQ(view.allowed, kModeRelayed);
+  EXPECT_FALSE(view.pinned_intent.has_value());
+}
+
+TEST(HdPeerPolicyMergeTest, OverridePinSetsResolverPin) {
+  HdPeerPolicy pol;
+  pol.has_pin = true;
+  pol.override_client = true;
+  pol.pinned_intent = HdIntent::kRequireRelay;
+  // After override, the "effective" intent is the pin
+  // itself; HdBuildPeerView then exposes it via
+  // pinned_intent in the HdLayerView.
+  auto view = HdBuildPeerView(pol, HdIntent::kRequireRelay);
+  ASSERT_TRUE(view.pinned_intent.has_value());
+  EXPECT_EQ(*view.pinned_intent, HdIntent::kRequireRelay);
+}
+
+TEST(HdPeerPolicyMergeTest, EndToEndComplianceScenario) {
+  // Camera is pinned to require_relay with override;
+  // client asks for require_direct. Expected: Relayed,
+  // not Denied, and not Direct.
+  HdPeerPolicy camera_pol;
+  camera_pol.has_pin = true;
+  camera_pol.override_client = true;
+  camera_pol.pinned_intent = HdIntent::kRequireRelay;
+
+  HdClientView client;
+  client.intent = HdIntent::kRequireDirect;
+
+  HdIntent eff = HdApplyPeerPolicyIntent(
+      camera_pol, client.intent);
+  // Simulating A's side: client intent replaced by pin.
+  client.intent = eff;
+
+  HdLayerView peer_view = HdBuildPeerView(camera_pol, eff);
+  HdCapability cap;
+  cap.can_direct = true;
+  auto d = HdResolve(HdLayerView{}, HdLayerView{},
+                     HdLayerView{}, peer_view, client,
+                     cap, 0);
+  EXPECT_EQ(d.mode, HdConnMode::kRelayed);
+}
+
 }  // namespace
 }  // namespace hyper_derp

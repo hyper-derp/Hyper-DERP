@@ -138,4 +138,41 @@ HdDecision HdResolve(const HdLayerView& fleet,
   return d;
 }
 
+HdIntent HdApplyPeerPolicyIntent(
+    const HdPeerPolicy& policy,
+    HdIntent wire_intent) {
+  if (policy.has_pin && policy.override_client) {
+    return policy.pinned_intent;
+  }
+  return wire_intent;
+}
+
+HdLayerView HdBuildPeerView(
+    const HdPeerPolicy& policy,
+    HdIntent effective_intent) {
+  HdLayerView v;
+  if (effective_intent == HdIntent::kRequireDirect ||
+      effective_intent == HdIntent::kRequireRelay) {
+    v.pinned_intent = effective_intent;
+  } else if (effective_intent ==
+             HdIntent::kPreferRelay) {
+    v.allowed = kModeRelayed;
+  }
+  if (policy.has_pin && !policy.override_client) {
+    switch (policy.pinned_intent) {
+      case HdIntent::kRequireRelay:
+      case HdIntent::kPreferRelay:
+        v.allowed =
+            static_cast<uint8_t>(v.allowed & kModeRelayed);
+        break;
+      case HdIntent::kRequireDirect:
+      case HdIntent::kPreferDirect:
+        v.allowed =
+            static_cast<uint8_t>(v.allowed & kModeDirect);
+        break;
+    }
+  }
+  return v;
+}
+
 }  // namespace hyper_derp

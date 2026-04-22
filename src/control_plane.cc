@@ -1047,6 +1047,20 @@ void CpHandleOpenConnection(ControlPlane* cp, int fd,
   cv.allow_downgrade =
       (req.flags & kHdFlagAllowDowngrade) != 0;
 
+  // Apply the initiator's peer policy to the client view
+  // before passing down. If override_client=true, the
+  // peer's pinned intent replaces whatever the client
+  // asked for — enforced here so the audit chain records
+  // the effective intent.
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    auto* ipol = HdPeersLookupPolicy(
+        cp->hd_peers, initiator_key.data());
+    if (ipol && ipol->override_client && ipol->has_pin) {
+      cv.intent = ipol->pinned_intent;
+    }
+  }
+
   // Phase 2 capability: direct path (Level 2 / WG) is
   // not wired into the HD data plane yet, so advertise
   // can_direct=false. prefer_direct falls back to
@@ -1173,18 +1187,18 @@ void CpHandleIncomingConnResponse(
     return;
   }
 
-  // Intersect A's and B's intents: the more restrictive
-  // wins. Model B as a pin: if B says require_*, force
-  // it; otherwise leave peer pin empty.
-  HdLayerView peer_view;
-  if (resp.intent == HdIntent::kRequireDirect ||
-      resp.intent == HdIntent::kRequireRelay) {
-    peer_view.pinned_intent = resp.intent;
-  } else if (resp.intent == HdIntent::kPreferRelay) {
-    // Prefer-relay doesn't pin but narrows to relayed on
-    // conflict.
-    peer_view.allowed = kModeRelayed;
+  // Apply B's server-side peer policy to its wire intent.
+  HdPeerPolicy b_policy{};
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    auto* bpol = HdPeersLookupPolicy(
+        cp->hd_peers, entry.target_key.data());
+    if (bpol) b_policy = *bpol;
   }
+  HdIntent effective_b =
+      HdApplyPeerPolicyIntent(b_policy, resp.intent);
+  HdLayerView peer_view =
+      HdBuildPeerView(b_policy, effective_b);
 
   HdCapability cap{.can_direct = false};
   HdDecision dec = HdResolve(

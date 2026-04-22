@@ -15,6 +15,7 @@
 #include <sodium.h>
 
 #include "hyper_derp/hd_client.h"
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/protocol.h"
 

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_protocol.h"
 
 namespace hyper_derp {
@@ -110,6 +111,36 @@ HdDecision HdResolve(const HdLayerView& fleet,
                      const HdClientView& client,
                      const HdCapability& cap,
                      uint16_t target_relay_id);
+
+/// @brief Applies a peer's stored policy to its observed
+///   wire intent.
+///
+/// Returns the intent the resolver should treat the peer
+/// as having (override_client wins; otherwise the stored
+/// pin is returned for the caller to combine).
+/// @param policy Peer's stored policy.
+/// @param wire_intent Intent seen on the wire (from
+///   IncomingConnResponse / OpenConnection).
+/// @returns Effective intent.
+HdIntent HdApplyPeerPolicyIntent(
+    const HdPeerPolicy& policy,
+    HdIntent wire_intent);
+
+/// @brief Builds the peer-layer HdLayerView for the
+///   resolver from a stored peer policy plus its
+///   effective intent.
+///
+/// - override_client=true + has_pin: pinned_intent is
+///   exposed via HdLayerView::pinned_intent, the allowed
+///   set stays kModeAny (the client's intent will lose).
+/// - override_client=false + has_pin: acts as a narrowing
+///   restriction on the allowed set instead of a pin.
+/// @param policy Peer's stored policy.
+/// @param effective_intent Intent after
+///   HdApplyPeerPolicyIntent.
+HdLayerView HdBuildPeerView(
+    const HdPeerPolicy& policy,
+    HdIntent effective_intent);
 
 }  // namespace hyper_derp
 
