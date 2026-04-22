@@ -138,6 +138,34 @@ HdDecision HdResolve(const HdLayerView& fleet,
   return d;
 }
 
+HdLayerView HdBuildRelayView(
+    const HdRelayPolicy& policy) {
+  HdLayerView v;
+  if (policy.forbid_direct) {
+    v.allowed = static_cast<uint8_t>(
+        v.allowed & ~kModeDirect);
+  }
+  if (policy.forbid_relayed) {
+    v.allowed = static_cast<uint8_t>(
+        v.allowed & ~kModeRelayed);
+  }
+  return v;
+}
+
+HdLayerView HdBuildFleetView(
+    const HdFleetPolicy& policy) {
+  HdLayerView v;
+  if (!policy.allow_direct) {
+    v.allowed = static_cast<uint8_t>(
+        v.allowed & ~kModeDirect);
+  }
+  if (!policy.allow_relayed) {
+    v.allowed = static_cast<uint8_t>(
+        v.allowed & ~kModeRelayed);
+  }
+  return v;
+}
+
 HdIntent HdApplyPeerPolicyIntent(
     const HdPeerPolicy& policy,
     HdIntent wire_intent) {

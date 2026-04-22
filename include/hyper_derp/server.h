@@ -121,6 +121,15 @@ struct ServerConfig {
   /// Path to per-peer policy file (empty = in-memory
   /// only, admin changes do not survive restart).
   std::string hd_peer_policy_path;
+  /// Relay-operator routing policy (static, read at
+  /// startup; Phase 6 replaces with signed bundle pull).
+  HdRelayPolicy hd_relay_policy;
+  /// Fleet-wide policy loaded from disk (Phase 4 reads a
+  /// local YAML path; Phase 6 replaces with bundle pull).
+  HdFleetPolicy hd_fleet_policy;
+  /// Path to a fleet-policy YAML file. Empty = no fleet
+  /// policy configured.
+  std::string hd_fleet_policy_path;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").

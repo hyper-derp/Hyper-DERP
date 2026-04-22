@@ -44,6 +44,17 @@ constexpr auto ConfigErrorName(ConfigError e)
 auto LoadConfig(const char* path, ServerConfig* config)
     -> std::expected<void, Error<ConfigError>>;
 
+/// @brief Load a fleet-policy YAML file into the given
+///   struct. Phase 6 replaces this with the signed-bundle
+///   pull mechanism; Phase 4 reads a local file.
+/// @param path Path to the YAML file.
+/// @param policy Output (fields not in the file keep
+///   their defaults).
+/// @returns void on success, or ConfigError.
+auto LoadFleetPolicy(const char* path,
+                     HdFleetPolicy* policy)
+    -> std::expected<void, Error<ConfigError>>;
+
 }  // namespace hyper_derp
 
 #endif  // INCLUDE_HYPER_DERP_CONFIG_H_

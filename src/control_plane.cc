@@ -1068,11 +1068,22 @@ void CpHandleOpenConnection(ControlPlane* cp, int fd,
   // kNatIncompatible until Phase 3/5 add real probing.
   HdCapability cap{.can_direct = false};
 
+  // Fleet + relay views sourced from the registry.
+  HdLayerView fleet_view;
+  HdLayerView relay_view;
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    fleet_view =
+        HdBuildFleetView(cp->hd_peers->fleet_policy);
+    relay_view =
+        HdBuildRelayView(cp->hd_peers->relay_policy);
+  }
+
   // Cross-relay (target_relay_id != 0): resolver
   // short-circuits; no target lookup needed.
   if (req.target_relay_id != 0) {
     HdDecision dec = HdResolve(
-        HdLayerView{}, HdLayerView{}, HdLayerView{},
+        fleet_view, HdLayerView{}, relay_view,
         HdLayerView{}, cv, cap, req.target_relay_id);
     uint8_t rbuf[64];
     int rn = HdBuildOpenConnectionResult(
@@ -1201,10 +1212,37 @@ void CpHandleIncomingConnResponse(
       HdBuildPeerView(b_policy, effective_b);
 
   HdCapability cap{.can_direct = false};
+  HdLayerView fleet_view;
+  HdLayerView relay_view;
+  int max_direct = 0;
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    fleet_view =
+        HdBuildFleetView(cp->hd_peers->fleet_policy);
+    relay_view =
+        HdBuildRelayView(cp->hd_peers->relay_policy);
+    max_direct =
+        cp->hd_peers->relay_policy.max_direct_peers;
+  }
   HdDecision dec = HdResolve(
-      HdLayerView{}, HdLayerView{}, HdLayerView{},
+      fleet_view, HdLayerView{}, relay_view,
       peer_view, entry.initiator_view, cap,
       entry.target_relay_id);
+
+  // Enforce max_direct_peers as an audit-visible denial
+  // rather than silently degrading.
+  if (dec.mode == HdConnMode::kDirect && max_direct > 0) {
+    int cur = cp->hd_peers->direct_in_use.load(
+        std::memory_order_acquire);
+    if (cur >= max_direct) {
+      dec.mode = HdConnMode::kDenied;
+      dec.deny_reason =
+          HdDenyReason::kDirectCapExceeded;
+    } else {
+      cp->hd_peers->direct_in_use.fetch_add(
+          1, std::memory_order_acq_rel);
+    }
+  }
 
   HdAuditRecordDecision(&cp->audit_ring,
                         entry.initiator_key,

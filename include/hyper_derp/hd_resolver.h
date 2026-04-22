@@ -126,6 +126,20 @@ HdIntent HdApplyPeerPolicyIntent(
     const HdPeerPolicy& policy,
     HdIntent wire_intent);
 
+/// @brief Builds the relay-layer HdLayerView from a
+///   stored relay policy.
+/// forbid_direct/forbid_relayed bits subtract from
+/// allowed. default_mode is advisory only: a Phase 5
+/// rework may surface it as a relay pin, but Phase 4
+/// leaves the client intent authoritative here.
+HdLayerView HdBuildRelayView(
+    const HdRelayPolicy& policy);
+
+/// @brief Builds the fleet-layer HdLayerView from a
+///   stored fleet policy.
+HdLayerView HdBuildFleetView(
+    const HdFleetPolicy& policy);
+
 /// @brief Builds the peer-layer HdLayerView for the
 ///   resolver from a stored peer policy plus its
 ///   effective intent.

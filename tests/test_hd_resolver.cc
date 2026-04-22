@@ -214,6 +214,43 @@ TEST(HdPeerPolicyMergeTest, OverridePinSetsResolverPin) {
   EXPECT_EQ(*view.pinned_intent, HdIntent::kRequireRelay);
 }
 
+TEST(HdRelayFleetPolicyTest, RelayForbidDirect) {
+  HdRelayPolicy rp;
+  rp.forbid_direct = true;
+  auto v = HdBuildRelayView(rp);
+  EXPECT_EQ(v.allowed & kModeDirect, 0);
+  EXPECT_EQ(v.allowed & kModeRelayed, kModeRelayed);
+}
+
+TEST(HdRelayFleetPolicyTest, FleetDenyAll) {
+  HdFleetPolicy fp;
+  fp.allow_direct = false;
+  fp.allow_relayed = false;
+  auto v = HdBuildFleetView(fp);
+  EXPECT_EQ(v.allowed, 0);
+  HdClientView c;
+  auto d = HdResolve(v, HdLayerView{}, HdLayerView{},
+                     HdLayerView{}, c,
+                     HdCapability{}, 0);
+  EXPECT_EQ(d.mode, HdConnMode::kDenied);
+  EXPECT_EQ(d.deny_reason,
+            HdDenyReason::kPolicyForbids);
+}
+
+TEST(HdRelayFleetPolicyTest, RelayForbidRelayedBlocks) {
+  HdRelayPolicy rp;
+  rp.forbid_relayed = true;
+  auto rv = HdBuildRelayView(rp);
+  HdClientView c;
+  c.intent = HdIntent::kRequireRelay;
+  auto d = HdResolve(HdLayerView{}, HdLayerView{}, rv,
+                     HdLayerView{}, c, HdCapability{},
+                     0);
+  EXPECT_EQ(d.mode, HdConnMode::kDenied);
+  EXPECT_EQ(d.deny_reason,
+            HdDenyReason::kPolicyForbids);
+}
+
 TEST(HdPeerPolicyMergeTest, EndToEndComplianceScenario) {
   // Camera is pinned to require_relay with override;
   // client asks for require_direct. Expected: Relayed,

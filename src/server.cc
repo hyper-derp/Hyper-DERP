@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "hyper_derp/config.h"
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
@@ -766,6 +767,26 @@ auto ServerInit(Server* server,
       HdPeerPolicyLoad(&server->hd_peers);
       spdlog::info("HD peer-policy path: {}",
                    server->hd_peers.peer_policy_path);
+    }
+
+    // Relay + fleet policy (Phase 4).
+    server->hd_peers.relay_policy =
+        config->hd_relay_policy;
+    server->hd_peers.fleet_policy =
+        config->hd_fleet_policy;
+    if (!config->hd_fleet_policy_path.empty()) {
+      auto fp = LoadFleetPolicy(
+          config->hd_fleet_policy_path.c_str(),
+          &server->hd_peers.fleet_policy);
+      if (!fp) {
+        spdlog::error("fleet policy load failed: {}",
+                      fp.error().message);
+        DpDestroy(&server->data_plane);
+        return MakeError(ServerError::ConfigInvalid,
+                         fp.error().message);
+      }
+      spdlog::info("fleet policy loaded from {}",
+                   config->hd_fleet_policy_path);
     }
     server->hd_enabled = true;
 

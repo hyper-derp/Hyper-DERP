@@ -5,6 +5,7 @@
 #ifndef INCLUDE_HYPER_DERP_HD_PEERS_H_
 #define INCLUDE_HYPER_DERP_HD_PEERS_H_
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -75,6 +76,38 @@ struct HdPeer {
   uint64_t enrolled_at = 0;
 };
 
+/// Relay-operator-scoped routing policy. Applied as the
+/// relay layer in HdResolve. All fields default to the
+/// most-permissive value; an unconfigured relay behaves
+/// as if the layer is transparent.
+struct HdRelayPolicy {
+  /// Fallback intent when a peer does not pin and the
+  /// client did not specify.
+  HdIntent default_mode = HdIntent::kPreferDirect;
+  /// Hard denial: no tunnel on this relay may be direct.
+  bool forbid_direct = false;
+  /// Hard denial: no tunnel on this relay may be relayed.
+  bool forbid_relayed = false;
+  /// Cap on simultaneous direct tunnels (0 = unlimited).
+  int max_direct_peers = 0;
+  /// Annotate every relayed decision in the audit log
+  /// (Phase 4.2 reads this).
+  bool audit_relayed_traffic = true;
+};
+
+/// Fleet-wide routing policy, distributed to all relays
+/// in a managed fleet. Applied as the fleet layer in
+/// HdResolve.
+struct HdFleetPolicy {
+  /// Permit direct tunnels anywhere in the fleet.
+  bool allow_direct = true;
+  /// Permit relayed tunnels anywhere in the fleet.
+  bool allow_relayed = true;
+  /// Force relay for cross-region hops. Phase 4 records
+  /// it; Phase 5 enforces it once region tagging lands.
+  bool require_relay_for_cross_region = false;
+};
+
 /// Policy constraints applied to auto-approval.
 struct HdEnrollPolicy {
   /// Hard cap on approved peer count (0 = unlimited).
@@ -110,6 +143,15 @@ struct HdPeerRegistry {
   /// forwarding.
   HdPeerPolicy policies[kHdMaxPeers]{};
   std::string peer_policy_path;
+  /// Relay-operator-scoped policy. Cold path; read per
+  /// OpenConnection.
+  HdRelayPolicy relay_policy;
+  /// Fleet-wide policy. Cold path; read per OpenConnection.
+  HdFleetPolicy fleet_policy;
+  /// Counter of currently-established direct tunnels.
+  /// Incremented when HdResolve returns Direct, released
+  /// when a tunnel closes. Used for max_direct_peers.
+  std::atomic<int> direct_in_use{0};
   std::recursive_mutex mutex;
 };
 
