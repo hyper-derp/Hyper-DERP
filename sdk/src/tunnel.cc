@@ -86,6 +86,10 @@ Mode Tunnel::CurrentMode() const {
   return impl_ ? impl_->mode.load() : Mode::Closed;
 }
 
+uint16_t Tunnel::DenyReason() const {
+  return impl_ ? impl_->deny_reason.load() : 0;
+}
+
 const std::string& Tunnel::PeerName() const {
   static const std::string empty;
   return impl_ ? impl_->peer_name : empty;

@@ -1047,13 +1047,19 @@ void CpHandleOpenConnection(ControlPlane* cp, int fd,
   cv.allow_downgrade =
       (req.flags & kHdFlagAllowDowngrade) != 0;
 
+  // Phase 2 capability: direct path (Level 2 / WG) is
+  // not wired into the HD data plane yet, so advertise
+  // can_direct=false. prefer_direct falls back to
+  // relayed; require_direct correctly denies with
+  // kNatIncompatible until Phase 3/5 add real probing.
+  HdCapability cap{.can_direct = false};
+
   // Cross-relay (target_relay_id != 0): resolver
   // short-circuits; no target lookup needed.
   if (req.target_relay_id != 0) {
     HdDecision dec = HdResolve(
         HdLayerView{}, HdLayerView{}, HdLayerView{},
-        HdLayerView{}, cv, HdCapability{},
-        req.target_relay_id);
+        HdLayerView{}, cv, cap, req.target_relay_id);
     uint8_t rbuf[64];
     int rn = HdBuildOpenConnectionResult(
         rbuf, sizeof(rbuf), req.correlation_id, dec.mode,
@@ -1180,9 +1186,10 @@ void CpHandleIncomingConnResponse(
     peer_view.allowed = kModeRelayed;
   }
 
+  HdCapability cap{.can_direct = false};
   HdDecision dec = HdResolve(
       HdLayerView{}, HdLayerView{}, HdLayerView{},
-      peer_view, entry.initiator_view, HdCapability{},
+      peer_view, entry.initiator_view, cap,
       entry.target_relay_id);
 
   HdAuditRecordDecision(&cp->audit_ring,

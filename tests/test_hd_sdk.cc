@@ -163,6 +163,60 @@ TEST_F(SdkTest, OpenTunnelAndSend) {
   a.Stop();
 }
 
+TEST_F(SdkTest, OpenTunnelRequireDirectFailsOnCapability) {
+  // Phase 2 advertises can_direct=false, so require_direct
+  // must be denied with kNatIncompatible (0x0501).
+  auto cfg = MakeConfig();
+  auto a = std::move(*Client::Create(cfg));
+  auto b = std::move(*Client::Create(cfg));
+
+  std::atomic<uint16_t> b_id{0};
+  a.SetPeerCallback([&](const PeerInfo& p, bool conn) {
+    if (conn) b_id.store(p.peer_id);
+  });
+  ASSERT_TRUE(a.Start().has_value());
+  ASSERT_TRUE(b.Start().has_value());
+
+  for (int i = 0; i < 50 && b_id.load() == 0; i++)
+    usleep(100000);
+  ASSERT_GT(b_id.load(), 0);
+
+  TunnelOptions opts;
+  opts.routing = Intent::RequireDirect;
+  auto tr = a.Open(std::to_string(b_id.load()), opts);
+  EXPECT_FALSE(tr.has_value());
+
+  b.Stop();
+  a.Stop();
+}
+
+TEST_F(SdkTest, OpenTunnelRequireRelaySucceeds) {
+  auto cfg = MakeConfig();
+  auto a = std::move(*Client::Create(cfg));
+  auto b = std::move(*Client::Create(cfg));
+
+  std::atomic<uint16_t> b_id{0};
+  a.SetPeerCallback([&](const PeerInfo& p, bool conn) {
+    if (conn) b_id.store(p.peer_id);
+  });
+  ASSERT_TRUE(a.Start().has_value());
+  ASSERT_TRUE(b.Start().has_value());
+
+  for (int i = 0; i < 50 && b_id.load() == 0; i++)
+    usleep(100000);
+  ASSERT_GT(b_id.load(), 0);
+
+  TunnelOptions opts;
+  opts.routing = Intent::RequireRelay;
+  auto tr = a.Open(std::to_string(b_id.load()), opts);
+  ASSERT_TRUE(tr.has_value()) << tr.error().message;
+  EXPECT_EQ(tr->CurrentMode(), Mode::Relayed);
+  EXPECT_EQ(tr->DenyReason(), 0u);
+
+  b.Stop();
+  a.Stop();
+}
+
 TEST_F(SdkTest, MoveSemantics) {
   auto c = std::move(*Client::Create(MakeConfig()));
   EXPECT_EQ(c.GetStatus(), Status::Connected);

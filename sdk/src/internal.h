@@ -21,6 +21,7 @@ struct Tunnel::Impl {
   uint16_t peer_id = 0;
   uint16_t relay_id = 0;  // 0 = local, >0 = remote relay.
   std::atomic<Mode> mode{Mode::Pending};
+  std::atomic<uint16_t> deny_reason{0};
   hyper_derp::HdClient* hd = nullptr;
   std::mutex* send_mutex = nullptr;
 

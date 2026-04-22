@@ -5,6 +5,8 @@
 #include "internal.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -95,6 +97,17 @@ struct Client::Impl {
 
   // Frame pool.
   std::unique_ptr<FramePool> pool;
+
+  // OpenConnection waiters: correlation_id → slot.
+  struct OpenWait {
+    std::mutex mu;
+    std::condition_variable cv;
+    bool done = false;
+    hyper_derp::HdOpenConnectionResult result{};
+  };
+  std::mutex open_waits_mutex;
+  std::unordered_map<uint64_t, OpenWait*> open_waits;
+  std::atomic<uint64_t> next_corr_id{1};
 };
 
 // -- Connect helper ----------------------------------------------------------
@@ -395,6 +408,81 @@ void Client::DispatchFrame(Impl* impl,
         it->second->mode.store(Mode::Closed);
       }
     }
+  } else if (ftype == HdFrameType::kOpenConnectionResult) {
+    hyper_derp::HdOpenConnectionResult r;
+    if (!hyper_derp::HdParseOpenConnectionResult(
+            buf, buf_len, &r)) {
+      return;
+    }
+    Impl::OpenWait* w = nullptr;
+    {
+      std::lock_guard lock(impl->open_waits_mutex);
+      auto it = impl->open_waits.find(r.correlation_id);
+      if (it != impl->open_waits.end()) w = it->second;
+    }
+    if (w) {
+      std::lock_guard wlk(w->mu);
+      w->result = r;
+      w->done = true;
+      w->cv.notify_all();
+    }
+  } else if (ftype == HdFrameType::kIncomingConnection) {
+    hyper_derp::HdIncomingConnection inc;
+    if (!hyper_derp::HdParseIncomingConnection(
+            buf, buf_len, &inc)) {
+      return;
+    }
+    // Phase 2 auto-consent: accept with our defaults.
+    hyper_derp::HdIntent b_intent =
+        impl->config.default_routing ==
+                Intent::PreferDirect
+            ? hyper_derp::HdIntent::kPreferDirect
+        : impl->config.default_routing ==
+                Intent::RequireDirect
+            ? hyper_derp::HdIntent::kRequireDirect
+        : impl->config.default_routing ==
+                Intent::PreferRelay
+            ? hyper_derp::HdIntent::kPreferRelay
+            : hyper_derp::HdIntent::kRequireRelay;
+    uint8_t b_flags = 0;
+    if (impl->config.allow_upgrade) {
+      b_flags |= hyper_derp::kHdFlagAllowUpgrade;
+    }
+    if (impl->config.allow_downgrade) {
+      b_flags |= hyper_derp::kHdFlagAllowDowngrade;
+    }
+    uint8_t rbuf[hyper_derp::kHdFrameHeaderSize +
+                 hyper_derp::kHdIncomingRespSize];
+    int rn = hyper_derp::HdBuildIncomingConnResponse(
+        rbuf, inc.correlation_id, b_intent, b_flags,
+        hyper_derp::kHdFlagAccept);
+    std::lock_guard lock(impl->send_mutex);
+    // Raw send on the HD client: we bypass the helpers
+    // since no HdClientSendIncomingConnResponse exists.
+    int total = 0;
+    while (total < rn) {
+      int w = 0;
+      if (impl->hd.ssl) {
+        w = SSL_write(impl->hd.ssl, rbuf + total,
+                      rn - total);
+      } else {
+        w = ::write(impl->hd.fd, rbuf + total,
+                    rn - total);
+      }
+      if (w <= 0) break;
+      total += w;
+    }
+  } else if (ftype == HdFrameType::kIncomingConnResult) {
+    // Target-side result; we don't track targets in the
+    // SDK Phase 2. Logged at debug for observability.
+    hyper_derp::HdIncomingConnResult r;
+    if (hyper_derp::HdParseIncomingConnResult(
+            buf, buf_len, &r)) {
+      spdlog::debug("sdk: IncomingConnResult mode={} "
+                    "corr={:x}",
+                    static_cast<int>(r.mode),
+                    r.correlation_id);
+    }
   } else if (ftype == HdFrameType::kRedirect &&
              buf_len >= 1) {
     hyper_derp::HdRedirectReason reason;
@@ -528,7 +616,7 @@ Result<Tunnel> Client::Open(const std::string& peer_name,
   t.impl_->relay_id = relay_id;
   t.impl_->hd = &impl_->hd;
   t.impl_->send_mutex = &impl_->send_mutex;
-  t.impl_->mode.store(Mode::Relayed);
+  t.impl_->mode.store(Mode::Pending);
 
   // Register in tunnel map so data gets dispatched.
   {
@@ -536,6 +624,90 @@ Result<Tunnel> Client::Open(const std::string& peer_name,
     impl_->tunnels[peer_id] = t.impl_;
   }
 
+  // Send OpenConnection and wait for the result.
+  Intent intent = opts.routing.value_or(
+      impl_->config.default_routing);
+  bool allow_upgrade = opts.allow_upgrade.value_or(
+      impl_->config.allow_upgrade);
+  bool allow_downgrade = opts.allow_downgrade.value_or(
+      impl_->config.allow_downgrade);
+  hyper_derp::HdIntent wire_intent =
+      intent == Intent::PreferDirect
+          ? hyper_derp::HdIntent::kPreferDirect
+      : intent == Intent::RequireDirect
+          ? hyper_derp::HdIntent::kRequireDirect
+      : intent == Intent::PreferRelay
+          ? hyper_derp::HdIntent::kPreferRelay
+          : hyper_derp::HdIntent::kRequireRelay;
+  uint8_t flags = 0;
+  if (allow_upgrade) {
+    flags |= hyper_derp::kHdFlagAllowUpgrade;
+  }
+  if (allow_downgrade) {
+    flags |= hyper_derp::kHdFlagAllowDowngrade;
+  }
+
+  uint64_t corr = impl_->next_corr_id.fetch_add(1);
+  Impl::OpenWait wait_slot;
+  {
+    std::lock_guard lock(impl_->open_waits_mutex);
+    impl_->open_waits[corr] = &wait_slot;
+  }
+
+  uint8_t frame[hyper_derp::kHdFrameHeaderSize +
+                hyper_derp::kHdOpenConnSize];
+  hyper_derp::HdBuildOpenConnection(
+      frame, peer_id, relay_id, wire_intent, flags, corr);
+  {
+    std::lock_guard lock(impl_->send_mutex);
+    int total = 0;
+    int rn = sizeof(frame);
+    while (total < rn) {
+      int w = 0;
+      if (impl_->hd.ssl) {
+        w = SSL_write(impl_->hd.ssl, frame + total,
+                      rn - total);
+      } else {
+        w = ::write(impl_->hd.fd, frame + total,
+                    rn - total);
+      }
+      if (w <= 0) break;
+      total += w;
+    }
+  }
+
+  // Wait up to 8s for the result.
+  {
+    std::unique_lock lk(wait_slot.mu);
+    wait_slot.cv.wait_for(lk, std::chrono::seconds(8),
+                          [&] { return wait_slot.done; });
+  }
+  {
+    std::lock_guard lock(impl_->open_waits_mutex);
+    impl_->open_waits.erase(corr);
+  }
+  if (!wait_slot.done) {
+    // Timed out locally.
+    t.impl_->mode.store(Mode::Closed);
+    t.impl_->deny_reason.store(static_cast<uint16_t>(
+        hyper_derp::HdDenyReason::kTargetUnresponsive));
+    return std::unexpected(
+        MakeError(ErrorCode::kOpenFailed,
+                  "OpenConnection timed out"));
+  }
+  const auto& r = wait_slot.result;
+  if (r.mode == hyper_derp::HdConnMode::kDenied) {
+    t.impl_->mode.store(Mode::Closed);
+    t.impl_->deny_reason.store(
+        static_cast<uint16_t>(r.deny_reason));
+    return std::unexpected(
+        MakeError(ErrorCode::kOpenFailed,
+                  "OpenConnection denied"));
+  }
+  t.impl_->mode.store(
+      r.mode == hyper_derp::HdConnMode::kDirect
+          ? Mode::Direct
+          : Mode::Relayed);
   return t;
 }
 
