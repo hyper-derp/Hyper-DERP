@@ -22,6 +22,20 @@ FetchContent_Declare(spdlog
 )
 FetchContent_MakeAvailable(spdlog)
 
+# msgpack-cxx — MessagePack codec used by the einheit control
+# channel. Keep the version aligned with einheit-cli; both sides
+# share the same wire format, and version drift here would silently
+# corrupt Request / Response envelopes.
+FetchContent_Declare(msgpack-cxx
+  GIT_REPOSITORY https://github.com/msgpack/msgpack-c.git
+  GIT_TAG cpp-6.1.1
+  GIT_SHALLOW TRUE
+)
+set(MSGPACK_CXX20 OFF CACHE BOOL "" FORCE)
+set(MSGPACK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(MSGPACK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(msgpack-cxx)
+
 # rapidyaml — fast YAML parser.
 FetchContent_Declare(ryml
   GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git

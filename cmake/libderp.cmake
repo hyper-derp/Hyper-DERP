@@ -42,6 +42,7 @@ add_library(libderp_obj OBJECT
   src/hd_resolver.cc
   src/hd_audit.cc
   src/fleet_controller.cc
+  src/einheit_protocol.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
@@ -60,6 +61,7 @@ target_link_libraries(libderp_obj PUBLIC
   OpenSSL::SSL
   OpenSSL::Crypto
   ryml::ryml
+  msgpack-cxx
   pthread
 )
 target_compile_definitions(libderp_obj PUBLIC
@@ -84,6 +86,7 @@ target_link_libraries(libderp PUBLIC
   OpenSSL::SSL
   OpenSSL::Crypto
   ryml::ryml
+  msgpack-cxx
   pthread
 )
 target_compile_definitions(libderp PUBLIC
