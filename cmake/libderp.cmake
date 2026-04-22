@@ -39,6 +39,8 @@ add_library(libderp_obj OBJECT
   src/ice.cc
   src/ctl_channel.cc
   src/key_format.cc
+  src/hd_resolver.cc
+  src/hd_audit.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
