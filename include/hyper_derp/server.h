@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "hyper_derp/control_plane.h"
+#include "hyper_derp/einheit_channel.h"
 #include "hyper_derp/fleet_controller.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
@@ -153,6 +154,12 @@ struct ServerConfig {
     int poll_interval_secs = 60;
     std::string bundle_cache_path;
   } hd_fleet_controller;
+  /// einheit control-plane ZMQ endpoint (ipc:// ...). Empty
+  /// disables the einheit channel (falls back to legacy
+  /// ctl_channel only).
+  std::string einheit_ctl_endpoint;
+  /// einheit event PUB endpoint. Empty disables events.
+  std::string einheit_pub_endpoint;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").
@@ -194,6 +201,7 @@ struct Server {
   MetricsServer* metrics_server = nullptr;
   FleetController fleet_controller{};
   bool fleet_controller_started = false;
+  EinheitChannel* einheit_channel = nullptr;
 
   // Level 2 (direct path) subsystems.
   IceAgent ice_agent{};

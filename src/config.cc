@@ -579,6 +579,21 @@ auto LoadConfig(const char* path, ServerConfig* config)
     }
   }
 
+  // einheit protocol endpoints (optional).
+  if (root.has_child("einheit")) {
+    auto e = root["einheit"];
+    if (e.is_map()) {
+      if (e.has_child("ctl_endpoint")) {
+        ReadStr(e["ctl_endpoint"],
+                &config->einheit_ctl_endpoint);
+      }
+      if (e.has_child("pub_endpoint")) {
+        ReadStr(e["pub_endpoint"],
+                &config->einheit_pub_endpoint);
+      }
+    }
+  }
+
   // Log level (returned in config for main.cc to apply).
   if (root.has_child("log_level")) {
     auto val = root["log_level"].val();

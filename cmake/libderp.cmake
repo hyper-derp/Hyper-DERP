@@ -43,6 +43,7 @@ add_library(libderp_obj OBJECT
   src/hd_audit.cc
   src/fleet_controller.cc
   src/einheit_protocol.cc
+  src/einheit_channel.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include

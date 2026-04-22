@@ -145,7 +145,8 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
                    const char* seed_host,
                    uint16_t seed_port,
                    const char* local_fleet_id,
-                   const char* accept_fleet_id) {
+                   const char* accept_fleet_id,
+                   const char* einheit_ctl) {
   // Generate once in the parent so every forked child
   // reads the same paths (static locals don't survive the
   // fork, but the files on disk do).
@@ -197,6 +198,9 @@ pid_t StartHdRelay(uint16_t port, int num_workers,
       rule.fleet_id = accept_fleet_id;
       config.hd_federation_policy.accept_from.push_back(
           std::move(rule));
+    }
+    if (einheit_ctl && einheit_ctl[0] != '\0') {
+      config.einheit_ctl_endpoint = einheit_ctl;
     }
 
     Server server;

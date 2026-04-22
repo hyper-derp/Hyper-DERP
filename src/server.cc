@@ -1008,6 +1008,23 @@ auto ServerRun(Server* server,
           ? &server->control_plane.audit_ring
           : nullptr);
 
+  // Start the einheit control channel (runs alongside the
+  // legacy JSON ctl_channel for the transition period so
+  // hdctl keeps working).
+  if (!server->config.einheit_ctl_endpoint.empty()) {
+    server->einheit_channel = EinheitChannelStart(
+        server->config.einheit_ctl_endpoint,
+        server->config.einheit_pub_endpoint, server);
+    if (server->einheit_channel) {
+      spdlog::info(
+          "einheit channel ready on {} (pub: {})",
+          server->config.einheit_ctl_endpoint,
+          server->config.einheit_pub_endpoint.empty()
+              ? "disabled"
+              : server->config.einheit_pub_endpoint);
+    }
+  }
+
   // Connect to seed relays in a background thread.
   if (!server->config.seed_relays.empty() &&
       server->hd_enabled &&
@@ -1326,6 +1343,10 @@ void ServerStop(Server* server) {
 }
 
 void ServerDestroy(Server* server) {
+  if (server->einheit_channel) {
+    EinheitChannelStop(server->einheit_channel);
+    server->einheit_channel = nullptr;
+  }
   if (server->fleet_controller_started) {
     FleetControllerStop(&server->fleet_controller);
     server->fleet_controller_started = false;
