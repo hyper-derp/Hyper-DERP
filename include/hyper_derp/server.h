@@ -160,6 +160,12 @@ struct ServerConfig {
   std::string einheit_ctl_endpoint;
   /// einheit event PUB endpoint. Empty disables events.
   std::string einheit_pub_endpoint;
+  /// Append-only commit log for live candidate-config
+  /// changes. Each successful `commit` appends one
+  /// tab-separated record; on startup the channel replays
+  /// the log so committed changes survive a restart.
+  /// Empty disables persistence.
+  std::string einheit_commit_log_path;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").

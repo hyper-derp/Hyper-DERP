@@ -9,17 +9,24 @@
 
 #include "hyper_derp/einheit_channel.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <sodium.h>
 #include <spdlog/spdlog.h>
@@ -803,6 +810,192 @@ ConfigSession& Config() {
   return s;
 }
 
+// -- Persistence ---------------------------------------
+
+// One committed record on disk. Tab-separated fields, one
+// record per line:
+//   <commit_id>\t<rfc3339_ts>\tS\t<path>\t<value>[\tS..][\tD\t<path>..]\n
+// Values in the current allowlist are bool / int / enum
+// strings, none of which contain tabs or newlines, so the
+// format is reversible without escaping.
+struct CommitRecord {
+  uint64_t commit_id = 0;
+  std::vector<std::pair<std::string, std::string>> sets;
+  std::vector<std::string> deletes;
+};
+
+std::string EncodeCommitRecord(uint64_t commit_id,
+                                const std::string& ts,
+                                const CommitRecord& rec) {
+  std::string line = std::format("{}\t{}", commit_id, ts);
+  for (const auto& [k, v] : rec.sets) {
+    line += "\tS\t";
+    line += k;
+    line += "\t";
+    line += v;
+  }
+  for (const auto& k : rec.deletes) {
+    line += "\tD\t";
+    line += k;
+  }
+  line += "\n";
+  return line;
+}
+
+// Parse one line (no trailing newline). Returns false on
+// malformed input; the caller logs and skips.
+bool ParseCommitLine(const std::string& line,
+                      CommitRecord* out) {
+  std::vector<std::string> tok;
+  std::string cur;
+  for (char c : line) {
+    if (c == '\t') {
+      tok.push_back(std::move(cur));
+      cur.clear();
+    } else {
+      cur.push_back(c);
+    }
+  }
+  tok.push_back(std::move(cur));
+  if (tok.size() < 2) return false;
+  try {
+    out->commit_id =
+        static_cast<uint64_t>(std::stoull(tok[0]));
+  } catch (...) {
+    return false;
+  }
+  // tok[1] is timestamp — stored for observability only.
+  for (size_t i = 2; i < tok.size();) {
+    if (tok[i] == "S") {
+      if (i + 2 >= tok.size()) return false;
+      out->sets.emplace_back(tok[i + 1], tok[i + 2]);
+      i += 3;
+    } else if (tok[i] == "D") {
+      if (i + 1 >= tok.size()) return false;
+      out->deletes.push_back(tok[i + 1]);
+      i += 2;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+void AppendCommitRecord(const std::string& path,
+                         const std::string& line) {
+  if (path.empty()) return;
+  int fd = ::open(path.c_str(),
+                  O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+                  0640);
+  if (fd < 0) {
+    spdlog::warn(
+        "einheit commit log open {} failed: {}",
+        path, std::strerror(errno));
+    return;
+  }
+  const char* p = line.data();
+  size_t remaining = line.size();
+  while (remaining > 0) {
+    ssize_t n = ::write(fd, p, remaining);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      spdlog::warn(
+          "einheit commit log write {} failed: {}",
+          path, std::strerror(errno));
+      break;
+    }
+    p += n;
+    remaining -= n;
+  }
+  ::fsync(fd);
+  ::close(fd);
+}
+
+// Replay commits from the log into live state. Called
+// once from EinheitChannelStart before the ROUTER loop
+// begins accepting requests, so the server comes up with
+// the same state it was in before the last restart.
+void ReplayCommitLog(Server* s, const std::string& path) {
+  std::ifstream in(path);
+  if (!in.is_open()) return;
+
+  // Coalesce commits: later writes of the same key win,
+  // and a delete clears the key. Then apply each final
+  // value once through its applier.
+  std::unordered_map<std::string, std::string> final_state;
+  std::unordered_set<std::string> seen_keys;
+  uint64_t max_id = 0;
+  int record_count = 0;
+  int bad_count = 0;
+
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    CommitRecord rec;
+    if (!ParseCommitLine(line, &rec)) {
+      bad_count++;
+      continue;
+    }
+    for (const auto& [k, v] : rec.sets) {
+      final_state[k] = v;
+      seen_keys.insert(k);
+    }
+    for (const auto& k : rec.deletes) {
+      final_state.erase(k);
+      seen_keys.insert(k);
+    }
+    if (rec.commit_id > max_id) max_id = rec.commit_id;
+    record_count++;
+  }
+
+  const auto& paths = ConfigPaths();
+  bool any_hd = false;
+  for (const auto& [k, _] : final_state) {
+    auto it = paths.find(k);
+    if (it != paths.end() && it->second.needs_hd_lock) {
+      any_hd = true;
+      break;
+    }
+  }
+
+  auto apply_all = [&]() {
+    for (const auto& [k, v] : final_state) {
+      auto it = paths.find(k);
+      if (it == paths.end()) {
+        bad_count++;
+        continue;
+      }
+      auto verr = it->second.validate(v);
+      if (!verr.empty()) {
+        spdlog::warn(
+            "einheit commit log: {}={} failed "
+            "validation ({}); skipping",
+            k, v, verr);
+        bad_count++;
+        continue;
+      }
+      it->second.apply(s, v);
+    }
+  };
+  if (any_hd) {
+    std::lock_guard lock(s->hd_peers.mutex);
+    apply_all();
+  } else {
+    apply_all();
+  }
+
+  Config().commit_count = max_id;
+  spdlog::info(
+      "einheit commit log replayed {}: {} records, "
+      "{} keys, {} bad",
+      path, record_count,
+      static_cast<int>(final_state.size()), bad_count);
+}
+
+// Defined later in this TU, reused here for commit-log
+// timestamps.
+std::string NowRfc3339();
+
 bool SessionMatches(const Request& req) {
   auto& cfg = Config();
   if (!cfg.active_id) return false;
@@ -956,6 +1149,24 @@ void Commit(Server* s, const Request& req,
 
   cfg.commit_count += 1;
   uint64_t id = cfg.commit_count;
+
+  // Persist before clearing the session so a crash during
+  // log-write leaves the candidate visible (operator can
+  // retry). Disabled when commit_log_path is unset.
+  if (!s->config.einheit_commit_log_path.empty()) {
+    CommitRecord rec;
+    rec.commit_id = id;
+    for (const auto& [k, v] : cfg.set_values) {
+      rec.sets.emplace_back(k, v);
+    }
+    for (const auto& k : cfg.deleted_paths) {
+      rec.deletes.push_back(k);
+    }
+    AppendCommitRecord(
+        s->config.einheit_commit_log_path,
+        EncodeCommitRecord(id, NowRfc3339(), rec));
+  }
+
   cfg.active_id.reset();
   cfg.set_values.clear();
   cfg.deleted_paths.clear();
@@ -1168,6 +1379,14 @@ EinheitChannel* EinheitChannelStart(
   ch->server = server;
   ch->registry = MakeRegistry();
   ch->pub_endpoint = pub_endpoint;
+  // Replay persisted commits before the ROUTER starts
+  // accepting so the daemon comes up with the same live
+  // state it had before the restart.
+  if (server != nullptr &&
+      !server->config.einheit_commit_log_path.empty()) {
+    ReplayCommitLog(server,
+                     server->config.einheit_commit_log_path);
+  }
   if (!pub_endpoint.empty()) {
     try {
       ch->pub_sock = std::make_unique<zmq::socket_t>(

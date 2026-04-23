@@ -591,6 +591,10 @@ auto LoadConfig(const char* path, ServerConfig* config)
         ReadStr(e["pub_endpoint"],
                 &config->einheit_pub_endpoint);
       }
+      if (e.has_child("commit_log_path")) {
+        ReadStr(e["commit_log_path"],
+                &config->einheit_commit_log_path);
+      }
     }
   }
 
