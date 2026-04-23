@@ -94,6 +94,68 @@ bool ResolveKey(const Request& req, int arg_idx,
   return true;
 }
 
+// -- Role + handler registry types ---------------------
+
+// Role required by a handler to pass the server-side
+// gate. Mirrors the CLI's RoleGate so an operator can
+// deliberately opt in via EINHEIT_ROLE=admin and still
+// be rejected if their actual authority is lower.
+//
+// The gate is advisory today: the caller's role is taken
+// from Request::role which the CLI stamps itself. A
+// proper SO_PEERCRED-based check on the IPC socket is
+// the follow-up; until then the gate mainly prevents
+// accidental privilege escalation from a stock CLI,
+// not a crafted attacker.
+enum class Role {
+  kAny,
+  kOperator,
+  kAdmin,
+};
+
+struct ArgInfo {
+  const char* name;
+  const char* help;
+  bool required;
+};
+
+struct HandlerEntry {
+  Handler fn;
+  Role required;
+  // Capability metadata. Returned by the `describe`
+  // handler so CLI clients can build their command tree
+  // at runtime instead of hard-coding an adapter. Empty
+  // `path` means "no CLI-visible surface" — useful for
+  // internal verbs or ones the framework owns.
+  const char* path;
+  const char* help;
+  bool requires_session;
+  std::vector<ArgInfo> args;
+};
+
+using Registry =
+    std::unordered_map<std::string, HandlerEntry>;
+
+bool RoleOk(const std::string& caller, Role required) {
+  if (required == Role::kAny) return true;
+  if (caller == "admin") return true;
+  if (required == Role::kOperator && caller == "operator") {
+    return true;
+  }
+  return false;
+}
+
+const char* RoleNameFor(Role r) {
+  switch (r) {
+    case Role::kAdmin: return "admin";
+    case Role::kOperator: return "operator";
+    case Role::kAny: return "any";
+  }
+  return "any";
+}
+
+// -- Key helpers ---------------------------------------
+
 std::string KeyHex(const Key& k) {
   char hex[kKeySize * 2 + 1];
   KeyToHex(k, hex);
@@ -632,6 +694,107 @@ void PeerRuleAdd(Server* s, const Request& req,
                           "dst={}\n",
                           KeyToCkString(src),
                           KeyToCkString(dst)));
+}
+
+// -- Service control -----------------------------------
+
+// Registry lives on EinheitChannel, whose full struct
+// definition follows the handlers in this TU. Accessor
+// is defined after that struct.
+const Registry& ChannelRegistry(EinheitChannel* ch);
+
+// Fork a detached child that sleeps long enough for the
+// ROUTER to flush our reply, then execs `systemctl --user
+// <action> hyper-derp`. Returning immediately lets the
+// handler serialize a Response; the systemctl call will
+// either restart (systemd relaunches) or stop the
+// process about 200ms later.
+void ScheduleSystemctl(const char* action) {
+  pid_t pid = fork();
+  if (pid < 0) {
+    spdlog::error(
+        "daemon_{}: fork failed: {}",
+        action, std::strerror(errno));
+    return;
+  }
+  if (pid != 0) return;  // parent — back to handler.
+
+  // Detach from the parent's controlling terminal and fd
+  // table; systemctl shouldn't hold onto our logs or
+  // ZMQ sockets.
+  setsid();
+  for (int fd = 0; fd < 3; fd++) close(fd);
+  int devnull = ::open("/dev/null", O_RDWR);
+  if (devnull >= 0) {
+    (void)dup2(devnull, 0);
+    (void)dup2(devnull, 1);
+    (void)dup2(devnull, 2);
+    if (devnull > 2) close(devnull);
+  }
+  const char* cmd =
+      "sleep 0.2 && systemctl --user restart hyper-derp";
+  if (std::strcmp(action, "stop") == 0) {
+    cmd = "sleep 0.2 && systemctl --user stop hyper-derp";
+  }
+  execlp("sh", "sh", "-c", cmd, (char*)nullptr);
+  _exit(127);  // exec failed
+}
+
+void DaemonRestart(Server* /*s*/, const Request& /*req*/,
+                    Response* r) {
+  SetBody(r, "status=restarting\n");
+  ScheduleSystemctl("restart");
+}
+
+void DaemonStop(Server* /*s*/, const Request& /*req*/,
+                 Response* r) {
+  SetBody(r, "status=stopping\n");
+  ScheduleSystemctl("stop");
+}
+
+// Describe returns the full command catalog so CLI
+// clients can build their command tree at runtime
+// instead of compiling it in. Text/key=value body to
+// stay consistent with every other handler; a typed
+// MessagePack shape is a future upgrade if a second
+// consumer shows up.
+void Describe(Server* s, const Request& /*req*/,
+               Response* r) {
+  if (!s->einheit_channel) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("unavailable",
+                       "einheit channel not attached");
+    return;
+  }
+  const auto& reg = ChannelRegistry(s->einheit_channel);
+  std::string b;
+  b += "v=1\n";
+  int idx = 0;
+  for (const auto& [wire, e] : reg) {
+    if (!e.path || e.path[0] == '\0') continue;
+    b += std::format("cmd.{}.path={}\n", idx, e.path);
+    b += std::format("cmd.{}.wire={}\n", idx, wire);
+    b += std::format("cmd.{}.role={}\n", idx,
+                     RoleNameFor(e.required));
+    b += std::format("cmd.{}.help={}\n", idx, e.help);
+    b += std::format("cmd.{}.requires_session={}\n",
+                     idx,
+                     e.requires_session ? "true" : "false");
+    b += std::format("cmd.{}.arg_count={}\n", idx,
+                     e.args.size());
+    for (size_t a = 0; a < e.args.size(); ++a) {
+      b += std::format("cmd.{}.arg.{}.name={}\n", idx, a,
+                       e.args[a].name);
+      b += std::format("cmd.{}.arg.{}.help={}\n", idx, a,
+                       e.args[a].help);
+      b += std::format(
+          "cmd.{}.arg.{}.required={}\n", idx, a,
+          e.args[a].required ? "true" : "false");
+    }
+    idx++;
+  }
+  b += std::format("count={}\n", idx);
+  SetBody(r, b);
 }
 
 // -- Relay-scoped --------------------------------------
@@ -1242,7 +1405,8 @@ void Set(Server* /*s*/, const Request& req,
     r->status = ResponseStatus::kError;
     r->error = ErrorOf(
         "not_live_mutable",
-        std::format("path not live-mutable: {}", path));
+        std::format("path not live-mutable: {}", path),
+        "edit the yaml and `daemon restart`");
     return;
   }
   auto err = it->second.validate(value);
@@ -1290,7 +1454,8 @@ void Delete(Server* /*s*/, const Request& req,
     r->status = ResponseStatus::kError;
     r->error = ErrorOf(
         "not_live_mutable",
-        std::format("path not live-mutable: {}", path));
+        std::format("path not live-mutable: {}", path),
+        "edit the yaml and `daemon restart`");
     return;
   }
   cfg.set_values.erase(path);
@@ -1552,71 +1717,149 @@ void Rollback(Server* s, const Request& req,
 
 // -- Dispatch ------------------------------------------
 
-// Role required by a handler to pass the server-side
-// gate. Mirrors the CLI's RoleGate so an operator can
-// deliberately opt in via EINHEIT_ROLE=admin and still
-// be rejected if their actual authority is lower.
-//
-// The gate is advisory today: the caller's role is taken
-// from Request::role which the CLI stamps itself. A
-// proper SO_PEERCRED-based check on the IPC socket is
-// the follow-up; until then the gate mainly prevents
-// accidental privilege escalation from a stock CLI,
-// not a crafted attacker.
-enum class Role {
-  kAny,
-  kOperator,
-  kAdmin,
-};
-
-struct HandlerEntry {
-  Handler fn;
-  Role required;
-};
-
-using Registry =
-    std::unordered_map<std::string, HandlerEntry>;
-
-bool RoleOk(const std::string& caller, Role required) {
-  if (required == Role::kAny) return true;
-  if (caller == "admin") return true;
-  if (required == Role::kOperator && caller == "operator") {
-    return true;
-  }
-  return false;
-}
-
 Registry MakeRegistry() {
   Registry m;
-  m["show_status"] = {ShowStatus, Role::kAny};
-  m["show_peers"] = {ShowPeers, Role::kAny};
-  m["show_peer"] = {ShowPeer, Role::kAny};
-  m["show_audit"] = {ShowAudit, Role::kOperator};
-  m["show_counters"] = {ShowCounters, Role::kOperator};
-  m["show_config"] = {ShowConfig, Role::kOperator};
-  m["show_fleet"] = {ShowFleet, Role::kOperator};
-  m["show_commits"] = {ShowCommits, Role::kOperator};
-  m["show_commit"] = {ShowCommit, Role::kOperator};
-  m["peer_approve"] = {PeerApprove, Role::kOperator};
-  m["peer_deny"] = {PeerDeny, Role::kOperator};
-  m["peer_revoke"] = {PeerRevoke, Role::kOperator};
-  m["peer_redirect"] = {PeerRedirect, Role::kOperator};
-  m["peer_policy_set"] = {PeerPolicySet, Role::kOperator};
+  const std::vector<ArgInfo> key_arg = {
+      {"key", "ck_/rk_ prefixed or raw-hex peer key",
+       true}};
+  const std::vector<ArgInfo> set_args = {
+      {"path", "schema path (dot or space separated)",
+       true},
+      {"value", "new value", true}};
+  const std::vector<ArgInfo> path_only = {
+      {"path", "schema path (dot or space separated)",
+       true}};
+  const std::vector<ArgInfo> commit_id_arg = {
+      {"id", "commit id from `show commits`", true}};
+
+  m["show_status"] = {ShowStatus, Role::kAny,
+                      "show status",
+                      "Relay + fleet + peer summary",
+                      false, {}};
+  m["show_peers"] = {ShowPeers, Role::kAny,
+                     "show peers", "List HD peers",
+                     false, {}};
+  m["show_peer"] = {ShowPeer, Role::kAny, "show peer",
+                    "One peer's detail + policy + rules",
+                    false, key_arg};
+  m["show_audit"] = {ShowAudit, Role::kOperator,
+                     "show audit",
+                     "Recent routing-policy decisions",
+                     false, {}};
+  m["show_counters"] = {ShowCounters, Role::kOperator,
+                         "show counters",
+                         "Per-worker + aggregate counters",
+                         false, {}};
+  m["show_config"] = {ShowConfig, Role::kOperator,
+                       "show config",
+                       "Redacted runtime configuration",
+                       false,
+                       {{"prefix",
+                         "optional path prefix filter",
+                         false}}};
+  m["show_fleet"] = {ShowFleet, Role::kOperator,
+                     "show fleet",
+                     "Fleet controller + relay table "
+                     "state",
+                     false, {}};
+  m["show_commits"] = {ShowCommits, Role::kOperator,
+                        "show commits",
+                        "List commit history",
+                        false, {}};
+  m["show_commit"] = {ShowCommit, Role::kOperator,
+                       "show commit",
+                       "Show a single commit by id",
+                       false, commit_id_arg};
+  m["peer_approve"] = {PeerApprove, Role::kOperator,
+                        "peer approve",
+                        "Approve a pending peer",
+                        false, key_arg};
+  m["peer_deny"] = {PeerDeny, Role::kOperator,
+                     "peer deny",
+                     "Deny a pending peer",
+                     false, key_arg};
+  m["peer_revoke"] = {PeerRevoke, Role::kOperator,
+                       "peer revoke",
+                       "Revoke (denylist + disconnect) "
+                       "a peer",
+                       false, key_arg};
+  m["peer_redirect"] = {PeerRedirect, Role::kOperator,
+                         "peer redirect",
+                         "Send a Redirect frame to a peer",
+                         false,
+                         {{"key", "peer key", true},
+                          {"target",
+                           "destination relay or "
+                           "host:port", true}}};
+  m["peer_policy_set"] = {PeerPolicySet, Role::kOperator,
+                           "peer policy set",
+                           "Pin an intent on a peer",
+                           false,
+                           {{"key", "peer key", true},
+                            {"intent",
+                             "prefer_direct|require_"
+                             "direct|prefer_relay|"
+                             "require_relay", true}}};
   m["peer_policy_clear"] = {PeerPolicyClear,
-                             Role::kOperator};
-  m["peer_rule_add"] = {PeerRuleAdd, Role::kOperator};
-  m["relay_init"] = {RelayInit, Role::kAdmin};
-  m["configure"] = {Configure, Role::kAdmin};
-  m["set"] = {Set, Role::kAdmin};
-  m["delete"] = {Delete, Role::kAdmin};
-  m["commit"] = {Commit, Role::kAdmin};
-  m["rollback"] = {Rollback, Role::kAdmin};
-  // The CLI sends this as a distinct verb because the
-  // shell elides path tokens that aren't bound to arg
-  // slots, so otherwise `rollback candidate` and
-  // `rollback previous` are indistinguishable on the
-  // wire. Handler inspects command to pick the branch.
-  m["rollback_previous"] = {Rollback, Role::kAdmin};
+                             Role::kOperator,
+                             "peer policy clear",
+                             "Remove a peer's intent pin",
+                             false, key_arg};
+  m["peer_rule_add"] = {PeerRuleAdd, Role::kOperator,
+                         "peer rule add",
+                         "Add a forwarding rule",
+                         false,
+                         {{"src", "source peer key", true},
+                          {"dst", "destination peer key",
+                           true}}};
+  m["relay_init"] = {RelayInit, Role::kAdmin,
+                     "relay init",
+                     "Generate a fresh relay key "
+                     "(one-shot)",
+                     false, {}};
+  m["daemon_restart"] = {DaemonRestart, Role::kAdmin,
+                          "daemon restart",
+                          "Restart the daemon via "
+                          "systemd — session survives "
+                          "via DEALER auto-reconnect",
+                          false, {}};
+  m["daemon_stop"] = {DaemonStop, Role::kAdmin,
+                       "daemon stop",
+                       "Stop the daemon via systemd — "
+                       "the next wire command blocks "
+                       "until it starts back up",
+                       false, {}};
+  m["configure"] = {Configure, Role::kAdmin, "configure",
+                    "Enter configure mode and open a "
+                    "candidate session",
+                    false, {}};
+  m["set"] = {Set, Role::kAdmin, "set",
+              "Set a candidate-config value at a schema "
+              "path",
+              true, set_args};
+  m["delete"] = {Delete, Role::kAdmin, "delete",
+                  "Remove a candidate-config value at a "
+                  "schema path",
+                  true, path_only};
+  m["commit"] = {Commit, Role::kAdmin, "commit",
+                 "Apply the candidate configuration",
+                 true, {}};
+  m["rollback"] = {Rollback, Role::kAdmin,
+                    "rollback candidate",
+                    "Discard the candidate session",
+                    true, {}};
+  // Distinct wire verb so the daemon can tell
+  // `rollback previous` apart from `rollback
+  // candidate` — the CLI shell elides path tokens
+  // that aren't bound to arg slots.
+  m["rollback_previous"] = {Rollback, Role::kAdmin,
+                             "rollback previous",
+                             "Roll back to the previous "
+                             "commit", false, {}};
+  m["describe"] = {Describe, Role::kAny, "",
+                    "Return the command catalog for "
+                    "CLI discovery",
+                    false, {}};
   return m;
 }
 
@@ -1638,6 +1881,10 @@ struct EinheitChannel {
 };
 
 namespace {
+
+const Registry& ChannelRegistry(EinheitChannel* ch) {
+  return ch->registry;
+}
 
 std::string NowRfc3339() {
   auto now = std::chrono::system_clock::now();
