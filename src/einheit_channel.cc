@@ -911,42 +911,73 @@ void AppendCommitRecord(const std::string& path,
   ::close(fd);
 }
 
+// One on-disk record plus the timestamp field, as loaded
+// from the log. Used for replay and for `show commits` /
+// `show commit`.
+struct StoredCommit {
+  CommitRecord rec;
+  std::string ts;
+};
+
+// Read every complete line in the log. Caller owns the
+// returned vector. `bad_count` is incremented for lines
+// that fail to parse; partial last lines (no trailing
+// newline) are dropped silently. Returns an empty vector
+// if the file can't be opened.
+std::vector<StoredCommit> LoadCommitLog(
+    const std::string& path, int* bad_count) {
+  std::vector<StoredCommit> out;
+  std::ifstream in(path);
+  if (!in.is_open()) return out;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    StoredCommit sc;
+    if (!ParseCommitLine(line, &sc.rec)) {
+      if (bad_count) (*bad_count)++;
+      continue;
+    }
+    // Recover the timestamp (2nd tab-separated field) for
+    // observability. ParseCommitLine already validated
+    // structure, so the field always exists here.
+    auto first = line.find('\t');
+    auto second =
+        first == std::string::npos
+            ? std::string::npos
+            : line.find('\t', first + 1);
+    if (first != std::string::npos &&
+        second != std::string::npos) {
+      sc.ts = line.substr(first + 1, second - first - 1);
+    }
+    out.push_back(std::move(sc));
+  }
+  return out;
+}
+
 // Replay commits from the log into live state. Called
 // once from EinheitChannelStart before the ROUTER loop
 // begins accepting requests, so the server comes up with
 // the same state it was in before the last restart.
 void ReplayCommitLog(Server* s, const std::string& path) {
-  std::ifstream in(path);
-  if (!in.is_open()) return;
+  int bad_count = 0;
+  auto stored = LoadCommitLog(path, &bad_count);
+  if (stored.empty() && bad_count == 0) return;
 
   // Coalesce commits: later writes of the same key win,
   // and a delete clears the key. Then apply each final
   // value once through its applier.
   std::unordered_map<std::string, std::string> final_state;
-  std::unordered_set<std::string> seen_keys;
   uint64_t max_id = 0;
-  int record_count = 0;
-  int bad_count = 0;
-
-  std::string line;
-  while (std::getline(in, line)) {
-    if (line.empty()) continue;
-    CommitRecord rec;
-    if (!ParseCommitLine(line, &rec)) {
-      bad_count++;
-      continue;
-    }
-    for (const auto& [k, v] : rec.sets) {
+  for (const auto& sc : stored) {
+    for (const auto& [k, v] : sc.rec.sets) {
       final_state[k] = v;
-      seen_keys.insert(k);
     }
-    for (const auto& k : rec.deletes) {
+    for (const auto& k : sc.rec.deletes) {
       final_state.erase(k);
-      seen_keys.insert(k);
     }
-    if (rec.commit_id > max_id) max_id = rec.commit_id;
-    record_count++;
+    if (sc.rec.commit_id > max_id) max_id = sc.rec.commit_id;
   }
+  int record_count = static_cast<int>(stored.size());
 
   const auto& paths = ConfigPaths();
   bool any_hd = false;
@@ -995,6 +1026,114 @@ void ReplayCommitLog(Server* s, const std::string& path) {
 // Defined later in this TU, reused here for commit-log
 // timestamps.
 std::string NowRfc3339();
+
+// -- Commit-history readers ----------------------------
+
+void ShowCommits(Server* s, const Request& /*req*/,
+                  Response* r) {
+  const auto& path = s->config.einheit_commit_log_path;
+  if (path.empty()) {
+    SetBody(r,
+            "commit.count=0\nnote=commit log disabled\n");
+    return;
+  }
+  int bad = 0;
+  auto stored = LoadCommitLog(path, &bad);
+  std::string b;
+  for (size_t i = 0; i < stored.size(); ++i) {
+    const auto& sc = stored[i];
+    b += std::format("commit.{}.id={}\n", i,
+                     sc.rec.commit_id);
+    b += std::format("commit.{}.ts={}\n", i, sc.ts);
+    b += std::format("commit.{}.sets={}\n", i,
+                     sc.rec.sets.size());
+    b += std::format("commit.{}.deletes={}\n", i,
+                     sc.rec.deletes.size());
+  }
+  b += std::format("commit.count={}\n", stored.size());
+  if (bad > 0) {
+    b += std::format("commit.bad={}\n", bad);
+  }
+  SetBody(r, b);
+}
+
+void ShowCommit(Server* s, const Request& req,
+                 Response* r) {
+  if (req.args.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("bad_args",
+                       "usage: show commit <id>");
+    return;
+  }
+  const auto& path = s->config.einheit_commit_log_path;
+  if (path.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_enabled",
+        "commit log disabled (set einheit.commit_log_path)");
+    return;
+  }
+  uint64_t target = 0;
+  try {
+    target =
+        static_cast<uint64_t>(std::stoull(req.args[0]));
+  } catch (...) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("bad_args",
+                       "commit id must be an integer");
+    return;
+  }
+  auto stored = LoadCommitLog(path, nullptr);
+
+  // Build the cumulative state up to (but not including)
+  // the target commit, so we can diff the target record
+  // against its predecessor state.
+  std::unordered_map<std::string, std::string> prev_state;
+  const StoredCommit* target_rec = nullptr;
+  for (const auto& sc : stored) {
+    if (sc.rec.commit_id == target) {
+      target_rec = &sc;
+      break;
+    }
+    for (const auto& [k, v] : sc.rec.sets) {
+      prev_state[k] = v;
+    }
+    for (const auto& k : sc.rec.deletes) {
+      prev_state.erase(k);
+    }
+  }
+  if (target_rec == nullptr) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_found",
+        std::format("no such commit: {}", target));
+    return;
+  }
+
+  std::string b;
+  b += std::format("commit_id={}\n", target_rec->rec.commit_id);
+  b += std::format("ts={}\n", target_rec->ts);
+  for (const auto& [k, v] : target_rec->rec.sets) {
+    auto it = prev_state.find(k);
+    if (it == prev_state.end()) {
+      b += std::format("+{}={}\n", k, v);
+    } else if (it->second != v) {
+      b += std::format("~{}={} (was {})\n", k, v,
+                       it->second);
+    } else {
+      b += std::format("={}={}\n", k, v);
+    }
+  }
+  for (const auto& k : target_rec->rec.deletes) {
+    auto it = prev_state.find(k);
+    if (it != prev_state.end()) {
+      b += std::format("-{}={}\n", k, it->second);
+    } else {
+      b += std::format("-{}=<unset>\n", k);
+    }
+  }
+  SetBody(r, b);
+}
 
 bool SessionMatches(const Request& req) {
   auto& cfg = Config();
@@ -1222,6 +1361,8 @@ Registry MakeRegistry() {
   m["delete"] = Delete;
   m["commit"] = Commit;
   m["rollback"] = Rollback;
+  m["show_commits"] = ShowCommits;
+  m["show_commit"] = ShowCommit;
   return m;
 }
 
