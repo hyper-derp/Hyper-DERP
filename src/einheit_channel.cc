@@ -15,9 +15,11 @@
 #include <format>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <sodium.h>
 #include <spdlog/spdlog.h>
@@ -641,6 +643,348 @@ void RelayInit(Server* /*s*/, const Request& /*req*/,
                  hex, KeyToRkString(k)));
 }
 
+// -- Candidate-config lifecycle ------------------------
+
+// Validators return an empty string on success, otherwise a
+// human-readable error message that gets surfaced as
+// `validation` / `bad_args` in the Response.
+
+std::string ValidateBool(const std::string& v) {
+  if (v == "true" || v == "false") return {};
+  return "expected true|false";
+}
+
+std::string ValidateIntNonNegative(const std::string& v) {
+  try {
+    size_t pos = 0;
+    int x = std::stoi(v, &pos);
+    if (pos != v.size()) return "expected integer";
+    if (x < 0) return "expected non-negative integer";
+    return {};
+  } catch (...) {
+    return "expected integer";
+  }
+}
+
+std::string ValidateLogLevel(const std::string& v) {
+  if (v == "trace" || v == "debug" || v == "info" ||
+      v == "warn" || v == "error" || v == "critical" ||
+      v == "off") {
+    return {};
+  }
+  return "expected trace|debug|info|warn|error|critical|off";
+}
+
+std::string ValidateEnrollMode(const std::string& v) {
+  if (v == "auto" || v == "manual") return {};
+  return "expected auto|manual";
+}
+
+std::string ValidateIntent(const std::string& v) {
+  if (v == "prefer_direct" || v == "require_direct" ||
+      v == "prefer_relay" || v == "require_relay") {
+    return {};
+  }
+  return "expected prefer_direct|require_direct|"
+         "prefer_relay|require_relay";
+}
+
+// Appliers mutate live Server state. Callers that touch
+// `s->hd_peers.*` state must hold `s->hd_peers.mutex`; the
+// commit handler acquires that lock once around the whole
+// batch.
+
+void ApplyLogLevel(Server* /*s*/, const std::string& v) {
+  if (v == "trace")
+    spdlog::set_level(spdlog::level::trace);
+  else if (v == "debug")
+    spdlog::set_level(spdlog::level::debug);
+  else if (v == "info")
+    spdlog::set_level(spdlog::level::info);
+  else if (v == "warn")
+    spdlog::set_level(spdlog::level::warn);
+  else if (v == "error")
+    spdlog::set_level(spdlog::level::err);
+  else if (v == "critical")
+    spdlog::set_level(spdlog::level::critical);
+  else if (v == "off")
+    spdlog::set_level(spdlog::level::off);
+}
+
+void ApplyEnrollMode(Server* s, const std::string& v) {
+  s->hd_peers.enroll_mode =
+      v == "auto" ? HdEnrollMode::kAutoApprove
+                  : HdEnrollMode::kManual;
+}
+
+void ApplyForbidDirect(Server* s, const std::string& v) {
+  s->hd_peers.relay_policy.forbid_direct = (v == "true");
+}
+
+void ApplyForbidRelayed(Server* s, const std::string& v) {
+  s->hd_peers.relay_policy.forbid_relayed = (v == "true");
+}
+
+void ApplyMaxDirectPeers(Server* s, const std::string& v) {
+  s->hd_peers.relay_policy.max_direct_peers = std::stoi(v);
+}
+
+void ApplyAuditRelayedTraffic(Server* s,
+                               const std::string& v) {
+  s->hd_peers.relay_policy.audit_relayed_traffic =
+      (v == "true");
+}
+
+void ApplyRelayDefaultMode(Server* s,
+                            const std::string& v) {
+  if (v == "prefer_direct")
+    s->hd_peers.relay_policy.default_mode =
+        HdIntent::kPreferDirect;
+  else if (v == "require_direct")
+    s->hd_peers.relay_policy.default_mode =
+        HdIntent::kRequireDirect;
+  else if (v == "prefer_relay")
+    s->hd_peers.relay_policy.default_mode =
+        HdIntent::kPreferRelay;
+  else if (v == "require_relay")
+    s->hd_peers.relay_policy.default_mode =
+        HdIntent::kRequireRelay;
+}
+
+struct ConfigPathDef {
+  std::string (*validate)(const std::string&);
+  void (*apply)(Server*, const std::string&);
+  // Does the applier need hd_peers.mutex held?
+  bool needs_hd_lock;
+};
+
+// Allowlist of live-mutable paths. set/delete against
+// any path not in this table is rejected at set time
+// with a `not_live_mutable` error. Paths not here still
+// need a daemon restart + yaml edit to take effect.
+const std::unordered_map<std::string, ConfigPathDef>&
+ConfigPaths() {
+  static const std::unordered_map<std::string,
+                                   ConfigPathDef>
+      kPaths = {
+          {"log_level",
+           {ValidateLogLevel, ApplyLogLevel, false}},
+          {"hd.enroll_mode",
+           {ValidateEnrollMode, ApplyEnrollMode, true}},
+          {"hd.relay_policy.default_mode",
+           {ValidateIntent, ApplyRelayDefaultMode, true}},
+          {"hd.relay_policy.forbid_direct",
+           {ValidateBool, ApplyForbidDirect, true}},
+          {"hd.relay_policy.forbid_relayed",
+           {ValidateBool, ApplyForbidRelayed, true}},
+          {"hd.relay_policy.max_direct_peers",
+           {ValidateIntNonNegative,
+            ApplyMaxDirectPeers, true}},
+          {"hd.relay_policy.audit_relayed_traffic",
+           {ValidateBool,
+            ApplyAuditRelayedTraffic, true}},
+      };
+  return kPaths;
+}
+
+// Candidate-config session state. Only the ROUTER
+// thread touches these fields (ConfigPath handlers
+// run one at a time on that thread), so the writes
+// need no extra synchronisation.
+struct ConfigSession {
+  std::optional<std::string> active_id;
+  std::unordered_map<std::string, std::string> set_values;
+  std::unordered_set<std::string> deleted_paths;
+  uint64_t next_id = 1;
+  uint64_t commit_count = 0;
+};
+ConfigSession& Config() {
+  static ConfigSession s;
+  return s;
+}
+
+bool SessionMatches(const Request& req) {
+  auto& cfg = Config();
+  if (!cfg.active_id) return false;
+  if (!req.session_id) return false;
+  return *req.session_id == *cfg.active_id;
+}
+
+void Configure(Server* /*s*/, const Request& /*req*/,
+                Response* r) {
+  auto& cfg = Config();
+  if (cfg.active_id) {
+    // Opening a new session blows away any orphaned one —
+    // single-writer model, last caller wins.
+    cfg.set_values.clear();
+    cfg.deleted_paths.clear();
+  }
+  cfg.active_id = std::format("sess_{}", cfg.next_id++);
+  SetBody(r, *cfg.active_id);
+}
+
+void Set(Server* /*s*/, const Request& req,
+          Response* r) {
+  auto& cfg = Config();
+  if (!cfg.active_id) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("no_session",
+                       "run `configure` first");
+    return;
+  }
+  if (!SessionMatches(req)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("stale_session",
+                       "session id does not match the "
+                       "active candidate");
+    return;
+  }
+  if (req.args.size() < 2) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "bad_args", "usage: set <path> <value>");
+    return;
+  }
+  const auto& path = req.args[0];
+  const auto& value = req.args[1];
+  const auto& paths = ConfigPaths();
+  auto it = paths.find(path);
+  if (it == paths.end()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_live_mutable",
+        std::format("path not live-mutable: {}", path));
+    return;
+  }
+  auto err = it->second.validate(value);
+  if (!err.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "validation",
+        std::format("{}: {}", path, err));
+    return;
+  }
+  cfg.set_values[path] = value;
+  cfg.deleted_paths.erase(path);
+}
+
+void Delete(Server* /*s*/, const Request& req,
+             Response* r) {
+  auto& cfg = Config();
+  if (!cfg.active_id) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("no_session",
+                       "run `configure` first");
+    return;
+  }
+  if (!SessionMatches(req)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("stale_session",
+                       "session id does not match the "
+                       "active candidate");
+    return;
+  }
+  if (req.args.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("bad_args",
+                       "usage: delete <path>");
+    return;
+  }
+  const auto& path = req.args[0];
+  if (!ConfigPaths().contains(path)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_live_mutable",
+        std::format("path not live-mutable: {}", path));
+    return;
+  }
+  cfg.set_values.erase(path);
+  cfg.deleted_paths.insert(path);
+}
+
+void Commit(Server* s, const Request& req,
+             Response* r) {
+  auto& cfg = Config();
+  if (!cfg.active_id) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "no_session",
+        "nothing to commit — run `configure`");
+    return;
+  }
+  if (!SessionMatches(req)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("stale_session",
+                       "session id does not match the "
+                       "active candidate");
+    return;
+  }
+
+  bool any_hd = false;
+  for (const auto& [p, _] : cfg.set_values) {
+    if (ConfigPaths().at(p).needs_hd_lock) {
+      any_hd = true;
+      break;
+    }
+  }
+  if (!any_hd) {
+    for (const auto& p : cfg.deleted_paths) {
+      if (ConfigPaths().at(p).needs_hd_lock) {
+        any_hd = true;
+        break;
+      }
+    }
+  }
+
+  // Lock once for any hd_peers mutation, then apply
+  // everything in one pass. `delete` currently has no
+  // effect since the default for every allowlisted path
+  // is recorded in the struct; we keep the path in the
+  // `deleted_paths` set for observability but don't try
+  // to re-derive the default at commit time.
+  auto apply_all = [&]() {
+    for (const auto& [p, v] : cfg.set_values) {
+      ConfigPaths().at(p).apply(s, v);
+    }
+  };
+  if (any_hd) {
+    std::lock_guard lock(s->hd_peers.mutex);
+    apply_all();
+  } else {
+    apply_all();
+  }
+
+  cfg.commit_count += 1;
+  uint64_t id = cfg.commit_count;
+  cfg.active_id.reset();
+  cfg.set_values.clear();
+  cfg.deleted_paths.clear();
+  SetBody(r, std::format("commit_id={}\n", id));
+}
+
+void Rollback(Server* /*s*/, const Request& req,
+               Response* r) {
+  auto& cfg = Config();
+  // `rollback candidate` — drop the in-flight session
+  // without applying anything. `rollback previous` would
+  // re-apply a prior commit; we don't keep commit history
+  // yet, so fall through with a structured error.
+  std::string which =
+      req.args.empty() ? std::string("candidate")
+                        : req.args[0];
+  if (which == "candidate") {
+    cfg.active_id.reset();
+    cfg.set_values.clear();
+    cfg.deleted_paths.clear();
+    return;
+  }
+  r->status = ResponseStatus::kError;
+  r->error = ErrorOf(
+      "unsupported",
+      "rollback previous not implemented — commit "
+      "history is not persisted yet");
+}
+
 // -- Dispatch ------------------------------------------
 
 using Registry = std::unordered_map<std::string, Handler>;
@@ -662,6 +1006,11 @@ Registry MakeRegistry() {
   m["peer_policy_clear"] = PeerPolicyClear;
   m["peer_rule_add"] = PeerRuleAdd;
   m["relay_init"] = RelayInit;
+  m["configure"] = Configure;
+  m["set"] = Set;
+  m["delete"] = Delete;
+  m["commit"] = Commit;
+  m["rollback"] = Rollback;
   return m;
 }
 
