@@ -673,6 +673,24 @@ std::string ValidateIntNonNegative(const std::string& v) {
   }
 }
 
+std::string ValidateUint64(const std::string& v) {
+  try {
+    size_t pos = 0;
+    (void)std::stoull(v, &pos);
+    if (pos != v.size()) return "expected integer";
+    return {};
+  } catch (...) {
+    return "expected non-negative integer";
+  }
+}
+
+std::string ValidateAnyString(const std::string& /*v*/) {
+  // Fleet id, audit tags etc. — we accept any byte
+  // sequence that survived MessagePack. Further shape
+  // checks belong to the handler that consumes it.
+  return {};
+}
+
 std::string ValidateLogLevel(const std::string& v) {
   if (v == "trace" || v == "debug" || v == "info" ||
       v == "warn" || v == "error" || v == "critical" ||
@@ -758,11 +776,32 @@ void ApplyRelayDefaultMode(Server* s,
         HdIntent::kRequireRelay;
 }
 
+void ApplyFleetId(Server* s, const std::string& v) {
+  s->hd_peers.federation_policy.local_fleet_id = v;
+}
+
+void ApplyPeerRateLimit(Server* s, const std::string& v) {
+  // Worker threads read this field from Ctx on every
+  // frame without holding a lock. Aligned 64-bit writes
+  // are atomic on all archs we build for, and relaxed
+  // ordering is acceptable — short windows of stale
+  // limits can't corrupt state, only briefly mis-count.
+  uint64_t x = std::stoull(v);
+  __atomic_store_n(&s->data_plane.peer_rate_limit, x,
+                   __ATOMIC_RELAXED);
+}
+
 struct ConfigPathDef {
   std::string (*validate)(const std::string&);
   void (*apply)(Server*, const std::string&);
   // Does the applier need hd_peers.mutex held?
   bool needs_hd_lock;
+  // Value to apply when the path is deleted (either via
+  // a `delete` op on commit or as part of a rollback).
+  // Kept in sync with the C++ struct defaults so a
+  // delete restores real state rather than leaving a
+  // stale previously-set value in place.
+  const char* default_value;
 };
 
 // Allowlist of live-mutable paths. set/delete against
@@ -775,21 +814,31 @@ ConfigPaths() {
                                    ConfigPathDef>
       kPaths = {
           {"log_level",
-           {ValidateLogLevel, ApplyLogLevel, false}},
+           {ValidateLogLevel, ApplyLogLevel, false,
+            "info"}},
           {"hd.enroll_mode",
-           {ValidateEnrollMode, ApplyEnrollMode, true}},
+           {ValidateEnrollMode, ApplyEnrollMode, true,
+            "manual"}},
           {"hd.relay_policy.default_mode",
-           {ValidateIntent, ApplyRelayDefaultMode, true}},
+           {ValidateIntent, ApplyRelayDefaultMode, true,
+            "prefer_direct"}},
           {"hd.relay_policy.forbid_direct",
-           {ValidateBool, ApplyForbidDirect, true}},
+           {ValidateBool, ApplyForbidDirect, true,
+            "false"}},
           {"hd.relay_policy.forbid_relayed",
-           {ValidateBool, ApplyForbidRelayed, true}},
+           {ValidateBool, ApplyForbidRelayed, true,
+            "false"}},
           {"hd.relay_policy.max_direct_peers",
            {ValidateIntNonNegative,
-            ApplyMaxDirectPeers, true}},
+            ApplyMaxDirectPeers, true, "0"}},
           {"hd.relay_policy.audit_relayed_traffic",
            {ValidateBool,
-            ApplyAuditRelayedTraffic, true}},
+            ApplyAuditRelayedTraffic, true, "true"}},
+          {"hd.federation.fleet_id",
+           {ValidateAnyString, ApplyFleetId, true, ""}},
+          {"peer_rate_limit",
+           {ValidateUint64, ApplyPeerRateLimit, false,
+            "0"}},
       };
   return kPaths;
 }
@@ -1269,14 +1318,16 @@ void Commit(Server* s, const Request& req,
   }
 
   // Lock once for any hd_peers mutation, then apply
-  // everything in one pass. `delete` currently has no
-  // effect since the default for every allowlisted path
-  // is recorded in the struct; we keep the path in the
-  // `deleted_paths` set for observability but don't try
-  // to re-derive the default at commit time.
+  // everything in one pass. A `delete` restores the
+  // path's default_value so live state reverts even
+  // when it was set by an earlier commit.
   auto apply_all = [&]() {
     for (const auto& [p, v] : cfg.set_values) {
       ConfigPaths().at(p).apply(s, v);
+    }
+    for (const auto& p : cfg.deleted_paths) {
+      const auto& def = ConfigPaths().at(p);
+      def.apply(s, def.default_value);
     }
   };
   if (any_hd) {
@@ -1310,59 +1361,248 @@ void Commit(Server* s, const Request& req,
   cfg.set_values.clear();
   cfg.deleted_paths.clear();
   SetBody(r, std::format("commit_id={}\n", id));
+
+  // Best-effort notification for CLI tails and
+  // external controllers. PUB is disabled when the
+  // channel has no pub_endpoint configured — in that
+  // case this is a no-op.
+  if (s->einheit_channel) {
+    EinheitPublish(
+        s->einheit_channel, "state.config.committed",
+        std::format("commit_id={}\n", id));
+  }
 }
 
-void Rollback(Server* /*s*/, const Request& req,
+void Rollback(Server* s, const Request& req,
                Response* r) {
   auto& cfg = Config();
-  // `rollback candidate` — drop the in-flight session
-  // without applying anything. `rollback previous` would
-  // re-apply a prior commit; we don't keep commit history
-  // yet, so fall through with a structured error.
+  // The CLI routes `rollback candidate` as command
+  // "rollback" and `rollback previous` as command
+  // "rollback_previous". Default to `candidate` for the
+  // plain verb so the older behaviour holds.
   std::string which =
-      req.args.empty() ? std::string("candidate")
-                        : req.args[0];
+      req.command == "rollback_previous"
+          ? std::string("previous")
+          : req.args.empty()
+              ? std::string("candidate")
+              : req.args[0];
+
   if (which == "candidate") {
     cfg.active_id.reset();
     cfg.set_values.clear();
     cfg.deleted_paths.clear();
+    if (s->einheit_channel) {
+      EinheitPublish(s->einheit_channel,
+                      "state.config.rolled_back",
+                      "scope=candidate\n");
+    }
     return;
   }
-  r->status = ResponseStatus::kError;
-  r->error = ErrorOf(
-      "unsupported",
-      "rollback previous not implemented — commit "
-      "history is not persisted yet");
+
+  if (which != "previous") {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "bad_args",
+        "expected `candidate` or `previous`");
+    return;
+  }
+
+  // `rollback previous` — synthesize a new commit whose
+  // ops invert the last record's ops against the state
+  // observed before that record. Each inverse op is
+  // validated + applied through the same path as a
+  // normal commit so the live state and the on-disk log
+  // stay in lock-step.
+  const auto& path = s->config.einheit_commit_log_path;
+  if (path.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_enabled",
+        "commit log disabled (set "
+        "einheit.commit_log_path) — rollback previous "
+        "needs history");
+    return;
+  }
+  auto stored = LoadCommitLog(path, nullptr);
+  if (stored.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("no_commits",
+                       "nothing to roll back");
+    return;
+  }
+  if (cfg.active_id) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "session_active",
+        "close the candidate session first "
+        "(`rollback candidate` or `commit`)");
+    return;
+  }
+
+  const auto& last = stored.back();
+  std::unordered_map<std::string, std::string> prev_state;
+  for (size_t i = 0; i + 1 < stored.size(); ++i) {
+    for (const auto& [k, v] : stored[i].rec.sets) {
+      prev_state[k] = v;
+    }
+    for (const auto& k : stored[i].rec.deletes) {
+      prev_state.erase(k);
+    }
+  }
+
+  CommitRecord inverse;
+  // For each key the last commit SET: restore prior
+  // value if there was one, otherwise flag as a delete.
+  for (const auto& [k, _] : last.rec.sets) {
+    auto it = prev_state.find(k);
+    if (it != prev_state.end()) {
+      inverse.sets.emplace_back(k, it->second);
+    } else {
+      inverse.deletes.push_back(k);
+    }
+  }
+  // For each key the last commit DELETED: restore the
+  // prior value if we know it; skip when the deletion
+  // was a no-op against the prior state.
+  for (const auto& k : last.rec.deletes) {
+    auto it = prev_state.find(k);
+    if (it != prev_state.end()) {
+      inverse.sets.emplace_back(k, it->second);
+    }
+  }
+
+  if (inverse.sets.empty() && inverse.deletes.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "no_op",
+        "last commit has no reversible ops");
+    return;
+  }
+
+  bool any_hd = false;
+  const auto& paths = ConfigPaths();
+  for (const auto& [k, _] : inverse.sets) {
+    auto it = paths.find(k);
+    if (it != paths.end() && it->second.needs_hd_lock) {
+      any_hd = true;
+      break;
+    }
+  }
+  if (!any_hd) {
+    for (const auto& k : inverse.deletes) {
+      auto it = paths.find(k);
+      if (it != paths.end() && it->second.needs_hd_lock) {
+        any_hd = true;
+        break;
+      }
+    }
+  }
+
+  auto apply_all = [&]() {
+    for (const auto& [k, v] : inverse.sets) {
+      auto it = paths.find(k);
+      if (it == paths.end()) continue;
+      it->second.apply(s, v);
+    }
+    for (const auto& k : inverse.deletes) {
+      auto it = paths.find(k);
+      if (it == paths.end()) continue;
+      it->second.apply(s, it->second.default_value);
+    }
+  };
+  if (any_hd) {
+    std::lock_guard lock(s->hd_peers.mutex);
+    apply_all();
+  } else {
+    apply_all();
+  }
+
+  cfg.commit_count += 1;
+  inverse.commit_id = cfg.commit_count;
+  AppendCommitRecord(
+      path,
+      EncodeCommitRecord(
+          inverse.commit_id, NowRfc3339(), inverse));
+
+  SetBody(r, std::format(
+                 "commit_id={}\nrolled_back_from={}\n",
+                 inverse.commit_id, last.rec.commit_id));
+  if (s->einheit_channel) {
+    EinheitPublish(
+        s->einheit_channel, "state.config.rolled_back",
+        std::format("scope=previous\ncommit_id={}\n"
+                     "rolled_back_from={}\n",
+                     inverse.commit_id, last.rec.commit_id));
+  }
 }
 
 // -- Dispatch ------------------------------------------
 
-using Registry = std::unordered_map<std::string, Handler>;
+// Role required by a handler to pass the server-side
+// gate. Mirrors the CLI's RoleGate so an operator can
+// deliberately opt in via EINHEIT_ROLE=admin and still
+// be rejected if their actual authority is lower.
+//
+// The gate is advisory today: the caller's role is taken
+// from Request::role which the CLI stamps itself. A
+// proper SO_PEERCRED-based check on the IPC socket is
+// the follow-up; until then the gate mainly prevents
+// accidental privilege escalation from a stock CLI,
+// not a crafted attacker.
+enum class Role {
+  kAny,
+  kOperator,
+  kAdmin,
+};
+
+struct HandlerEntry {
+  Handler fn;
+  Role required;
+};
+
+using Registry =
+    std::unordered_map<std::string, HandlerEntry>;
+
+bool RoleOk(const std::string& caller, Role required) {
+  if (required == Role::kAny) return true;
+  if (caller == "admin") return true;
+  if (required == Role::kOperator && caller == "operator") {
+    return true;
+  }
+  return false;
+}
 
 Registry MakeRegistry() {
   Registry m;
-  m["show_status"] = ShowStatus;
-  m["show_peers"] = ShowPeers;
-  m["show_peer"] = ShowPeer;
-  m["show_audit"] = ShowAudit;
-  m["show_counters"] = ShowCounters;
-  m["show_config"] = ShowConfig;
-  m["show_fleet"] = ShowFleet;
-  m["peer_approve"] = PeerApprove;
-  m["peer_deny"] = PeerDeny;
-  m["peer_revoke"] = PeerRevoke;
-  m["peer_redirect"] = PeerRedirect;
-  m["peer_policy_set"] = PeerPolicySet;
-  m["peer_policy_clear"] = PeerPolicyClear;
-  m["peer_rule_add"] = PeerRuleAdd;
-  m["relay_init"] = RelayInit;
-  m["configure"] = Configure;
-  m["set"] = Set;
-  m["delete"] = Delete;
-  m["commit"] = Commit;
-  m["rollback"] = Rollback;
-  m["show_commits"] = ShowCommits;
-  m["show_commit"] = ShowCommit;
+  m["show_status"] = {ShowStatus, Role::kAny};
+  m["show_peers"] = {ShowPeers, Role::kAny};
+  m["show_peer"] = {ShowPeer, Role::kAny};
+  m["show_audit"] = {ShowAudit, Role::kOperator};
+  m["show_counters"] = {ShowCounters, Role::kOperator};
+  m["show_config"] = {ShowConfig, Role::kOperator};
+  m["show_fleet"] = {ShowFleet, Role::kOperator};
+  m["show_commits"] = {ShowCommits, Role::kOperator};
+  m["show_commit"] = {ShowCommit, Role::kOperator};
+  m["peer_approve"] = {PeerApprove, Role::kOperator};
+  m["peer_deny"] = {PeerDeny, Role::kOperator};
+  m["peer_revoke"] = {PeerRevoke, Role::kOperator};
+  m["peer_redirect"] = {PeerRedirect, Role::kOperator};
+  m["peer_policy_set"] = {PeerPolicySet, Role::kOperator};
+  m["peer_policy_clear"] = {PeerPolicyClear,
+                             Role::kOperator};
+  m["peer_rule_add"] = {PeerRuleAdd, Role::kOperator};
+  m["relay_init"] = {RelayInit, Role::kAdmin};
+  m["configure"] = {Configure, Role::kAdmin};
+  m["set"] = {Set, Role::kAdmin};
+  m["delete"] = {Delete, Role::kAdmin};
+  m["commit"] = {Commit, Role::kAdmin};
+  m["rollback"] = {Rollback, Role::kAdmin};
+  // The CLI sends this as a distinct verb because the
+  // shell elides path tokens that aren't bound to arg
+  // slots, so otherwise `rollback candidate` and
+  // `rollback previous` are indistinguishable on the
+  // wire. Handler inspects command to pick the branch.
+  m["rollback_previous"] = {Rollback, Role::kAdmin};
   return m;
 }
 
@@ -1450,9 +1690,26 @@ void RunLoop(EinheitChannel* ch,
           response.error = ErrorOf(
               "unknown_command",
               "no handler for: " + decoded->command);
+        } else if (!RoleOk(decoded->role,
+                            it->second.required)) {
+          response.status = ResponseStatus::kError;
+          const char* needed =
+              it->second.required == Role::kAdmin
+                  ? "admin"
+              : it->second.required == Role::kOperator
+                  ? "operator"
+                  : "any";
+          response.error = ErrorOf(
+              "forbidden",
+              std::format(
+                  "role '{}' not allowed; need {}",
+                  decoded->role.empty() ? "<none>"
+                                         : decoded->role,
+                  needed));
         } else {
           try {
-            it->second(ch->server, *decoded, &response);
+            it->second.fn(ch->server, *decoded,
+                           &response);
           } catch (const std::exception& e) {
             response.status = ResponseStatus::kError;
             response.error =
