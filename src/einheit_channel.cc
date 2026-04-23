@@ -1226,8 +1226,16 @@ void Set(Server* /*s*/, const Request& req,
         "bad_args", "usage: set <path> <value>");
     return;
   }
-  const auto& path = req.args[0];
-  const auto& value = req.args[1];
+  // Accept both dotted (`set hd.enroll_mode auto`) and
+  // space-separated (`set hd enroll_mode auto`) forms.
+  // The last arg is the value; everything before it
+  // joined by `.` is the path.
+  std::string path = req.args[0];
+  for (size_t i = 1; i + 1 < req.args.size(); ++i) {
+    path += ".";
+    path += req.args[i];
+  }
+  const std::string& value = req.args.back();
   const auto& paths = ConfigPaths();
   auto it = paths.find(path);
   if (it == paths.end()) {
@@ -1271,7 +1279,13 @@ void Delete(Server* /*s*/, const Request& req,
                        "usage: delete <path>");
     return;
   }
-  const auto& path = req.args[0];
+  // Accept both dotted and space-separated path forms;
+  // see Set() for the rationale.
+  std::string path = req.args[0];
+  for (size_t i = 1; i < req.args.size(); ++i) {
+    path += ".";
+    path += req.args[i];
+  }
   if (!ConfigPaths().contains(path)) {
     r->status = ResponseStatus::kError;
     r->error = ErrorOf(
