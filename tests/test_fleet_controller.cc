@@ -78,11 +78,19 @@ class FleetControllerTest : public ::testing::Test {
     fc_.hd_peers = &reg_;
   }
 
+  // cpplint's runtime/arrays rule wants the size token to
+  // start with k+CamelCase; libsodium's all-lowercase
+  // macros trip it.
+  static constexpr size_t kSignPubBytes =
+      crypto_sign_ed25519_PUBLICKEYBYTES;
+  static constexpr size_t kSignSecBytes =
+      crypto_sign_ed25519_SECRETKEYBYTES;
+
   HdPeerRegistry reg_;
   FleetControllerConfig config_;
   FleetController fc_;
-  uint8_t pk_[crypto_sign_ed25519_PUBLICKEYBYTES];
-  uint8_t sk_[crypto_sign_ed25519_SECRETKEYBYTES];
+  uint8_t pk_[kSignPubBytes];
+  uint8_t sk_[kSignSecBytes];
 };
 
 TEST_F(FleetControllerTest, AcceptsValidBundle) {
