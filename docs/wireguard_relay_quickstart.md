@@ -71,19 +71,34 @@ sudo systemctl edit hyper-derp
 ```ini
 [Service]
 # Writable state dir for the wg roster.
-# Becomes /var/lib/hyper-derp owned by the DynamicUser.
+# Becomes /var/lib/hyper-derp owned by the DynamicUser
+# (and bind-mounted to /var/lib/private/hyper-derp on
+# disk; both paths are stable across DynamicUser
+# rotations).
 StateDirectory=hyper-derp
 
 # Share /tmp/einheit between the daemon's PrivateTmp
 # namespace and the host so hd-cli can reach the IPC
 # socket. Keeps the rest of /tmp private.
 BindPaths=/tmp/einheit
+
+# UMask=000 so ZeroMQ creates the IPC sockets mode 0775
+# rather than 0755. Without it, hd-cli (running as your
+# operator user) cannot connect to a socket owned by the
+# daemon's per-instance DynamicUser. /tmp/einheit is a
+# host-local control plane, not a security boundary.
+UMask=000
+
+# Unlink stale IPC socket files from a previous instance
+# before binding; otherwise ZeroMQ fails with
+# EADDRINUSE on the .pub socket.
+ExecStartPre=/bin/rm -f /tmp/einheit/hd-relay.ctl /tmp/einheit/hd-relay.pub
 ```
 
-Then create the shared IPC dir once (host side, before first start):
+Then create the shared IPC dir once (host side, before first start) — mode 1777 because the daemon's DynamicUser and your operator user both need to drop sockets there:
 
 ```bash
-sudo install -d -m 0775 -o root -g $(id -g) /tmp/einheit
+sudo install -d -m 1777 /tmp/einheit
 ```
 
 ### Start it
@@ -261,13 +276,16 @@ Both are persisted to disk atomically before the call returns.
 
 ### Restarts and roster persistence
 
-The roster file (default `/var/lib/hyper-derp/wg-roster`) is rewritten on every successful mutation and replayed on startup. After a restart you should see:
+The roster file (default `/var/lib/hyper-derp/wg-roster`) is rewritten on every successful mutation and replayed on startup. After a `systemctl restart hyper-derp` you should see:
 
 ```
 wg-relay roster loaded from /var/lib/hyper-derp/wg-roster: 2 peers, 1 links, 0 bad
+wg-relay listening on UDP :51820 (2 peers, 1 links)
 ```
 
-The log line is informational; counters and last-seen timestamps reset on restart, but the peer + link tables don't.
+The log line is informational; counters and last-seen timestamps reset on restart, but the peer + link tables, links, and pubkeys don't.
+
+Under the systemd unit, `/var/lib/hyper-derp` is created and owned by the DynamicUser; on disk the data lives at `/var/lib/private/hyper-derp/` (systemd's standard StateDirectory mapping). Either path works for `cat`'ing the roster.
 
 ### Counters
 
@@ -281,6 +299,60 @@ The log line is informational; counters and last-seen timestamps reset on restar
 | `drop_no_link` | source matched a peer but it has no link |
 
 `drop_unknown_src` is the most common signal of a misconfigured client — usually a missing `ListenPort` or NAT-rewritten source.
+
+## Performance vs direct WireGuard
+
+Iteration-1 numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream, no SO_RCVBUF tuning. **Read these as a relative baseline, not absolute capacity** — they bound how much the userspace forwarder costs over a virtio fast path; physical NIC + io_uring will move the ceiling.
+
+### Latency (ICMP, 100 packets at 50 ms)
+
+| | min | avg | max | mdev |
+| --- | --- | --- | --- | --- |
+| direct (c1 ↔ c2) | 0.230 ms | **0.646 ms** | 1.128 ms | 0.220 ms |
+| relayed (c1 → r2 → c2) | 0.307 ms | **1.171 ms** | 2.081 ms | 0.421 ms |
+
+The relay adds ≈ 0.5 ms one-way. That's an extra VM hop plus one userspace recv→send cycle.
+
+### TCP throughput (10 s)
+
+| | bitrate | retransmits |
+| --- | --- | --- |
+| direct | **6.31 Gbit/s** | 360 |
+| relayed | **1.99 Gbit/s** | 17 380 |
+
+The relay caps a single TCP stream at about a third of direct, with retransmits an order of magnitude higher (the userspace forwarder occasionally drops bursts that direct virtio absorbs).
+
+### UDP @ 1400 B — sustained loss vs offered rate
+
+| offered rate | direct loss | relayed loss |
+| --- | --- | --- |
+| 100 Mbit/s | 0 % | 0 % |
+| 500 Mbit/s | 0.025 % | 0.61 % |
+| 1 Gbit/s | 0.038 % | 3 % |
+| 2 Gbit/s | 0.08 % | saturates |
+
+Direct stays under 0.1 % loss out to 2 Gbit/s. The relay holds a clean ~100 Mbit/s, starts dropping appreciably above 500 Mbit/s, and falls over above 1 Gbit/s. At 1 Gbit/s the relay is already at ~89 kpps per direction; at 1.99 Gbit/s TCP it's ~178 kpps. With:
+
+- a single-threaded `poll → recvfrom → mutex → table lookup → sendto` loop,
+- no io_uring on the WG path,
+- the operator-table mutex covering each lookup,
+- and no per-batch syscall amortisation,
+
+that's roughly the order of magnitude expected. The optimisations the rest of `hyper-derp` already uses (per-shard `recvmmsg`/`sendmmsg`, io_uring multishot, lockless lookup) are not yet wired into `mode: wireguard`. Iteration-2 work.
+
+### Reproduce
+
+```bash
+# server side (one of c1/c2)
+iperf3 -s -1 -p 5201
+
+# client side
+iperf3 -c <peer-tunnel-ip> -p 5201 -t 10                # TCP
+iperf3 -c <peer-tunnel-ip> -p 5201 -u -l 1400 -b 1G -t 10   # UDP @ 1400B
+ping -c 100 -i 0.05 -q <peer-tunnel-ip>                 # latency
+```
+
+To compare direct vs relayed, swap the `Endpoint =` line in each client's `wg0.conf` (one points at the other client's IP, the other points at the relay) and `wg-quick down/up wg0`. Same measurement set on both.
 
 ## What the relay deliberately does **not** do
 
