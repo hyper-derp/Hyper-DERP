@@ -175,3 +175,17 @@ add_test(
 set_tests_properties(hd_wg_e2e PROPERTIES
   TIMEOUT 90
   SKIP_RETURN_CODE 77)
+
+# wg-relay (`mode: wireguard`) end-to-end against the libvirt
+# fleet hd-r2 / hd-c1 / hd-c2. SSH-driven, non-destructive — it
+# expects the fleet to already be deployed per
+# docs/wireguard_relay_quickstart.md and just exercises the
+# operator workflow + asserts ping + counter movement. Skips
+# (exit 77) on any host being unreachable.
+add_test(
+  NAME wg_relay_fleet
+  COMMAND bash
+    ${CMAKE_CURRENT_SOURCE_DIR}/integration/wg_relay_fleet.sh)
+set_tests_properties(wg_relay_fleet PROPERTIES
+  TIMEOUT 60
+  SKIP_RETURN_CODE 77)
