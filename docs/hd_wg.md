@@ -1,6 +1,6 @@
 # hd-wg — WireGuard tunnels via HD Protocol
 
-> Not to be confused with [WireGuard relay mode](wireguard_mode.md), a
+> Not to be confused with [WireGuard relay mode](wireguard_relay_quickstart.md), a
 > separate *relay-side* design where the Hyper-DERP server speaks WG
 > directly. `hd-wg` is a *client-side* daemon that uses the existing HD
 > relay as a signaling channel (and optional fallback transport) for

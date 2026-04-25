@@ -2097,11 +2097,18 @@ Registry MakeRegistry() {
                        "Register a WG peer with a pinned "
                        "source endpoint",
                        false, wg_peer_add_args};
-  m["wg_peer_key"] = {WgPeerKey, Role::kOperator,
-                       "wg peer key",
-                       "Attach a base64 public key to a "
-                       "peer (metadata only)",
-                       false, wg_peer_key_args};
+  // Path is "wg peer pubkey" (not "wg peer key") because
+  // the einheit CLI's oneshot parser conflates the token
+  // "key" with its standard `{key=...}` arg slot and
+  // refuses to dispatch. Interactive mode handles either
+  // path; the longer name is fine since the shell tab-
+  // completes it anyway.
+  m["wg_peer_pubkey"] = {WgPeerKey, Role::kOperator,
+                          "wg peer pubkey",
+                          "Attach a base64 public key to "
+                          "a peer (metadata only, used by "
+                          "`wg show config`)",
+                          false, wg_peer_key_args};
   m["wg_peer_remove"] = {WgPeerRemove, Role::kOperator,
                           "wg peer remove",
                           "Remove a peer (and any links "
