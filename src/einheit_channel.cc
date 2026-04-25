@@ -44,6 +44,7 @@
 #include "hyper_derp/key_format.h"
 #include "hyper_derp/server.h"
 #include "hyper_derp/types.h"
+#include "hyper_derp/wg_relay.h"
 
 namespace hyper_derp {
 
@@ -1715,6 +1716,216 @@ void Rollback(Server* s, const Request& req,
   }
 }
 
+// -- WG relay handlers ---------------------------------
+
+// All wg_* handlers gate on s->wg_relay; the relay
+// pointer is non-null iff the daemon was started in
+// `mode: wireguard`. In other modes these verbs return
+// `not_in_wg_mode` so the operator gets a clear signal
+// rather than a generic crash.
+bool WgGate(Server* s, Response* r) {
+  if (s != nullptr && s->wg_relay != nullptr) return true;
+  r->status = ResponseStatus::kError;
+  r->error = ErrorOf(
+      "not_in_wg_mode",
+      "this daemon is not running in wireguard relay "
+      "mode (set `mode: wireguard` in the config)");
+  return false;
+}
+
+bool RequireArg(const Request& req, int idx,
+                const char* name, Response* r) {
+  if (static_cast<int>(req.args.size()) > idx) return true;
+  r->status = ResponseStatus::kError;
+  r->error =
+      ErrorOf("missing_arg",
+              std::format("missing positional arg `{}`",
+                          name));
+  return false;
+}
+
+void WgPeerAdd(Server* s, const Request& req,
+               Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "name", r)) return;
+  if (!RequireArg(req, 1, "endpoint", r)) return;
+  std::string label;
+  if (req.args.size() > 2) label = req.args[2];
+  if (!WgRelayPeerAdd(s->wg_relay, req.args[0],
+                       req.args[1], label)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "wg_peer_add_failed",
+        "duplicate name or invalid endpoint (expected "
+        "host:port)");
+    return;
+  }
+  SetBody(r, std::format("peer={}\nendpoint={}\n",
+                          req.args[0], req.args[1]));
+  if (s->einheit_channel) {
+    EinheitPublish(s->einheit_channel, "state.wg.peer_added",
+                   std::format("peer={}\nendpoint={}\n",
+                                req.args[0], req.args[1]));
+  }
+}
+
+void WgPeerKey(Server* s, const Request& req,
+               Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "name", r)) return;
+  if (!RequireArg(req, 1, "pubkey", r)) return;
+  if (!WgRelayPeerKey(s->wg_relay, req.args[0],
+                       req.args[1])) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("wg_peer_unknown",
+                       "no peer with that name");
+    return;
+  }
+  SetBody(r, std::format("peer={}\npubkey_set=true\n",
+                          req.args[0]));
+}
+
+void WgPeerRemove(Server* s, const Request& req,
+                  Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "name", r)) return;
+  if (!WgRelayPeerRemove(s->wg_relay, req.args[0])) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("wg_peer_unknown",
+                       "no peer with that name");
+    return;
+  }
+  SetBody(r, std::format("peer={}\nremoved=true\n",
+                          req.args[0]));
+  if (s->einheit_channel) {
+    EinheitPublish(
+        s->einheit_channel, "state.wg.peer_removed",
+        std::format("peer={}\n", req.args[0]));
+  }
+}
+
+void WgPeerList(Server* s, const Request& /*req*/,
+                Response* r) {
+  if (!WgGate(s, r)) return;
+  auto peers = WgRelayListPeers(s->wg_relay);
+  std::string b;
+  int idx = 0;
+  for (const auto& p : peers) {
+    b += std::format("peer.{}.name={}\n", idx, p.name);
+    b += std::format("peer.{}.endpoint={}\n", idx,
+                     p.endpoint);
+    b += std::format("peer.{}.pubkey={}\n", idx,
+                     p.pubkey_b64);
+    b += std::format("peer.{}.label={}\n", idx, p.label);
+    b += std::format("peer.{}.linked_to={}\n", idx,
+                     p.linked_to);
+    b += std::format("peer.{}.last_seen_ns={}\n", idx,
+                     p.last_seen_ns);
+    b += std::format("peer.{}.rx_bytes={}\n", idx,
+                     p.rx_bytes);
+    b += std::format("peer.{}.fwd_bytes={}\n", idx,
+                     p.fwd_bytes);
+    idx++;
+  }
+  b += std::format("peer.count={}\n", idx);
+  SetBody(r, b);
+}
+
+void WgLinkAdd(Server* s, const Request& req,
+               Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "a", r)) return;
+  if (!RequireArg(req, 1, "b", r)) return;
+  if (!WgRelayLinkAdd(s->wg_relay, req.args[0],
+                       req.args[1])) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "wg_link_failed",
+        "unknown peer, self-link, duplicate link, or one "
+        "side already has a link (iteration-1 limit)");
+    return;
+  }
+  SetBody(r, std::format("a={}\nb={}\n", req.args[0],
+                          req.args[1]));
+  if (s->einheit_channel) {
+    EinheitPublish(s->einheit_channel, "state.wg.link_added",
+                   std::format("a={}\nb={}\n",
+                                req.args[0], req.args[1]));
+  }
+}
+
+void WgLinkRemove(Server* s, const Request& req,
+                  Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "a", r)) return;
+  if (!RequireArg(req, 1, "b", r)) return;
+  if (!WgRelayLinkRemove(s->wg_relay, req.args[0],
+                          req.args[1])) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("wg_link_unknown",
+                       "no link between those peers");
+    return;
+  }
+  SetBody(r, std::format("a={}\nb={}\nremoved=true\n",
+                          req.args[0], req.args[1]));
+}
+
+void WgLinkList(Server* s, const Request& /*req*/,
+                Response* r) {
+  if (!WgGate(s, r)) return;
+  auto links = WgRelayListLinks(s->wg_relay);
+  std::string b;
+  int idx = 0;
+  for (const auto& l : links) {
+    b += std::format("link.{}.a={}\n", idx, l.a);
+    b += std::format("link.{}.b={}\n", idx, l.b);
+    idx++;
+  }
+  b += std::format("link.count={}\n", idx);
+  SetBody(r, b);
+}
+
+void WgShowConfig(Server* s, const Request& req,
+                  Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "name", r)) return;
+  // Optional second arg pins the relay endpoint that will
+  // be written into the rendered [Peer] block. Without it
+  // we emit a placeholder that the operator must edit by
+  // hand — we have no portable way to discover the public
+  // address of the relay.
+  std::string adv =
+      req.args.size() > 1
+          ? req.args[1]
+          : std::string("<relay-public-ip>:") +
+                std::to_string(s->wg_relay->port);
+  std::string body = WgRelayShowConfig(s->wg_relay,
+                                        req.args[0], adv);
+  if (body.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("wg_peer_unknown",
+                       "no peer with that name");
+    return;
+  }
+  SetBody(r, body);
+}
+
+void WgShow(Server* s, const Request& /*req*/,
+            Response* r) {
+  if (!WgGate(s, r)) return;
+  auto stats = WgRelayGetStats(s->wg_relay);
+  std::string b;
+  b += std::format("port={}\n", s->wg_relay->port);
+  b += std::format("peer_count={}\n", stats.peer_count);
+  b += std::format("link_count={}\n", stats.link_count);
+  b += std::format("rx_packets={}\n", stats.rx_packets);
+  b += std::format("fwd_packets={}\n", stats.fwd_packets);
+  b += std::format("drop_unknown_src={}\n",
+                   stats.drop_unknown_src);
+  b += std::format("drop_no_link={}\n", stats.drop_no_link);
+  SetBody(r, b);
+}
+
 // -- Dispatch ------------------------------------------
 
 Registry MakeRegistry() {
@@ -1860,6 +2071,67 @@ Registry MakeRegistry() {
                     "Return the command catalog for "
                     "CLI discovery",
                     false, {}};
+
+  // -- WG relay verbs (only useful in mode: wireguard) --
+  const std::vector<ArgInfo> wg_peer_add_args = {
+      {"name", "operator-assigned peer name", true},
+      {"endpoint", "host:port the peer dials in from",
+       true},
+      {"label", "free-form note (optional)", false}};
+  const std::vector<ArgInfo> wg_peer_key_args = {
+      {"name", "peer name", true},
+      {"pubkey", "base64 wg public key", true}};
+  const std::vector<ArgInfo> wg_name_arg = {
+      {"name", "peer name", true}};
+  const std::vector<ArgInfo> wg_link_args = {
+      {"a", "first peer name", true},
+      {"b", "second peer name", true}};
+  const std::vector<ArgInfo> wg_show_config_args = {
+      {"name", "peer name", true},
+      {"endpoint",
+       "advertised relay host:port for the rendered "
+       "[Peer] block (optional)",
+       false}};
+  m["wg_peer_add"] = {WgPeerAdd, Role::kOperator,
+                       "wg peer add",
+                       "Register a WG peer with a pinned "
+                       "source endpoint",
+                       false, wg_peer_add_args};
+  m["wg_peer_key"] = {WgPeerKey, Role::kOperator,
+                       "wg peer key",
+                       "Attach a base64 public key to a "
+                       "peer (metadata only)",
+                       false, wg_peer_key_args};
+  m["wg_peer_remove"] = {WgPeerRemove, Role::kOperator,
+                          "wg peer remove",
+                          "Remove a peer (and any links "
+                          "involving it)",
+                          false, wg_name_arg};
+  m["wg_peer_list"] = {WgPeerList, Role::kAny,
+                        "wg peer list",
+                        "List configured peers + counters",
+                        false, {}};
+  m["wg_link_add"] = {WgLinkAdd, Role::kOperator,
+                       "wg link add",
+                       "Allow A↔B forwarding between two "
+                       "peers",
+                       false, wg_link_args};
+  m["wg_link_remove"] = {WgLinkRemove, Role::kOperator,
+                          "wg link remove",
+                          "Remove an A↔B forwarding link",
+                          false, wg_link_args};
+  m["wg_link_list"] = {WgLinkList, Role::kAny,
+                        "wg link list",
+                        "List configured forwarding links",
+                        false, {}};
+  m["wg_show_config"] = {WgShowConfig, Role::kAny,
+                          "wg show config",
+                          "Render the wg-quick [Peer] "
+                          "block to install on a client",
+                          false, wg_show_config_args};
+  m["wg_show"] = {WgShow, Role::kAny, "wg show",
+                   "Aggregate counters + roster summary",
+                   false, {}};
   return m;
 }
 

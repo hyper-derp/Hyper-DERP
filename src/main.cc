@@ -2,6 +2,7 @@
 /// @brief Hyper-DERP relay server entry point.
 
 #include <spdlog/spdlog.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
@@ -15,7 +16,9 @@
 
 #include "hyper_derp/config.h"
 #include "hyper_derp/ctl_channel.h"
+#include "hyper_derp/einheit_channel.h"
 #include "hyper_derp/server.h"
+#include "hyper_derp/wg_relay.h"
 
 static std::atomic<int> g_stop_flag{0};
 
@@ -346,6 +349,58 @@ int main(int argc, char* argv[]) {
     spdlog::info("pin-workers: {} cores specified", n);
   }
 
+  // Install signal handlers. Both modes use g_stop_flag.
+  struct sigaction sa {};
+  sa.sa_handler = SignalHandler;
+  sa.sa_flags = 0;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGINT, &sa, nullptr);
+  sigaction(SIGTERM, &sa, nullptr);
+  signal(SIGPIPE, SIG_IGN);
+
+  // WireGuard relay mode: pure UDP forwarder. No DERP
+  // data plane, no HD peers, no TLS, no metrics. The
+  // hyper-derp CLI still attaches via the einheit
+  // channel for `wg peer add` etc.
+  if (config.mode == hyper_derp::DaemonMode::kWireguard) {
+    spdlog::info(
+        "hyper-derp starting in wireguard relay mode on "
+        "UDP :{}", config.wg.port);
+    hyper_derp::Server server;
+    server.config = config;
+    server.wg_relay = hyper_derp::WgRelayStart(config.wg);
+    if (!server.wg_relay) {
+      spdlog::error("wg relay start failed");
+      return EXIT_FAILURE;
+    }
+    if (!config.einheit_ctl_endpoint.empty()) {
+      server.einheit_channel =
+          hyper_derp::EinheitChannelStart(
+              config.einheit_ctl_endpoint,
+              config.einheit_pub_endpoint, &server);
+      if (server.einheit_channel) {
+        spdlog::info(
+            "einheit channel ready on {} (pub: {})",
+            config.einheit_ctl_endpoint,
+            config.einheit_pub_endpoint.empty()
+                ? "disabled"
+                : config.einheit_pub_endpoint);
+      }
+    }
+    while (g_stop_flag.load(std::memory_order_acquire) ==
+           0) {
+      ::pause();
+    }
+    if (server.einheit_channel) {
+      hyper_derp::EinheitChannelStop(server.einheit_channel);
+      server.einheit_channel = nullptr;
+    }
+    hyper_derp::WgRelayStop(server.wg_relay);
+    server.wg_relay = nullptr;
+    spdlog::info("hyper-derp exiting");
+    return EXIT_SUCCESS;
+  }
+
   spdlog::info("hyper-derp starting on port {}",
                config.port);
 
@@ -365,17 +420,6 @@ int main(int argc, char* argv[]) {
       &server.data_plane,
       config.hd_relay_key.empty()
           ? nullptr : &server.hd_peers);
-
-  // Install signal handlers. Only set the atomic flag;
-  // ServerRun polls it and calls ServerStop from a safe
-  // context.
-  struct sigaction sa {};
-  sa.sa_handler = SignalHandler;
-  sa.sa_flags = 0;
-  sigemptyset(&sa.sa_mask);
-  sigaction(SIGINT, &sa, nullptr);
-  sigaction(SIGTERM, &sa, nullptr);
-  signal(SIGPIPE, SIG_IGN);
 
   auto run = hyper_derp::ServerRun(&server, &g_stop_flag);
 
