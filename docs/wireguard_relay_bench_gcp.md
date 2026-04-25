@@ -107,14 +107,26 @@ GCP's per-flow caps are aggressive — single-flow throughput on n2-standard-4 i
 
 **Reduce gve channels before XDP attach.** `ethtool -L ens4 rx 1 tx 1` (or `rx 2 tx 2` on bigger boxes — the rule is half-of-max). gve's XDP requires reserving the other half for XDP_TX queues.
 
-**On bigger n2 sizes** (n2-standard-8, n2-standard-16, …), the channel maximum doubles, so `ethtool -L rx 2 tx 2` etc. becomes possible. We tried this on n2-standard-8 and saw **single-flow throughput go down**, not up: 2.22 Gbit/s TCP single stream vs 3.04 Gbit/s on n2-standard-4. Two reasons:
+**On bigger n2 sizes** (n2-standard-8, n2-standard-16, …), the channel maximum doubles, so `ethtool -L rx 2 tx 2` etc. becomes possible. We tried this on n2-standard-8 and **single-flow throughput went down**, not up. Repeated cleanly via direct SSH (not gcloud) to rule out flakiness:
 
-1. **RSS hashes a single source-IP flow to one queue** regardless of how many queues are configured. More channels only help when there are multiple distinct source flows.
-2. **GCP's per-flow rate caps appear to differ between machine sizes** — n2-standard-8 saw a lower per-flow ceiling on the same single-stream test.
+| metric | n2-standard-4 (rx=1/tx=1) | n2-standard-8 (rx=2/tx=2) |
+| --- | --- | --- |
+| TCP single stream | 3.04 Gbit/s | **2.11 Gbit/s** |
+| TCP -P 4 aggregate | 3.07 Gbit/s | 2.07 Gbit/s |
+| UDP @ 1380 B clean | ~1 Gbit/s | ~500 Mbit/s clean; 9.6 % loss at 1 G |
+| UDP achieved at high offer | ~970 Mbit/s | ~900 Mbit/s with 10-12 % loss |
 
-A proper "scale across queues" bench needs multiple source IPs (multiple WG peers, each on a distinct macvlan or instance) so RSS spreads them across queues. We didn't run that variant here — adding it is future work for an operator who wants to size the relay against many concurrent peers.
+The relay still processed every packet via XDP cleanly on the bigger box (13.6 M packets, 0 BPF-level drops). It's not the relay. Three plausible causes, in order of likelihood:
+
+1. **RSS hashes a single source-IP flow to one queue** regardless of channel count. With rx=2, one queue is busy and one is idle on a unidirectional flow — but the per-packet *total* cost can be slightly higher because of cross-CPU softirq scheduling that doesn't pay off without multiple flows.
+2. **GCP's per-flow / per-VM rate caps differ between machine sizes.** Anecdotally, n2-standard-8 seems to enforce a tighter per-flow ceiling on *unidirectional* iperf3 traffic than n2-standard-4 does. We didn't dig into the documented caps.
+3. **WireGuard kernel module is single-threaded per-peer** for crypto. With one source IP and one peer the encrypt/decrypt path is one kernel work-queue per direction; bigger VM doesn't help.
+
+**A proper "scale across queues" bench needs multiple source IPs** — multiple WG peers, each on a distinct macvlan or instance — so RSS actually spreads them across queues. That's a different bench shape. We didn't run it.
 
 **The takeaway for sizing:** a single hyper-derp relay on n2-standard-4 will be the bottleneck at ~1 Gbit/s for any *one* tunnel. To carry more, scale the *number of peers* (each gets their own per-flow allowance) or use multiple relay VMs behind a stateless L4 load balancer that hashes by client source IP. Vertical scaling alone won't lift a single tunnel above the per-flow cap.
+
+For the avoidance of doubt: the relay's BPF data path is not the limiting factor on cloud at any size we measured. CPU usage on the relay was ≤2 % of one of N vCPUs at every operating point.
 
 ## Operator setup script (verbatim)
 
