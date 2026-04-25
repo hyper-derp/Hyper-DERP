@@ -22,7 +22,7 @@ For background on what hd-wg is doing under the hood (state machine, fall-back, 
 **On each client (hd-c1, hd-c2):**
 - Linux kernel with `wireguard` and `tls` modules (`sudo modprobe wireguard tls`; persist with `/etc/modules-load.d/`).
 - `wireguard-tools` (for `wg genkey` / `wg show`): `sudo apt-get install -y wireguard-tools`.
-- The `hd-wg` binary (built from this tree at `build/client/hd-wg`).
+- The `hd-wg` binary copied into `~/bin/`. Build from this tree (`cmake --build build -j --target hd-wg`) and `scp build/client/hd-wg <client>:~/bin/hd-wg && ssh <client> chmod +x ~/bin/hd-wg`. There is no Debian package for it yet.
 - Root or `CAP_NET_ADMIN` (hd-wg drives netlink to bring up `wg0`).
 
 ## Step 1 — Confirm the relay is healthy
