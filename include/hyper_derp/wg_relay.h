@@ -90,6 +90,10 @@ struct WgXdpCtx {
   int macs_map_fd = -1;
   int stats_map_fd = -1;
   int port_map_fd = -1;
+  /// Per-CPU byte counters keyed on source endpoint. Folded
+  /// into per-peer rx_bytes/fwd_bytes in `wg peer list` so
+  /// the operator sees XDP-path traffic alongside userspace.
+  int peer_bytes_map_fd = -1;
   bool attached = false;
 };
 

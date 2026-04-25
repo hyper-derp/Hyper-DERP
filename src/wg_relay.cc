@@ -479,8 +479,10 @@ bool XdpAttach(WgRelay* r, const std::string& iface,
       bpf_object__find_map_by_name(obj, "wg_xdp_stats");
   struct bpf_map* port_map =
       bpf_object__find_map_by_name(obj, "wg_port");
+  struct bpf_map* peer_bytes_map =
+      bpf_object__find_map_by_name(obj, "wg_peer_bytes");
   if (!prog || !peers_map || !macs_map || !stats_map ||
-      !port_map) {
+      !port_map || !peer_bytes_map) {
     spdlog::error("wg-relay xdp: program/maps not found "
                   "in {}", bpf_obj_path);
     bpf_object__close(obj);
@@ -491,6 +493,7 @@ bool XdpAttach(WgRelay* r, const std::string& iface,
   int macs_fd = bpf_map__fd(macs_map);
   int stats_fd = bpf_map__fd(stats_map);
   int port_fd = bpf_map__fd(port_map);
+  int peer_bytes_fd = bpf_map__fd(peer_bytes_map);
 
   uint32_t key0 = 0;
   if (bpf_map_update_elem(port_fd, &key0, &port, BPF_ANY) <
@@ -525,6 +528,7 @@ bool XdpAttach(WgRelay* r, const std::string& iface,
   r->xdp.macs_map_fd = macs_fd;
   r->xdp.stats_map_fd = stats_fd;
   r->xdp.port_map_fd = port_fd;
+  r->xdp.peer_bytes_map_fd = peer_bytes_fd;
   r->xdp.attached = true;
   spdlog::info(
       "wg-relay xdp: attached on {} (ifindex={}, mode={})",
@@ -584,6 +588,40 @@ void XdpRemoveLinkDir(WgRelay* r, const sockaddr_storage& src,
   // Also clear any learned MAC for this endpoint so a
   // re-added peer starts from a clean cold-start cycle.
   bpf_map_delete_elem(r->xdp.macs_map_fd, &key);
+  // Clear the per-peer byte counters too — operators
+  // expect a removed-then-re-added peer to start at 0.
+  bpf_map_delete_elem(r->xdp.peer_bytes_map_fd, &key);
+}
+
+// Sum the per-CPU XDP byte counters for a single source
+// endpoint and add them to the userspace totals. Called
+// from WgRelayListPeers, lock-free against the BPF hot
+// path because PERCPU_HASH writes are CPU-local.
+void XdpAddPeerBytes(const WgRelay* r,
+                      const sockaddr_storage& src,
+                      socklen_t src_len, uint64_t* rx_bytes,
+                      uint64_t* fwd_bytes) {
+  if (!r->xdp.attached) return;
+  XdpEpKey key{};
+  if (!EndpointToV4(src, src_len, &key.ip, &key.port)) return;
+  int ncpus = libbpf_num_possible_cpus();
+  if (ncpus < 0) return;
+  struct PercpuVal {
+    uint64_t rx;
+    uint64_t fwd;
+  };
+  auto vals = std::make_unique<PercpuVal[]>(
+      static_cast<size_t>(ncpus));
+  if (bpf_map_lookup_elem(r->xdp.peer_bytes_map_fd, &key,
+                           vals.get()) < 0) {
+    // ENOENT just means no XDP traffic from this source
+    // yet — leave the userspace numbers untouched.
+    return;
+  }
+  for (int c = 0; c < ncpus; ++c) {
+    *rx_bytes += vals[c].rx;
+    *fwd_bytes += vals[c].fwd;
+  }
 }
 
 void XdpReadStats(const WgRelay* r, WgXdpStats* out) {
@@ -827,6 +865,13 @@ std::vector<WgRelayPeerInfo> WgRelayListPeers(
     i.last_seen_ns = p.last_seen_ns;
     i.rx_bytes = p.rx_bytes;
     i.fwd_bytes = p.fwd_bytes;
+    // Fold in the XDP per-CPU byte counters when the fast
+    // path is attached. Without this the bytes freeze at
+    // whatever the cold-start packet was, since every
+    // subsequent packet bypasses the userspace path that
+    // bumps p.rx_bytes / p.fwd_bytes.
+    XdpAddPeerBytes(r, p.endpoint, p.endpoint_len,
+                     &i.rx_bytes, &i.fwd_bytes);
     i.linked_to = LinkPartner(r->links, p.name);
     out.push_back(std::move(i));
   }
