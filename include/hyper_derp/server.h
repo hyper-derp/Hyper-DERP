@@ -30,6 +30,49 @@
 
 namespace hyper_derp {
 
+// Forward decl — full def lives in wg_relay.h. Holding a
+// pointer here keeps server.h dependency-light.
+struct WgRelay;
+
+/// Daemon operating mode. Selected at startup; not
+/// live-mutable. `kDerp` runs the full DERP/HD/kTLS
+/// stack; `kWireguard` runs a transparent UDP forwarder
+/// for stock WireGuard clients.
+enum class DaemonMode : uint8_t {
+  kDerp = 0,
+  kWireguard = 1,
+};
+
+/// WireGuard relay mode configuration. Only consulted
+/// when DaemonMode::kWireguard is selected. The relay
+/// observes nothing about WireGuard semantics — peer
+/// table and link table are operator-set; forwarding is
+/// pure 4-tuple based on source endpoint.
+struct WgRelayConfig {
+  /// UDP port the relay binds for WG traffic.
+  uint16_t port = 51820;
+  /// Roster persistence path. Each `wg peer add` /
+  /// `wg link add` rewrites this atomically; startup
+  /// loads it before binding the UDP socket.
+  std::string roster_path;
+  /// Static peers, loaded from yaml at startup before
+  /// the persisted roster (yaml entries take
+  /// precedence on name collisions).
+  struct PeerEntry {
+    std::string name;
+    std::string endpoint;       // "ip:port"
+    std::string pubkey_b64;     // optional, metadata only
+    std::string label;
+  };
+  std::vector<PeerEntry> peers;
+  /// Static links, loaded from yaml.
+  struct LinkEntry {
+    std::string a;
+    std::string b;
+  };
+  std::vector<LinkEntry> links;
+};
+
 /// Connection level for a peer pair. Level 0 (DERP) is
 /// managed by the standard DERP data plane. Level 1 (HD) and
 /// Level 2 (Direct) are HD protocol extensions.
@@ -94,6 +137,14 @@ constexpr auto ServerErrorName(ServerError e)
 
 /// Server configuration.
 struct ServerConfig {
+  /// Operating mode. Default keeps backward-compatible
+  /// DERP behaviour. `kWireguard` runs the WG relay
+  /// forwarder on its own UDP port and ignores the
+  /// DERP/HD plumbing.
+  DaemonMode mode = DaemonMode::kDerp;
+  /// WireGuard relay configuration; only consulted in
+  /// kWireguard mode.
+  WgRelayConfig wg;
   uint16_t port = 3340;
   int num_workers = 0;  // 0 = auto (hardware_concurrency)
   /// Per-socket send/recv buffer size in bytes. 0 = use
@@ -208,6 +259,12 @@ struct Server {
   FleetController fleet_controller{};
   bool fleet_controller_started = false;
   EinheitChannel* einheit_channel = nullptr;
+
+  /// WireGuard relay subsystem. Non-null iff the daemon
+  /// was started in DaemonMode::kWireguard. Owned by the
+  /// entrypoint; einheit `wg_*` handlers reach it via
+  /// this pointer.
+  WgRelay* wg_relay = nullptr;
 
   // Level 2 (direct path) subsystems.
   IceAgent ice_agent{};

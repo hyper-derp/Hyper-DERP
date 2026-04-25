@@ -155,6 +155,67 @@ static bool ReadPinCores(ryml::ConstNodeRef node,
   return true;
 }
 
+/// Parse the optional `wg_relay` block (port, roster_path,
+/// static peers + links). Iteration-1 invariants are not
+/// enforced here — startup will reject invalid links.
+static auto ParseWgRelayBlock(ryml::ConstNodeRef w,
+                              ServerConfig* config)
+    -> std::expected<void, Error<ConfigError>> {
+  Error<ConfigError> err{};
+  if (w.has_child("port")) {
+    int v = 0;
+    if (!ReadInt(w["port"], "wg_relay.port", &v, 1, 65535,
+                 &err))
+      return std::unexpected(err);
+    config->wg.port = static_cast<uint16_t>(v);
+  }
+  if (w.has_child("roster_path")) {
+    ReadStr(w["roster_path"], &config->wg.roster_path);
+  }
+  if (w.has_child("peers")) {
+    auto ps = w["peers"];
+    if (ps.is_seq()) {
+      for (auto child : ps.children()) {
+        if (!child.is_map()) continue;
+        WgRelayConfig::PeerEntry e;
+        if (child.has_child("name"))
+          ReadStr(child["name"], &e.name);
+        if (child.has_child("endpoint"))
+          ReadStr(child["endpoint"], &e.endpoint);
+        if (child.has_child("pubkey"))
+          ReadStr(child["pubkey"], &e.pubkey_b64);
+        if (child.has_child("label"))
+          ReadStr(child["label"], &e.label);
+        if (e.name.empty() || e.endpoint.empty()) {
+          return MakeError(
+              ConfigError::InvalidValue,
+              "wg_relay.peers[]: name + endpoint required");
+        }
+        config->wg.peers.push_back(std::move(e));
+      }
+    }
+  }
+  if (w.has_child("links")) {
+    auto ls = w["links"];
+    if (ls.is_seq()) {
+      for (auto child : ls.children()) {
+        if (!child.is_map()) continue;
+        WgRelayConfig::LinkEntry e;
+        if (child.has_child("a"))
+          ReadStr(child["a"], &e.a);
+        if (child.has_child("b"))
+          ReadStr(child["b"], &e.b);
+        if (e.a.empty() || e.b.empty()) {
+          return MakeError(ConfigError::InvalidValue,
+                           "wg_relay.links[]: a + b required");
+        }
+        config->wg.links.push_back(std::move(e));
+      }
+    }
+  }
+  return {};
+}
+
 auto LoadConfig(const char* path, ServerConfig* config)
     -> std::expected<void, Error<ConfigError>> {
   std::string buf;
@@ -200,6 +261,31 @@ auto LoadConfig(const char* path, ServerConfig* config)
 #define TRY_STR(key, field)                     \
   if (root.has_child(#key))                     \
     ReadStr(root[#key], &config->field);
+
+  // Operating mode. Default keeps the historic DERP
+  // behaviour; `wireguard` switches to the WG-relay
+  // forwarder and skips the DERP/HD path entirely.
+  if (root.has_child("mode")) {
+    auto val = root["mode"].val();
+    std::string_view m(val.data(), val.len);
+    if (m == "derp") {
+      config->mode = DaemonMode::kDerp;
+    } else if (m == "wireguard" || m == "wg") {
+      config->mode = DaemonMode::kWireguard;
+    } else {
+      return MakeError(
+          ConfigError::InvalidValue,
+          "mode: expected 'derp' or 'wireguard'");
+    }
+  }
+
+  if (root.has_child("wg_relay")) {
+    auto w = root["wg_relay"];
+    if (w.is_map()) {
+      auto rc = ParseWgRelayBlock(w, config);
+      if (!rc) return std::unexpected(rc.error());
+    }
+  }
 
   TRY_INT(port, port, 1, 65535)
   TRY_INT(workers, num_workers, 0, kMaxWorkers)

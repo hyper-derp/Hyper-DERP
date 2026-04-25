@@ -44,6 +44,7 @@ add_library(libderp_obj OBJECT
   src/fleet_controller.cc
   src/einheit_protocol.cc
   src/einheit_channel.cc
+  src/wg_relay.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
