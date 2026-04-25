@@ -6,7 +6,8 @@ Real-cloud characterization of `mode: wireguard` on GCP. Companion to [`wireguar
 
 - **`gve` driver only supports XDP on the GQI_QPL queue format.** That's all GCP families before C3/N4: `n1`, `n2`, `n2d`, `c2`, `t2d`, `e2`. The newer Sapphire/Genoa/Granite Rapids families (**`c3`, `c3d`, `c4`, `n4`, `h3`, `h4`**) use **DQO_RDA**, where XDP attach returns `Operation not supported` for both native and generic mode.
 - **Cloud bench numbers below are on `n2-standard-4`**, with native-mode XDP attached. RX=1 / TX=1 (gve XDP requires reserving half the channels for XDP_TX, and `n2-standard-4` has max 4 channels).
-- **The relay's per-CPU cost is small** — sustained 1 Gbit/s UDP forwarding burns ~2 % of one of the four vCPUs. The single-flow ceilings we measured are GCP per-flow rate caps and iperf3 sender limits, not the relay.
+- **The relay's per-CPU cost is small** — sustained 1 Gbit/s UDP forwarding burns ~2 % of one of the four vCPUs.
+- **The single-flow ceiling on cloud is WireGuard itself, not the relay.** Direct WG between two cloud VMs (no relay) hits the same ~1 Gbit/s UDP / 2-3 Gbit/s TCP cap. The Linux `wireguard` kernel module is single-threaded per-peer for crypto; per-packet overhead bounds a single-peer flow to ~1-2 Gbps regardless of CPU. The relay adds ~10 % on top of that. To push past it: more peers (each gets its own workqueue) or hardware NIC with offloads (see haswell numbers in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md)).
 
 ## Setup
 
@@ -91,6 +92,22 @@ Across the three platforms we benched:
 | UDP @ 1400 B clean | ~1 Gbit/s | ~2 Gbit/s | ~1 Gbit/s |
 | Latency steady avg | 1.10 ms | 0.71 ms | **0.60 ms** |
 | Relay CPU at clean ceiling | 7 % of 1 vCPU | 48 % of CPU 7 | **2 % of CPU 0** |
+
+### What's actually capping single-flow on cloud
+
+We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two cloud VMs:
+
+| topology | TCP single | UDP @ 5 G offered |
+| --- | --- | --- |
+| GCP underlay, no WG, no relay | 15.6 Gbit/s | 5 Gbit/s clean |
+| direct WG (peers point at each other) | 2.31 Gbit/s | 875 Mbit/s, 12 % loss |
+| WG via hyper-derp relay | 2.11 Gbit/s | ~900 Mbit/s, 12 % loss |
+
+Direct WG hits the same ceiling as relayed WG. The relay adds <10 % overhead. **The cap is the Linux `wireguard` kernel module's single-peer single-flow throughput**, not the relay or the cloud network.
+
+Per-peer WG runs encrypt + decrypt each in one kernel workqueue. ChaCha20-Poly1305 itself is fast (~16 Gbps theoretical), but per-packet overhead — replay protection, nonce handling, peer-table locking, skb juggling — caps a single peer-pair flow at ~1-2 Gbps on x86 Linux. **More peers in parallel scale linearly** because each peer has its own workqueue. A single greedy iperf3 stream measures the worst-case ceiling.
+
+The Mellanox haswell numbers escape this because hardware NIC offloads (TSO/GSO/GRO) coalesce WG-encrypted segments into superframes that pass through the kernel work-queue with fewer per-packet trips.
 
 GCP's per-flow caps are aggressive — single-flow throughput on n2-standard-4 is bracketed below the libvirt+virtio bench. Latency on the cloud VM is the lowest of any setup tested (0.60 ms) — same-zone GCP networking is fast and consistent. **Most importantly, the relay is so unloaded at the cap that scaling out to many concurrent peers should still see clean per-flow numbers** as long as the aggregate stays under the VM's egress limit.
 
