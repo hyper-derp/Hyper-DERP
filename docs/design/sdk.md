@@ -71,7 +71,7 @@ Each extension is an independent static lib that links
 Drives `wireguard.ko` via generic netlink (libmnl). Runs a
 UDP proxy on `127.0.0.1:<port>` that bridges WG UDP to HD
 MeshData, so WG traffic can fall back to HD when direct
-UDP fails. See [hd_wg.md](hd_wg.md) for the end-to-end flow.
+UDP fails. See [hd_wg.md](../hd_wg.md) for the end-to-end flow.
 
 Public surface in `hd/wg/`:
 

@@ -157,8 +157,8 @@ FleetData frames) and a set of client tools built on it.
 
 | Component | Purpose | Docs |
 |-----------|---------|------|
-| `hyper-derp` --hd-relay-key | Native HD relay; adds `--hd-relay-id` / `--hd-seed-relay` for fleet routing | [architecture.md](docs/architecture.md) |
-| HD SDK (`sdk/`) | C++23 client library — `hd::sdk::Client` / `Tunnel` with pluggable extensions (`hd_wg`, `hd_ice`, `hd_bridge`, `hd_policy`, `hd_fleet`) plus a C ABI wrapper | [sdk.md](docs/sdk.md) |
+| `hyper-derp` --hd-relay-key | Native HD relay; adds `--hd-relay-id` / `--hd-seed-relay` for fleet routing | [architecture.md](docs/design/architecture.md) |
+| HD SDK (`sdk/`) | C++23 client library — `hd::sdk::Client` / `Tunnel` with pluggable extensions (`hd_wg`, `hd_ice`, `hd_bridge`, `hd_policy`, `hd_fleet`) plus a C ABI wrapper | [sdk.md](docs/design/sdk.md) |
 | `hd-wg` | WireGuard tunnel daemon. Uses HD as signaling; tries direct UDP first, falls back (and auto-recovers) through the relay when direct paths die | [hd_wg.md](docs/hd_wg.md) |
 | `hdcat` | netcat/socat over HD tunnels. TCP / UDP / unix-socket / stdin-stdout, YAML config, wildcard peers | — |
 | `hdctl` | ZMQ IPC control CLI for the relay (list peers, drive a config-driven bridge) | — |
