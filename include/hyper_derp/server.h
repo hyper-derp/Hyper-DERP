@@ -63,6 +63,7 @@ struct WgRelayConfig {
     std::string endpoint;       // "ip:port"
     std::string pubkey_b64;     // optional, metadata only
     std::string label;
+    std::string nic;            // optional NIC binding
   };
   std::vector<PeerEntry> peers;
   /// Static links, loaded from yaml.
@@ -71,14 +72,15 @@ struct WgRelayConfig {
     std::string b;
   };
   std::vector<LinkEntry> links;
-  /// NIC name for XDP attachment (e.g. "enp1s0"). Empty
-  /// disables the XDP fast path; the userspace forwarder
-  /// alone handles every packet (correct, slow). When set,
-  /// the BPF program for `mode: wireguard` is attached and
-  /// most packets bypass userspace via XDP_TX. Userspace
-  /// remains the fallback for cold-start packets (before
-  /// the partner's MAC has been observed) and for any
-  /// kernel/driver combination that rejects the program.
+  /// NIC name(s) for XDP attachment. A single name keeps
+  /// the iteration-1 same-NIC XDP_TX behaviour (e.g.
+  /// "enp1s0"). A comma-separated list (e.g.
+  /// "ens4f0np0,ens4f1np1") attaches the BPF program to
+  /// each NIC and uses XDP_REDIRECT through the devmap to
+  /// cross between them, with each peer pinned to its
+  /// own NIC via PeerEntry::nic. Empty disables the XDP
+  /// fast path entirely; userspace forwarder handles
+  /// every packet.
   std::string xdp_interface;
   /// Path to the compiled BPF object. Defaults to a
   /// CMake-installed location; rarely set explicitly.

@@ -47,6 +47,12 @@ struct ep_val {
 	__u32 ip;	// network byte order
 	__u16 port;	// network byte order
 	__u16 _pad;
+	// Egress NIC ifindex for traffic to this partner. When
+	// equal to ctx->ingress_ifindex we use XDP_TX; otherwise
+	// XDP_REDIRECT through wg_devmap. Zero falls back to
+	// XDP_TX for backwards compatibility with single-NIC
+	// configs that don't populate this field.
+	__u32 ifindex;
 };
 
 struct mac_val {
@@ -96,6 +102,43 @@ struct {
 	__type(key, __u32);
 	__type(value, __u16);
 } wg_port SEC(".maps");
+
+// Devmap for cross-NIC XDP_REDIRECT. Userspace populates
+// it at attach time with one entry per NIC the relay is
+// attached to (key = ifindex, value = ifindex). The
+// program calls bpf_redirect_map(&wg_devmap, partner_
+// ifindex, 0) when the partner lives on a different NIC.
+struct {
+	__uint(type, BPF_MAP_TYPE_DEVMAP);
+	__uint(max_entries, 64);
+	__type(key, __u32);
+	__type(value, __u32);
+} wg_devmap SEC(".maps");
+
+// Per-NIC source MAC. On a cross-NIC redirect we need
+// the egress NIC's MAC as the new Ethernet source — the
+// ingress NIC's MAC (which is what we'd otherwise reuse)
+// would be wrong on the wire. Userspace populates one
+// entry per attached NIC at startup.
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 64);
+	__type(key, __u32);	// ifindex
+	__type(value, struct mac_val);
+} wg_nic_macs SEC(".maps");
+
+// Per-NIC source IPv4. Same reason as wg_nic_macs but
+// at L3: WireGuard peers reject packets whose source
+// 4-tuple doesn't match the configured peer endpoint, so
+// after a cross-NIC redirect the IP source has to match
+// the egress NIC, not the ingress NIC. Userspace
+// populates one entry per attached NIC.
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 64);
+	__type(key, __u32);	// ifindex
+	__type(value, __u32);	// ipv4 in network byte order
+} wg_nic_ips SEC(".maps");
 
 // -- Helpers ----------------------------------------------
 
@@ -206,15 +249,45 @@ int wg_relay_xdp(struct xdp_md *ctx)
 		return XDP_PASS;
 	}
 
-	// L2 rewrite: source becomes the inbound dest (our
-	// NIC's MAC, unchanged on the wire), destination
-	// becomes the partner's learned MAC.
-	__builtin_memcpy(eth->h_source, eth->h_dest, 6);
+	// L2 rewrite. Same-NIC bounce: source becomes the
+	// inbound dest (our NIC's MAC). Cross-NIC redirect:
+	// source must be the *egress* NIC's MAC, looked up in
+	// wg_nic_macs by the partner's ifindex; otherwise the
+	// frame goes out the second NIC with the first NIC's
+	// MAC and the L2 segment's switch / peer rejects it.
+	__u32 dst_if_l2 = partner->ifindex;
+	if (dst_if_l2 == 0 ||
+	    dst_if_l2 == ctx->ingress_ifindex) {
+		__builtin_memcpy(eth->h_source, eth->h_dest, 6);
+	} else {
+		struct mac_val *egress_mac =
+			bpf_map_lookup_elem(&wg_nic_macs, &dst_if_l2);
+		if (!egress_mac) {
+			// Operator forgot to populate wg_nic_macs
+			// for this ifindex — fall back to userspace.
+			inc_stat(STAT_PASS_NO_MAC);
+			return XDP_PASS;
+		}
+		__builtin_memcpy(eth->h_source, egress_mac->mac, 6);
+	}
 	__builtin_memcpy(eth->h_dest, dst_mv->mac, 6);
 
-	// L3 rewrite: source becomes the inbound dst (the
-	// relay's IP), destination becomes the partner's IP.
-	ip->saddr = ip->daddr;
+	// L3 rewrite. Same-NIC: source is the inbound dest
+	// (the relay's ingress IP). Cross-NIC: source must be
+	// the *egress* NIC's IP, otherwise the receiving WG
+	// peer's endpoint check rejects the packet silently.
+	if (dst_if_l2 == 0 ||
+	    dst_if_l2 == ctx->ingress_ifindex) {
+		ip->saddr = ip->daddr;
+	} else {
+		__u32 *egress_ip =
+			bpf_map_lookup_elem(&wg_nic_ips, &dst_if_l2);
+		if (!egress_ip) {
+			inc_stat(STAT_PASS_NO_MAC);
+			return XDP_PASS;
+		}
+		ip->saddr = *egress_ip;
+	}
 	ip->daddr = partner->ip;
 	ip->ttl = 64;
 	ip->check = 0;
@@ -251,7 +324,17 @@ int wg_relay_xdp(struct xdp_md *ctx)
 	}
 
 	inc_stat(STAT_FWD);
-	return XDP_TX;
+
+	// Same-NIC partner → bounce out the ingress interface.
+	// Different-NIC partner → cross-NIC redirect through
+	// the devmap. ifindex == 0 means "operator did not
+	// populate this field" (older single-NIC configs); fall
+	// back to XDP_TX so we stay backward compatible.
+	__u32 dst_if = partner->ifindex;
+	if (dst_if == 0 || dst_if == ctx->ingress_ifindex) {
+		return XDP_TX;
+	}
+	return bpf_redirect_map(&wg_devmap, dst_if, 0);
 }
 
 char _license[] SEC("license") = "GPL";
