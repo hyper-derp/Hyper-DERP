@@ -60,11 +60,38 @@ wg_relay:
     - { a: alice, b: bob }
 ```
 
+### Systemd drop-in
+
+The shipped `hyper-derp.service` is hardened for the DERP path: `DynamicUser=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`. With those defaults the daemon **cannot** write `/var/lib/hyper-derp/wg-roster` (no state dir) and the einheit IPC under `/tmp/einheit/` is invisible to anything else on the host (private namespace). You need a small drop-in to make WG mode actually usable:
+
+```bash
+sudo systemctl edit hyper-derp
+```
+
+```ini
+[Service]
+# Writable state dir for the wg roster.
+# Becomes /var/lib/hyper-derp owned by the DynamicUser.
+StateDirectory=hyper-derp
+
+# Share /tmp/einheit between the daemon's PrivateTmp
+# namespace and the host so hd-cli can reach the IPC
+# socket. Keeps the rest of /tmp private.
+BindPaths=/tmp/einheit
+```
+
+Then create the shared IPC dir once (host side, before first start):
+
+```bash
+sudo install -d -m 0775 -o root -g $(id -g) /tmp/einheit
+```
+
 ### Start it
 
 ```bash
-systemctl restart hyper-derp
-journalctl -u hyper-derp -n 20
+sudo systemctl daemon-reload
+sudo systemctl restart hyper-derp
+journalctl -u hyper-derp -n 20 --no-pager
 ```
 
 You want lines like:
@@ -74,6 +101,16 @@ hyper-derp starting in wireguard relay mode on UDP :51820
 wg-relay listening on UDP :51820 (0 peers, 0 links)
 einheit channel listening on ipc:///tmp/einheit/hd-relay.ctl
 ```
+
+### Running outside systemd (dev/fleet testing)
+
+For test rigs you can skip systemd entirely and run the binary directly under any user that owns the roster path and `/tmp/einheit/`:
+
+```bash
+nohup hyper-derp --config ./hyper-derp.yaml > hyper-derp.log 2>&1 &
+```
+
+This is what the in-tree fleet test (`hd-r2`) uses; it sidesteps every hardening interaction at the cost of the protections the systemd unit gives you.
 
 ## Operator workflow (hyper-derp CLI)
 
@@ -112,7 +149,9 @@ hd-cli wg peer pubkey bob   +9/gqzMIAGlsHZ1Y6c5ji02v4ymdwnGOoVEonN3uWiY=
 hd-cli wg show config alice 192.168.122.83:51820
 ```
 
-The second argument is the relay's advertised host:port — what you want to appear in the rendered `Endpoint =` line. Output looks like:
+The second argument is the relay's advertised host:port — what you want to appear in the rendered `Endpoint =` line.
+
+Before you've set the partner's pubkey, the output reminds you to do it:
 
 ```
 [Interface]
@@ -121,6 +160,16 @@ The second argument is the relay's advertised host:port — what you want to app
 ListenPort   = 51820
 
 # bob (bob-laptop)
+[Peer]
+# PublicKey           = (set with `wg peer pubkey bob <pubkey>` on the relay)
+AllowedIPs          = (your call)
+Endpoint            = 192.168.122.83:51820
+PersistentKeepalive = 25
+```
+
+After `wg peer pubkey bob <pubkey>` the `[Peer]` block is complete:
+
+```
 [Peer]
 PublicKey           = +9/gqzMIAGlsHZ1Y6c5ji02v4ymdwnGOoVEonN3uWiY=
 AllowedIPs          = (your call)
@@ -191,7 +240,13 @@ The relay identifies a peer **by its source 4-tuple**, not by anything inside th
 - **The peer's outbound source port must be stable.** WireGuard sends from its `ListenPort`, so set `ListenPort = <something fixed>` on every client. Without it, ephemeral source ports will arrive on the relay and `drop_unknown_src` will tick.
 - **The peer's source IP must match what you registered.** Behind a NAT, register the public IP:port the relay actually sees. (TODO: a future iteration may let operators bind to `0.0.0.0` and learn endpoints from a one-shot enrollment exchange.)
 
-If forwarding silently fails, the first thing to check is the relay's `drop_unknown_src` counter. If it's growing, the peer's source 4-tuple does not match the registered endpoint.
+If forwarding silently fails, the first thing to check is the relay's `drop_unknown_src` counter. If it's growing, the peer's source 4-tuple does not match the registered endpoint. To see exactly what arrives:
+
+```bash
+sudo tcpdump -i any -nn udp port 51820
+```
+
+Each accepted packet should produce two lines — one inbound from a client, one outbound to its link partner. If you only see the inbound, either the source doesn't match a registered peer (`drop_unknown_src`) or the peer has no link (`drop_no_link`).
 
 ## Operations
 
