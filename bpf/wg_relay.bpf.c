@@ -54,6 +54,14 @@ struct mac_val {
 	__u16 _pad;
 };
 
+// Per-source byte counters. Per-CPU so the hot path is
+// contention-free; userspace sums across CPUs in
+// `wg peer list`.
+struct peer_bytes_val {
+	__u64 rx_bytes;
+	__u64 fwd_bytes;
+};
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 1024);
@@ -67,6 +75,13 @@ struct {
 	__type(key, struct ep_key);
 	__type(value, struct mac_val);
 } wg_macs SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+	__uint(max_entries, 1024);
+	__type(key, struct ep_key);
+	__type(value, struct peer_bytes_val);
+} wg_peer_bytes SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -212,6 +227,28 @@ int wg_relay_xdp(struct xdp_md *ctx)
 	udp->source = udp->dest;
 	udp->dest = partner->port;
 	udp->check = 0;
+
+	// Per-source byte accounting. Use IP total length plus
+	// the 14-byte Ethernet header rather than
+	// (data_end - data) — the verifier rejects pkt - pkt
+	// subtraction even through long casts. tot_len is in
+	// network byte order. Idempotent lazy-create on the
+	// first packet from this source.
+	__u64 plen = (__u64)bpf_ntohs(ip->tot_len) +
+		     sizeof(struct ethhdr);
+	struct peer_bytes_val *pb =
+		bpf_map_lookup_elem(&wg_peer_bytes, &src_key);
+	if (pb) {
+		pb->rx_bytes  += plen;
+		pb->fwd_bytes += plen;
+	} else {
+		struct peer_bytes_val init = {
+			.rx_bytes  = plen,
+			.fwd_bytes = plen,
+		};
+		bpf_map_update_elem(&wg_peer_bytes, &src_key,
+				    &init, BPF_ANY);
+	}
 
 	inc_stat(STAT_FWD);
 	return XDP_TX;
