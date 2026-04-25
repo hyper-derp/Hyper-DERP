@@ -16,6 +16,9 @@
 #include "hyper_derp/config.h"
 #include "hyper_derp/ctl_channel.h"
 #include "hyper_derp/server.h"
+#include "hyper_derp/wg_relay.h"
+
+#include <time.h>
 
 static std::atomic<int> g_stop_flag{0};
 
@@ -344,6 +347,54 @@ int main(int argc, char* argv[]) {
       config.num_workers = n;
     }
     spdlog::info("pin-workers: {} cores specified", n);
+  }
+
+  // WG relay mode is a separate UDP forwarder with no
+  // DERP / kTLS / HD machinery. Build a stripped Server
+  // around the WgRelay so the einheit channel still
+  // works for `wg peer ...` / `wg show` / `daemon
+  // restart` etc., then block on the signal flag.
+  // Mode swap is not live; requires a restart.
+  if (config.mode == hyper_derp::DaemonMode::kWireguard) {
+    spdlog::info(
+        "hyper-derp (wireguard relay) starting on UDP "
+        ":{}",
+        config.wg.port);
+    hyper_derp::Server srv;
+    srv.config = config;
+    srv.wg_relay = hyper_derp::WgRelayStart(config.wg);
+    if (!srv.wg_relay) {
+      spdlog::error(
+          "wg-relay init failed (see prior log)");
+      return EXIT_FAILURE;
+    }
+    if (!config.einheit_ctl_endpoint.empty()) {
+      srv.einheit_channel =
+          hyper_derp::EinheitChannelStart(
+              config.einheit_ctl_endpoint,
+              config.einheit_pub_endpoint, &srv);
+    }
+    struct sigaction sa {};
+    sa.sa_handler = SignalHandler;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    signal(SIGPIPE, SIG_IGN);
+    while (!g_stop_flag.load(
+        std::memory_order_acquire)) {
+      struct timespec ts {
+        .tv_sec = 0, .tv_nsec = 200 * 1000 * 1000
+      };
+      nanosleep(&ts, nullptr);
+    }
+    if (srv.einheit_channel) {
+      hyper_derp::EinheitChannelStop(srv.einheit_channel);
+      srv.einheit_channel = nullptr;
+    }
+    hyper_derp::WgRelayStop(srv.wg_relay);
+    spdlog::info("hyper-derp (wg) exiting");
+    return EXIT_SUCCESS;
   }
 
   spdlog::info("hyper-derp starting on port {}",

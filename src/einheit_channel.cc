@@ -39,6 +39,7 @@
 #include "hyper_derp/hd_audit.h"
 #include "hyper_derp/hd_handshake.h"
 #include "hyper_derp/hd_peers.h"
+#include "hyper_derp/wg_relay.h"
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/key_format.h"
@@ -794,6 +795,159 @@ void Describe(Server* s, const Request& /*req*/,
     idx++;
   }
   b += std::format("count={}\n", idx);
+  SetBody(r, b);
+}
+
+// -- WireGuard relay mode -------------------------------
+
+namespace {
+
+bool ParseWgPubkey(const std::string& s, uint8_t out[32]) {
+  if (s.size() != 64) return false;
+  for (size_t i = 0; i < 32; ++i) {
+    auto nib = [](char c, int* v) {
+      if (c >= '0' && c <= '9') {
+        *v = c - '0';
+        return true;
+      }
+      if (c >= 'a' && c <= 'f') {
+        *v = c - 'a' + 10;
+        return true;
+      }
+      if (c >= 'A' && c <= 'F') {
+        *v = c - 'A' + 10;
+        return true;
+      }
+      return false;
+    };
+    int hi, lo;
+    if (!nib(s[i * 2], &hi) || !nib(s[i * 2 + 1], &lo)) {
+      return false;
+    }
+    out[i] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  return true;
+}
+
+std::string WgPubkeyToHex(const uint8_t pk[32]) {
+  static const char* h = "0123456789abcdef";
+  std::string out(64, '0');
+  for (size_t i = 0; i < 32; ++i) {
+    out[i * 2] = h[(pk[i] >> 4) & 0xF];
+    out[i * 2 + 1] = h[pk[i] & 0xF];
+  }
+  return out;
+}
+
+}  // namespace
+
+void WgPeerAdd(Server* s, const Request& req,
+                Response* r) {
+  if (!s->wg_relay) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_wg_mode",
+        "daemon is not in wireguard mode");
+    return;
+  }
+  if (req.args.size() < 2) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "bad_args",
+        "usage: wg peer add <pubkey-hex> <ip:port> "
+        "[label]");
+    return;
+  }
+  uint8_t pk[32];
+  if (!ParseWgPubkey(req.args[0], pk)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("bad_args",
+                       "pubkey must be 64 hex chars");
+    return;
+  }
+  std::string label =
+      req.args.size() >= 3 ? req.args[2] : std::string();
+  if (!WgRelayAddPeer(s->wg_relay, pk, req.args[1],
+                       label)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("bad_args",
+                       "could not parse endpoint");
+    return;
+  }
+  SetBody(r, std::format("pubkey={}\nendpoint={}\n",
+                          req.args[0], req.args[1]));
+}
+
+void WgPeerRemove(Server* s, const Request& req,
+                   Response* r) {
+  if (!s->wg_relay) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_wg_mode",
+        "daemon is not in wireguard mode");
+    return;
+  }
+  if (req.args.empty()) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "bad_args", "usage: wg peer remove <pubkey-hex>");
+    return;
+  }
+  uint8_t pk[32];
+  if (!ParseWgPubkey(req.args[0], pk)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf("bad_args",
+                       "pubkey must be 64 hex chars");
+    return;
+  }
+  bool removed = WgRelayRemovePeer(s->wg_relay, pk);
+  SetBody(r, std::format("removed={}\n",
+                          removed ? "true" : "false"));
+}
+
+void WgPeerList(Server* s, const Request& /*req*/,
+                 Response* r) {
+  if (!s->wg_relay) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_wg_mode",
+        "daemon is not in wireguard mode");
+    return;
+  }
+  auto peers = WgRelayListPeers(s->wg_relay);
+  std::string b;
+  for (size_t i = 0; i < peers.size(); ++i) {
+    b += std::format(
+        "peer.{}.pubkey={}\n", i,
+        WgPubkeyToHex(peers[i].pubkey));
+    b += std::format("peer.{}.endpoint={}\n", i,
+                      peers[i].endpoint);
+    b += std::format("peer.{}.label={}\n", i,
+                      peers[i].label);
+  }
+  b += std::format("peer.count={}\n", peers.size());
+  SetBody(r, b);
+}
+
+void WgShow(Server* s, const Request& /*req*/,
+              Response* r) {
+  if (!s->wg_relay) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "not_wg_mode",
+        "daemon is not in wireguard mode");
+    return;
+  }
+  auto st = WgRelayGetStats(s->wg_relay);
+  std::string b;
+  b += std::format("peers={}\n", st.peer_count);
+  b += std::format("sessions={}\n", st.session_count);
+  b += std::format("rx_packets={}\n", st.rx_packets);
+  b += std::format("fwd_packets={}\n", st.fwd_packets);
+  b += std::format("drop_no_dst={}\n", st.drop_no_dst);
+  b += std::format("drop_bad_form={}\n", st.drop_bad_form);
+  b += std::format("drop_no_session={}\n",
+                    st.drop_no_session);
   SetBody(r, b);
 }
 
@@ -1860,6 +2014,33 @@ Registry MakeRegistry() {
                     "Return the command catalog for "
                     "CLI discovery",
                     false, {}};
+
+  // WireGuard relay verbs. Self-gated on s->wg_relay
+  // being non-null; in DERP mode they return
+  // `not_wg_mode` so they're harmless to register
+  // unconditionally.
+  m["wg_peer_add"] = {
+      WgPeerAdd, Role::kAdmin, "wg peer add",
+      "Add or replace a WG peer in the relay roster",
+      false,
+      {{"pubkey",
+        "32-byte WG static public key, hex (64 chars)",
+        true},
+       {"endpoint", "host:port the peer is reachable at",
+        true},
+       {"label", "operator-supplied label", false}}};
+  m["wg_peer_remove"] = {
+      WgPeerRemove, Role::kAdmin, "wg peer remove",
+      "Remove a WG peer from the roster", false,
+      {{"pubkey", "WG static public key, hex", true}}};
+  m["wg_peer_list"] = {
+      WgPeerList, Role::kAny, "wg peer list",
+      "List configured WG peers and last-seen state",
+      false, {}};
+  m["wg_show"] = {
+      WgShow, Role::kAny, "wg show",
+      "Aggregate counters: forwarded, dropped, sessions",
+      false, {}};
   return m;
 }
 

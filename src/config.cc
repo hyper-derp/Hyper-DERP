@@ -203,6 +203,58 @@ auto LoadConfig(const char* path, ServerConfig* config)
 
   TRY_INT(port, port, 1, 65535)
   TRY_INT(workers, num_workers, 0, kMaxWorkers)
+
+  // Daemon mode. Accepts `derp` (default) or `wireguard`;
+  // mode swap is not live-mutable and requires a restart.
+  if (root.has_child("mode")) {
+    auto val = root["mode"].val();
+    std::string_view m(val.data(), val.len);
+    if (m == "derp") {
+      config->mode = DaemonMode::kDerp;
+    } else if (m == "wireguard" || m == "wg") {
+      config->mode = DaemonMode::kWireguard;
+    } else {
+      return MakeError(ConfigError::InvalidValue,
+                        "mode: expected derp|wireguard");
+    }
+  }
+
+  if (root.has_child("wg_relay")) {
+    auto wg = root["wg_relay"];
+    if (wg.is_map()) {
+      if (wg.has_child("port")) {
+        int v = 51820;
+        if (!ReadInt(wg["port"], "wg_relay.port", &v, 1,
+                      65535, &err))
+          return std::unexpected(err);
+        config->wg.port = static_cast<uint16_t>(v);
+      }
+      if (wg.has_child("roster_path")) {
+        ReadStr(wg["roster_path"], &config->wg.roster_path);
+      }
+      if (wg.has_child("peers")) {
+        auto ps = wg["peers"];
+        if (ps.is_seq()) {
+          for (auto p : ps.children()) {
+            if (!p.is_map()) continue;
+            WgRelayConfig::PeerEntry e;
+            if (p.has_child("pubkey")) {
+              ReadStr(p["pubkey"], &e.pubkey_hex);
+            }
+            if (p.has_child("endpoint")) {
+              ReadStr(p["endpoint"], &e.endpoint);
+            }
+            if (p.has_child("label")) {
+              ReadStr(p["label"], &e.label);
+            }
+            if (!e.pubkey_hex.empty()) {
+              config->wg.peers.push_back(std::move(e));
+            }
+          }
+        }
+      }
+    }
+  }
   TRY_INT(sockbuf, sockbuf_size, 0, 256 * 1024 * 1024)
   TRY_INT(max_accept_rate, max_accept_per_sec,
           0, 1000000)
