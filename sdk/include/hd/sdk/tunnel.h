@@ -48,6 +48,11 @@ class Tunnel {
   /// Current connection mode.
   Mode CurrentMode() const;
 
+  /// Deny reason from the relay's OpenConnection result,
+  /// if the tunnel was denied. 0 on success or when the
+  /// tunnel is still pending.
+  uint16_t DenyReason() const;
+
   /// Peer name this tunnel connects to.
   const std::string& PeerName() const;
 

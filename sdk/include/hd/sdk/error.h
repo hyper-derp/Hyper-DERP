@@ -23,6 +23,7 @@ enum class ErrorCode {
   kNetworkError,
   kTimeout,
   kPoolExhausted,
+  kOpenFailed,
 };
 
 struct Error {

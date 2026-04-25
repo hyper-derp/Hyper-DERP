@@ -3,6 +3,8 @@
 
 #include "hyper_derp/hd_peers.h"
 
+#include <arpa/inet.h>
+
 #include <cstring>
 
 #include <gtest/gtest.h>
@@ -236,6 +238,259 @@ TEST_F(HdPeersTest, ListPeers) {
     }
     EXPECT_TRUE(found) << "key " << i << " not listed";
   }
+}
+
+TEST_F(HdPeersTest, PolicyAllowsUnconstrained) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key,
+              HdEnrollMode::kAutoApprove);
+  Key k{};
+  k[0] = 0xAA;
+  EXPECT_TRUE(HdPolicyAllows(&reg, k, 0, nullptr));
+}
+
+TEST_F(HdPeersTest, PolicyMaxPeersCap) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key,
+              HdEnrollMode::kAutoApprove);
+  reg.policy.max_peers = 2;
+  reg.peer_count = 2;
+  Key k{};
+  k[0] = 1;
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdPolicyAllows(&reg, k, 0, &reason));
+  EXPECT_NE(reason, nullptr);
+}
+
+TEST_F(HdPeersTest, PolicyAllowedKeysGlob) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key,
+              HdEnrollMode::kAutoApprove);
+  // Accept everything starting with "ck_00" (raw hex byte
+  // 0x00 at position 0).
+  reg.policy.allowed_keys = {"ck_00*"};
+  Key k{};  // all zeros → hex starts with "00"
+  EXPECT_TRUE(HdPolicyAllows(&reg, k, 0, nullptr));
+
+  Key bad{};
+  bad[0] = 0xFF;  // hex starts with "ff"
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdPolicyAllows(&reg, bad, 0, &reason));
+  EXPECT_NE(reason, nullptr);
+}
+
+TEST_F(HdPeersTest, RevokeAddsToDenylist) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key, HdEnrollMode::kManual);
+  Key peer_key{};
+  peer_key[0] = 0x77;
+  HdPeersInsert(&reg, peer_key, 99);
+  ASSERT_FALSE(HdPeersIsDenied(&reg, peer_key.data()));
+
+  HdPeersRevoke(&reg, peer_key.data());
+  EXPECT_TRUE(HdPeersIsDenied(&reg, peer_key.data()));
+  EXPECT_EQ(HdPeersLookup(&reg, peer_key.data()),
+            nullptr);
+}
+
+TEST_F(HdPeersTest, DenylistPersistsAcrossRegistries) {
+  char path[] = "/tmp/hd_denylist_XXXXXX";
+  int fd = mkstemp(path);
+  ASSERT_GE(fd, 0);
+  close(fd);
+  std::string file = path;
+
+  Key peer_key{};
+  peer_key[0] = 0xAB;
+
+  {
+    HdPeerRegistry reg;
+    Key relay_key{};
+    HdPeersInit(&reg, relay_key,
+                HdEnrollMode::kManual);
+    reg.denylist_path = file;
+    HdPeersInsert(&reg, peer_key, 1);
+    HdPeersRevoke(&reg, peer_key.data());
+  }
+
+  {
+    HdPeerRegistry reg2;
+    Key relay_key{};
+    HdPeersInit(&reg2, relay_key,
+                HdEnrollMode::kManual);
+    reg2.denylist_path = file;
+    EXPECT_TRUE(HdDenylistLoad(&reg2));
+    EXPECT_TRUE(
+        HdPeersIsDenied(&reg2, peer_key.data()));
+  }
+
+  unlink(file.c_str());
+}
+
+TEST_F(HdPeersTest, PeerPolicyLookupAndSet) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key, HdEnrollMode::kManual);
+  Key k{};
+  k[0] = 0x77;
+  HdPeersInsert(&reg, k, 42);
+
+  HdPeerPolicy pol;
+  pol.has_pin = true;
+  pol.pinned_intent = HdIntent::kRequireRelay;
+  pol.override_client = true;
+  pol.audit_tag = "zoneA";
+  pol.reason = "sensitive";
+  EXPECT_TRUE(HdPeersSetPolicy(&reg, k.data(), pol));
+
+  auto* got = HdPeersLookupPolicy(&reg, k.data());
+  ASSERT_NE(got, nullptr);
+  EXPECT_TRUE(got->has_pin);
+  EXPECT_EQ(got->pinned_intent, HdIntent::kRequireRelay);
+  EXPECT_TRUE(got->override_client);
+  EXPECT_EQ(got->audit_tag, "zoneA");
+  EXPECT_EQ(got->reason, "sensitive");
+
+  EXPECT_TRUE(HdPeersClearPolicy(&reg, k.data()));
+  auto* cleared = HdPeersLookupPolicy(&reg, k.data());
+  ASSERT_NE(cleared, nullptr);
+  EXPECT_FALSE(cleared->has_pin);
+  EXPECT_TRUE(cleared->audit_tag.empty());
+}
+
+TEST_F(HdPeersTest, PeerPolicyPersistsAcrossRegistries) {
+  char path[] = "/tmp/hd_peer_policy_XXXXXX";
+  int fd = mkstemp(path);
+  ASSERT_GE(fd, 0);
+  close(fd);
+  std::string file = path;
+
+  Key k{};
+  k[0] = 0xCC;
+
+  {
+    HdPeerRegistry reg;
+    Key relay_key{};
+    HdPeersInit(&reg, relay_key,
+                HdEnrollMode::kManual);
+    reg.peer_policy_path = file;
+    HdPeersInsert(&reg, k, 1);
+    HdPeerPolicy pol;
+    pol.has_pin = true;
+    pol.pinned_intent = HdIntent::kRequireRelay;
+    pol.override_client = true;
+    pol.audit_tag = "compliance-zone-A";
+    pol.reason = "sensor ip confidential";
+    ASSERT_TRUE(HdPeersSetPolicy(&reg, k.data(), pol));
+  }
+
+  // Second registry loads from disk after enrollment.
+  {
+    HdPeerRegistry reg2;
+    Key relay_key{};
+    HdPeersInit(&reg2, relay_key,
+                HdEnrollMode::kManual);
+    reg2.peer_policy_path = file;
+    HdPeersInsert(&reg2, k, 2);
+    EXPECT_TRUE(HdPeerPolicyLoad(&reg2));
+    auto* got = HdPeersLookupPolicy(&reg2, k.data());
+    ASSERT_NE(got, nullptr);
+    EXPECT_TRUE(got->has_pin);
+    EXPECT_EQ(got->pinned_intent,
+              HdIntent::kRequireRelay);
+    EXPECT_TRUE(got->override_client);
+    EXPECT_EQ(got->audit_tag, "compliance-zone-A");
+    EXPECT_EQ(got->reason, "sensor ip confidential");
+  }
+
+  unlink(file.c_str());
+}
+
+TEST_F(HdPeersTest, FederationAcceptsListedFleet) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "company-a";
+  pol.accept_from.push_back(rule);
+  Key k{};
+  const char* reason = nullptr;
+  EXPECT_TRUE(HdFederationAllows(pol, "company-a", k,
+                                 &reason));
+}
+
+TEST_F(HdPeersTest, FederationRejectsUnknownFleet) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "company-a";
+  pol.accept_from.push_back(rule);
+  Key k{};
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdFederationAllows(pol, "unknown", k,
+                                  &reason));
+  EXPECT_NE(reason, nullptr);
+}
+
+TEST_F(HdPeersTest, FederationDestinationGlob) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "partner-b";
+  rule.allowed_destinations = {"ck_aa*"};
+  pol.accept_from.push_back(rule);
+
+  Key good{};
+  good[0] = 0xAA;
+  EXPECT_TRUE(HdFederationAllows(pol, "partner-b", good,
+                                 nullptr));
+
+  Key bad{};
+  bad[0] = 0xBB;
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdFederationAllows(pol, "partner-b", bad,
+                                  &reason));
+  EXPECT_NE(reason, nullptr);
+}
+
+TEST_F(HdPeersTest, FederationRejectListOverrides) {
+  HdFederationPolicy pol;
+  HdFederationAccept rule;
+  rule.fleet_id = "everyone";
+  pol.accept_from.push_back(rule);
+  pol.reject_from.push_back("hostile");
+  Key k{};
+  EXPECT_FALSE(HdFederationAllows(pol, "hostile", k,
+                                  nullptr));
+}
+
+TEST_F(HdPeersTest, FederationEmptyAcceptDenies) {
+  HdFederationPolicy pol;
+  Key k{};
+  const char* reason = nullptr;
+  EXPECT_FALSE(HdFederationAllows(pol, "any", k,
+                                  &reason));
+}
+
+TEST_F(HdPeersTest, PolicyIpRange) {
+  HdPeerRegistry reg;
+  Key relay_key{};
+  HdPeersInit(&reg, relay_key,
+              HdEnrollMode::kAutoApprove);
+  reg.policy.require_ip_range = "10.0.0.0/8";
+  Key k{};
+  // 10.1.2.3 — inside.
+  uint32_t ip_in = htonl((10u << 24) | (1u << 16) |
+                         (2u << 8) | 3u);
+  EXPECT_TRUE(HdPolicyAllows(&reg, k, ip_in, nullptr));
+
+  // 192.168.1.1 — outside.
+  uint32_t ip_out = htonl((192u << 24) | (168u << 16) |
+                          (1u << 8) | 1u);
+  const char* reason = nullptr;
+  EXPECT_FALSE(
+      HdPolicyAllows(&reg, k, ip_out, &reason));
+  EXPECT_NE(reason, nullptr);
 }
 
 }  // namespace hyper_derp

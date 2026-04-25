@@ -17,7 +17,10 @@
 #include <cstdint>
 #include <mutex>
 
+#include "hyper_derp/hd_audit.h"
+#include "hyper_derp/hd_peers.h"
 #include "hyper_derp/hd_relay_table.h"
+#include "hyper_derp/hd_resolver.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/protocol.h"
 #include "hyper_derp/types.h"
@@ -32,6 +35,16 @@ inline constexpr int kCpMaxWatchers = 64;
 
 /// Per-pipe read buffer size.
 inline constexpr int kPipeBufSize = 65536 + 64;
+
+/// Maximum concurrent OpenConnection round-trips.
+inline constexpr int kCpMaxOpenConns = 256;
+
+/// Maximum outstanding per initiator. Rejects the 17th.
+inline constexpr int kCpMaxOpenConnsPerPeer = 16;
+
+/// Timeout for target response.
+inline constexpr uint64_t kCpOpenConnTimeoutNs =
+    5'000'000'000ULL;
 
 /// Pipe message header: [4B fd][1B type][4B len].
 inline constexpr int kPipeMsgHeader = 9;
@@ -89,6 +102,42 @@ struct ControlPlane {
   int route_announce_fd = -1;
   // Relay routing table (owned by Server).
   RelayTable* relay_table = nullptr;
+
+  // -- Routing policy (Phase 2) ---------------------
+  HdPeerRegistry* hd_peers = nullptr;
+  HdAuditRing audit_ring;
+  HdAuditFlusher audit_flusher;
+  struct OpenConnEntry {
+    uint8_t in_use = 0;
+    uint64_t correlation_id = 0;
+    int initiator_fd = -1;
+    int target_fd = -1;
+    Key initiator_key{};
+    Key target_key{};
+    HdClientView initiator_view;
+    /// Non-zero means this slot is tracking an outbound
+    /// FleetOpenConnection sent to a remote relay; the
+    /// Result wrapping is FleetOpenConnectionResult and
+    /// the final reply populates relay_path with this
+    /// id.
+    uint16_t target_relay_id = 0;
+    /// True on the gateway side: the slot was created by
+    /// receiving a FleetOpenConnection, so the final
+    /// result must be wrapped as FleetOpenConnectionResult
+    /// back to `initiator_fd` (the relay link), not as a
+    /// client-level OpenConnectionResult.
+    bool is_gateway_inbound = false;
+    /// On the gateway side: which remote relay originated
+    /// this tunnel attempt. Used to key the slot alongside
+    /// correlation_id.
+    uint16_t origin_relay_id = 0;
+    uint64_t deadline_ns = 0;
+  };
+  OpenConnEntry open_conns[kCpMaxOpenConns]{};
+  // Count of outstanding entries per initiator_fd.
+  int open_conn_per_peer[kMaxFd]{};
+  // Timerfd firing every second for deadline scan.
+  int open_conn_timer_fd = -1;
 };
 
 /// @brief Initialize the control plane.
@@ -179,6 +228,55 @@ void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
 /// @param rt Relay routing table (owned by Server).
 void CpEnableFleetRouting(ControlPlane* cp,
                           RelayTable* rt);
+
+/// @brief Enable routing-policy handling on the control
+///   plane. Connects the HD peer registry and creates the
+///   deadline-scan timerfd. Must be called before
+///   CpRunLoop.
+/// @param cp Control plane.
+/// @param hd_peers HD peer registry.
+void CpEnableRoutingPolicy(ControlPlane* cp,
+                           HdPeerRegistry* hd_peers);
+
+/// @brief Start the audit log file-sink flusher thread.
+///   Must be called after CpEnableRoutingPolicy; no-ops
+///   on empty path.
+/// @param cp Control plane.
+/// @param path Target file path; empty disables the sink.
+/// @param max_bytes Rotate at this size (0 = no
+///   rotation).
+/// @param keep Number of rotated files to keep.
+void CpEnableAuditFile(ControlPlane* cp,
+                       const std::string& path,
+                       uint64_t max_bytes, int keep);
+
+/// @brief Process an OpenConnection from an initiator.
+/// @param cp Control plane.
+/// @param fd Initiator's fd.
+/// @param payload OpenConnection payload.
+/// @param payload_len Payload length.
+void CpHandleOpenConnection(ControlPlane* cp, int fd,
+                            const uint8_t* payload,
+                            int payload_len);
+
+/// @brief Process an IncomingConnResponse from the
+///   target peer of an earlier OpenConnection.
+void CpHandleIncomingConnResponse(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len);
+
+/// @brief Process a FleetOpenConnection received from an
+///   origin relay (gateway role).
+void CpHandleFleetOpenConnection(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len);
+
+/// @brief Process a FleetOpenConnectionResult received
+///   from a gateway relay in response to an outbound
+///   forward (origin role).
+void CpHandleFleetOpenConnectionResult(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len);
 
 /// @brief Process a RouteAnnounce from a neighbor relay.
 ///

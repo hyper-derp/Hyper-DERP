@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "hyper_derp/control_plane.h"
+#include "hyper_derp/einheit_channel.h"
+#include "hyper_derp/fleet_controller.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
 #include "hyper_derp/handshake.h"
@@ -113,6 +115,57 @@ struct ServerConfig {
   std::string hd_relay_key;
   /// HD enrollment mode.
   HdEnrollMode hd_enroll_mode = HdEnrollMode::kManual;
+  /// Policy constraints applied to auto-approval.
+  HdEnrollPolicy hd_enroll_policy;
+  /// Path to persistent denylist file (empty = in-memory
+  /// only, no persistence across restarts).
+  std::string hd_denylist_path;
+  /// Path to per-peer policy file (empty = in-memory
+  /// only, admin changes do not survive restart).
+  std::string hd_peer_policy_path;
+  /// Relay-operator routing policy (static, read at
+  /// startup; Phase 6 replaces with signed bundle pull).
+  HdRelayPolicy hd_relay_policy;
+  /// Fleet-wide policy loaded from disk (Phase 4 reads a
+  /// local YAML path; Phase 6 replaces with bundle pull).
+  HdFleetPolicy hd_fleet_policy;
+  /// Path to a fleet-policy YAML file. Empty = no fleet
+  /// policy configured.
+  std::string hd_fleet_policy_path;
+  /// Federation policy (applied at the gateway on
+  /// inbound FleetOpenConnection frames).
+  HdFederationPolicy hd_federation_policy;
+  /// Path to the routing-policy audit log. Empty = no
+  /// file sink (ring-only, still queryable via REST).
+  std::string hd_audit_log_path;
+  /// Rotate audit log when it reaches this size, keeping
+  /// `hd_audit_log_keep` rotated files.
+  uint64_t hd_audit_log_max_bytes = 100 * 1024 * 1024;
+  /// Number of rotated files to keep (.1..N).
+  int hd_audit_log_keep = 10;
+  /// Fleet controller (signed-bundle puller). Empty URL
+  /// disables.
+  struct FleetControllerOptions {
+    std::string url;
+    std::string signing_pubkey_b64;
+    std::string client_cert;
+    std::string client_key;
+    std::string ca_bundle;
+    int poll_interval_secs = 60;
+    std::string bundle_cache_path;
+  } hd_fleet_controller;
+  /// einheit control-plane ZMQ endpoint (ipc:// ...). Empty
+  /// disables the einheit channel (falls back to legacy
+  /// ctl_channel only).
+  std::string einheit_ctl_endpoint;
+  /// einheit event PUB endpoint. Empty disables events.
+  std::string einheit_pub_endpoint;
+  /// Append-only commit log for live candidate-config
+  /// changes. Each successful `commit` appends one
+  /// tab-separated record; on startup the channel replays
+  /// the log so committed changes survive a restart.
+  /// Empty disables persistence.
+  std::string einheit_commit_log_path;
   /// This relay's fleet ID (0 = standalone, no fleet).
   uint16_t hd_relay_id = 0;
   /// Seed relays for fleet bootstrapping ("host:port").
@@ -152,6 +205,9 @@ struct Server {
   std::thread control_thread;
   std::thread seed_thread;
   MetricsServer* metrics_server = nullptr;
+  FleetController fleet_controller{};
+  bool fleet_controller_started = false;
+  EinheitChannel* einheit_channel = nullptr;
 
   // Level 2 (direct path) subsystems.
   IceAgent ice_agent{};

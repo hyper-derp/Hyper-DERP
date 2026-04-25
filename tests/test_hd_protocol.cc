@@ -52,6 +52,20 @@ TEST(HdProtocolTest, AllFrameTypesDistinct) {
       static_cast<uint8_t>(HdFrameType::kDenied),
       static_cast<uint8_t>(HdFrameType::kPeerInfo),
       static_cast<uint8_t>(HdFrameType::kPeerGone),
+      static_cast<uint8_t>(HdFrameType::kRedirect),
+      static_cast<uint8_t>(HdFrameType::kOpenConnection),
+      static_cast<uint8_t>(
+          HdFrameType::kOpenConnectionResult),
+      static_cast<uint8_t>(
+          HdFrameType::kIncomingConnection),
+      static_cast<uint8_t>(
+          HdFrameType::kIncomingConnResponse),
+      static_cast<uint8_t>(
+          HdFrameType::kIncomingConnResult),
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnection),
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnectionResult),
       static_cast<uint8_t>(HdFrameType::kRouteAnnounce),
   };
   int count = sizeof(types) / sizeof(types[0]);
@@ -222,6 +236,263 @@ TEST(HdProtocolTest, ReadFleetRelayAndPeerRoundtrip) {
   const uint8_t* payload = buf + kHdFrameHeaderSize;
   EXPECT_EQ(HdReadFleetRelay(payload), 0xFEDC);
   EXPECT_EQ(HdReadFleetPeer(payload), 0xBA98);
+}
+
+TEST(HdProtocolTest, BuildRedirect) {
+  const char* url = "hd://relay-eu-2.example.com:443";
+  int url_len = strlen(url);
+
+  uint8_t buf[kHdFrameHeaderSize + 1 + 256];
+  int n = HdBuildRedirect(buf,
+                          HdRedirectReason::kRebalancing,
+                          url, url_len);
+
+  EXPECT_EQ(n, kHdFrameHeaderSize + 1 + url_len);
+  EXPECT_EQ(HdReadFrameType(buf),
+            HdFrameType::kRedirect);
+  EXPECT_EQ(HdReadPayloadLen(buf),
+            static_cast<uint32_t>(1 + url_len));
+  EXPECT_EQ(buf[kHdFrameHeaderSize],
+            static_cast<uint8_t>(
+                HdRedirectReason::kRebalancing));
+  EXPECT_EQ(
+      memcmp(buf + kHdFrameHeaderSize + 1, url, url_len),
+      0);
+}
+
+TEST(HdProtocolTest, RedirectUrlTooLong) {
+  char url[kHdRedirectMaxUrl + 1];
+  memset(url, 'x', sizeof(url));
+
+  uint8_t buf[kHdFrameHeaderSize + 1 + kHdRedirectMaxUrl +
+              1];
+  int n = HdBuildRedirect(buf,
+                          HdRedirectReason::kDraining,
+                          url, sizeof(url));
+
+  EXPECT_EQ(n, -1);
+}
+
+TEST(HdProtocolTest, ParseRedirectRoundtrip) {
+  const char* url = "hd://target.example:3340";
+  int url_len = strlen(url);
+
+  uint8_t buf[kHdFrameHeaderSize + 1 + 256];
+  HdBuildRedirect(buf,
+                  HdRedirectReason::kGeoCorrection,
+                  url, url_len);
+
+  char out_url[kHdRedirectMaxUrl + 1];
+  HdRedirectReason out_reason;
+  int parsed_len = HdParseRedirect(
+      buf + kHdFrameHeaderSize,
+      HdReadPayloadLen(buf),
+      &out_reason,
+      out_url,
+      sizeof(out_url));
+
+  EXPECT_EQ(parsed_len, url_len);
+  EXPECT_EQ(out_reason,
+            HdRedirectReason::kGeoCorrection);
+  EXPECT_STREQ(out_url, url);
+}
+
+TEST(HdProtocolTest, ParseRedirectRejectsEmpty) {
+  HdRedirectReason r;
+  char out_url[16];
+  EXPECT_EQ(HdParseRedirect(nullptr, 0, &r, out_url,
+                            sizeof(out_url)),
+            -1);
+}
+
+TEST(HdProtocolTest, OpenConnectionRoundtrip) {
+  uint8_t buf[kHdFrameHeaderSize + kHdOpenConnSize];
+  int n = HdBuildOpenConnection(
+      buf, 0x1234, 0x5678, HdIntent::kRequireRelay,
+      kHdFlagAllowUpgrade | kHdFlagAllowDowngrade,
+      0xDEADBEEFCAFEBABEULL);
+  EXPECT_EQ(n, kHdFrameHeaderSize + kHdOpenConnSize);
+  EXPECT_EQ(HdReadFrameType(buf),
+            HdFrameType::kOpenConnection);
+
+  HdOpenConnection out;
+  EXPECT_TRUE(HdParseOpenConnection(
+      buf + kHdFrameHeaderSize, kHdOpenConnSize, &out));
+  EXPECT_EQ(out.target_peer_id, 0x1234);
+  EXPECT_EQ(out.target_relay_id, 0x5678);
+  EXPECT_EQ(out.intent, HdIntent::kRequireRelay);
+  EXPECT_EQ(out.flags & kHdFlagAllowUpgrade,
+            kHdFlagAllowUpgrade);
+  EXPECT_EQ(out.flags & kHdFlagAllowDowngrade,
+            kHdFlagAllowDowngrade);
+  EXPECT_EQ(out.correlation_id, 0xDEADBEEFCAFEBABEULL);
+}
+
+TEST(HdProtocolTest, OpenConnectionResultNoPath) {
+  uint8_t buf[64];
+  int n = HdBuildOpenConnectionResult(
+      buf, sizeof(buf), 0x1122334455667788ULL,
+      HdConnMode::kRelayed, HdDenyReason::kNone, 0,
+      nullptr, 0, nullptr, 0);
+  ASSERT_GT(n, 0);
+  HdOpenConnectionResult out;
+  EXPECT_TRUE(HdParseOpenConnectionResult(
+      buf + kHdFrameHeaderSize,
+      HdReadPayloadLen(buf), &out));
+  EXPECT_EQ(out.correlation_id, 0x1122334455667788ULL);
+  EXPECT_EQ(out.mode, HdConnMode::kRelayed);
+  EXPECT_EQ(out.deny_reason, HdDenyReason::kNone);
+  EXPECT_EQ(out.relay_path_len, 0);
+  EXPECT_EQ(out.endpoint_hint_len, 0);
+}
+
+TEST(HdProtocolTest, OpenConnectionResultWithPath) {
+  uint8_t buf[256];
+  uint16_t path[] = {10, 20, 30};
+  const char* hint = "198.51.100.14:51820";
+  int hint_len = static_cast<int>(strlen(hint));
+  int n = HdBuildOpenConnectionResult(
+      buf, sizeof(buf), 0xAA, HdConnMode::kDirect,
+      HdDenyReason::kNone, 0, path, 3, hint, hint_len);
+  ASSERT_GT(n, 0);
+  HdOpenConnectionResult out;
+  EXPECT_TRUE(HdParseOpenConnectionResult(
+      buf + kHdFrameHeaderSize,
+      HdReadPayloadLen(buf), &out));
+  EXPECT_EQ(out.mode, HdConnMode::kDirect);
+  ASSERT_EQ(out.relay_path_len, 3);
+  EXPECT_EQ(out.relay_path[0], 10);
+  EXPECT_EQ(out.relay_path[1], 20);
+  EXPECT_EQ(out.relay_path[2], 30);
+  EXPECT_EQ(out.endpoint_hint_len, hint_len);
+  EXPECT_STREQ(out.endpoint_hint, hint);
+}
+
+TEST(HdProtocolTest, OpenConnectionResultBufferTooSmall) {
+  uint8_t buf[8];
+  int n = HdBuildOpenConnectionResult(
+      buf, sizeof(buf), 0, HdConnMode::kRelayed,
+      HdDenyReason::kNone, 0, nullptr, 0, nullptr, 0);
+  EXPECT_EQ(n, -1);
+}
+
+TEST(HdProtocolTest, OpenConnectionResultDenied) {
+  uint8_t buf[64];
+  int n = HdBuildOpenConnectionResult(
+      buf, sizeof(buf), 42, HdConnMode::kDenied,
+      HdDenyReason::kNatIncompatible, 0, nullptr, 0,
+      nullptr, 0);
+  ASSERT_GT(n, 0);
+  HdOpenConnectionResult out;
+  EXPECT_TRUE(HdParseOpenConnectionResult(
+      buf + kHdFrameHeaderSize,
+      HdReadPayloadLen(buf), &out));
+  EXPECT_EQ(out.mode, HdConnMode::kDenied);
+  EXPECT_EQ(out.deny_reason,
+            HdDenyReason::kNatIncompatible);
+}
+
+TEST(HdProtocolTest, IncomingConnectionRoundtrip) {
+  Key k{};
+  for (int i = 0; i < kKeySize; i++) {
+    k[i] = static_cast<uint8_t>(i);
+  }
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingConnSize];
+  HdBuildIncomingConnection(buf, k, 0xABCD,
+                            HdIntent::kPreferDirect,
+                            kHdFlagAllowUpgrade, 7);
+  HdIncomingConnection out;
+  EXPECT_TRUE(HdParseIncomingConnection(
+      buf + kHdFrameHeaderSize, kHdIncomingConnSize,
+      &out));
+  EXPECT_EQ(memcmp(out.initiator_key.data(), k.data(),
+                   kKeySize),
+            0);
+  EXPECT_EQ(out.initiator_peer_id, 0xABCD);
+  EXPECT_EQ(out.intent, HdIntent::kPreferDirect);
+  EXPECT_EQ(out.correlation_id, 7u);
+}
+
+TEST(HdProtocolTest, IncomingConnResponseRoundtrip) {
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingRespSize];
+  HdBuildIncomingConnResponse(buf, 99,
+                              HdIntent::kRequireDirect,
+                              kHdFlagAllowDowngrade,
+                              kHdFlagAccept);
+  HdIncomingConnResponse out;
+  EXPECT_TRUE(HdParseIncomingConnResponse(
+      buf + kHdFrameHeaderSize, kHdIncomingRespSize,
+      &out));
+  EXPECT_EQ(out.correlation_id, 99u);
+  EXPECT_EQ(out.intent, HdIntent::kRequireDirect);
+  EXPECT_EQ(out.flags & kHdFlagAllowDowngrade,
+            kHdFlagAllowDowngrade);
+  EXPECT_EQ(out.accept, kHdFlagAccept);
+}
+
+TEST(HdProtocolTest, IncomingConnResultRoundtrip) {
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingResultSize];
+  HdBuildIncomingConnResult(buf, 123,
+                            HdConnMode::kDenied,
+                            HdDenyReason::kIntentConflict,
+                            0);
+  HdIncomingConnResult out;
+  EXPECT_TRUE(HdParseIncomingConnResult(
+      buf + kHdFrameHeaderSize,
+      kHdIncomingResultSize, &out));
+  EXPECT_EQ(out.mode, HdConnMode::kDenied);
+  EXPECT_EQ(out.deny_reason,
+            HdDenyReason::kIntentConflict);
+}
+
+TEST(HdProtocolTest, FleetOpenConnectionRoundtrip) {
+  uint8_t raw_frame[kHdFrameHeaderSize +
+                    kHdOpenConnSize];
+  HdBuildOpenConnection(raw_frame, 7, 0,
+                        HdIntent::kPreferRelay, 3,
+                        0xABCDu);
+  Key key{};
+  for (int i = 0; i < kKeySize; i++) {
+    key[i] = static_cast<uint8_t>(i);
+  }
+  uint8_t buf[256];
+  const char* fid = "company-a";
+  int n = HdBuildFleetOpenConnection(
+      buf, sizeof(buf), 42, fid,
+      static_cast<int>(strlen(fid)), key,
+      raw_frame + kHdFrameHeaderSize,
+      kHdOpenConnSize);
+  ASSERT_GT(n, 0);
+
+  HdFleetOpenConnection out;
+  ASSERT_TRUE(HdParseFleetOpenConnection(
+      buf + kHdFrameHeaderSize, HdReadPayloadLen(buf),
+      &out));
+  EXPECT_EQ(out.origin_relay_id, 42u);
+  EXPECT_STREQ(out.origin_fleet_id, "company-a");
+  EXPECT_EQ(out.target_key, key);
+  // The inner bytes should match what we packed.
+  EXPECT_EQ(memcmp(out.inner_conn,
+                   raw_frame + kHdFrameHeaderSize,
+                   kHdOpenConnSize),
+            0);
+}
+
+TEST(HdProtocolTest, FleetOpenConnectionResultType) {
+  uint8_t buf[64];
+  int n = HdBuildFleetOpenConnectionResult(
+      buf, sizeof(buf), 1, HdConnMode::kRelayed,
+      HdDenyReason::kNone, 0, nullptr, 0, nullptr, 0);
+  ASSERT_GT(n, 0);
+  EXPECT_EQ(HdReadFrameType(buf),
+            HdFrameType::kFleetOpenConnectionResult);
+}
+
+TEST(HdProtocolTest, OpenConnectionBadPayloadLen) {
+  HdOpenConnection out;
+  uint8_t dummy[16] = {};
+  EXPECT_FALSE(HdParseOpenConnection(dummy, 13, &out));
+  EXPECT_FALSE(HdParseOpenConnection(dummy, 15, &out));
 }
 
 TEST(HdProtocolTest, MeshDataVsDataOverhead) {

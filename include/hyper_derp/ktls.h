@@ -48,6 +48,21 @@ constexpr auto KtlsErrorName(KtlsError e)
   return "Unknown";
 }
 
+/// Negotiated ALPN protocol for the connection.
+enum class KtlsProto : uint8_t {
+  /// No ALPN negotiated (old DERP clients, fall back to
+  /// HTTP path sniffing).
+  kUnknown = 0,
+  /// HD Protocol native client ("hd/1").
+  kHd = 1,
+  /// Tailscale/DERP client ("derp/1").
+  kDerp = 2,
+};
+
+/// ALPN wire names. Exposed for test/client symmetry.
+inline constexpr const char kKtlsAlpnHd[] = "hd/1";
+inline constexpr const char kKtlsAlpnDerp[] = "derp/1";
+
 /// Shared SSL_CTX for all connections.
 struct KtlsCtx {
   SSL_CTX* ssl_ctx = nullptr;
@@ -78,8 +93,12 @@ void KtlsCtxDestroy(KtlsCtx* ctx);
 /// the SSL object so it can be used directly with io_uring.
 /// @param ctx Initialized kTLS context.
 /// @param fd Connected TCP socket.
+/// @param out_proto Optional: negotiated ALPN protocol, or
+///   KtlsProto::kUnknown if the client did not advertise
+///   ALPN. Pass nullptr to ignore.
 /// @returns void on success, or KtlsError.
-auto KtlsAccept(KtlsCtx* ctx, int fd)
+auto KtlsAccept(KtlsCtx* ctx, int fd,
+                KtlsProto* out_proto = nullptr)
     -> std::expected<void, Error<KtlsError>>;
 
 }  // namespace hyper_derp

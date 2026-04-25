@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 
+#include "hyper_derp/hd_audit.h"
 #include "hyper_derp/hd_peers.h"
 #include "hyper_derp/types.h"
 
@@ -44,7 +45,9 @@ MetricsServer* MetricsStart(const MetricsConfig& config,
                             Ctx* ctx,
                             HdPeerRegistry* hd_peers,
                             HdServerCounters hd_counters =
-                                {});
+                                {},
+                            HdAuditRing* audit_ring =
+                                nullptr);
 
 /// @brief Stop the metrics server and free resources.
 /// @param server Handle from MetricsStart.

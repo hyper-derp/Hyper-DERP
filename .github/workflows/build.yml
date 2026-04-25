@@ -40,7 +40,7 @@ jobs:
             cmake ninja-build \
             liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
-            libssl-dev libasio-dev \
+            libssl-dev libasio-dev libboost-dev \
             libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
       - name: Set GCC 14
         run: |
@@ -69,16 +69,14 @@ jobs:
         run: cmake --build build-debug -j$(nproc)
 
       - name: Unit tests
-        # Excludes:
-        #   E2E / Ktls           — need kTLS, see the note
-        #                          on the Load kTLS step
-        #   Production / Sdk /   — fork an HD relay which
-        #   HdPeerInfo /            transitively requires
-        #   HdReconnect             kTLS on the server
+        # Excludes anything that forks an HD relay — the
+        # GHA sandbox blocks setsockopt(TCP_ULP, "tls") so
+        # KtlsAccept refuses the upgrade and the relay
+        # never finishes coming up.
         run: >
           ctest --test-dir build-debug
           --output-on-failure
-          -E "E2E|Ktls|ProductionTest|SdkTest|HdPeerInfoTest|HdReconnectTest"
+          -E "E2E|Ktls|ProductionTest|SdkTest|HdPeerInfoTest|HdReconnectTest|EinheitChannelTest|FleetTransitTest|OpenConnTest"
 
   package:
     name: Package
@@ -101,7 +99,7 @@ jobs:
             cmake ninja-build \
             liburing-dev libsodium-dev \
             libgtest-dev libgmock-dev libcli11-dev \
-            libssl-dev libasio-dev \
+            libssl-dev libasio-dev libboost-dev \
             libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
       - name: Set GCC 14
         run: |

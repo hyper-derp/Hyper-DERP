@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "hyper_derp/config.h"
 #include "hyper_derp/control_plane.h"
 #include "hyper_derp/data_plane.h"
 #include "hyper_derp/error.h"
@@ -26,6 +27,7 @@
 #include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/hd_relay_table.h"
 #include "hyper_derp/http.h"
+#include "hyper_derp/key_format.h"
 #include "hyper_derp/ice.h"
 #include "hyper_derp/turn.h"
 #include "hyper_derp/xdp_loader.h"
@@ -245,7 +247,8 @@ static void SendAndClose(int fd, const uint8_t* data,
 using std::string_view_literals::operator""sv;
 
 // Handle a single accepted connection.
-static void HandleConnection(Server* server, int fd) {
+static void HandleConnection(Server* server, int fd,
+                             uint32_t peer_ipv4_be = 0) {
   SetTcpNodelay(fd);
 
   // Set a 10-second deadline for the HTTP + handshake
@@ -260,8 +263,10 @@ static void HandleConnection(Server* server, int fd) {
   // OpenSSL auto-installs kTLS during SSL_accept.
   // After this, read()/write() on fd operate on
   // plaintext — the kernel handles AES-GCM.
+  KtlsProto alpn_proto = KtlsProto::kUnknown;
   if (server->ktls_enabled) {
-    auto tls = KtlsAccept(&server->ktls_ctx, fd);
+    auto tls = KtlsAccept(&server->ktls_ctx, fd,
+                          &alpn_proto);
     if (!tls) {
       spdlog::debug("kTLS failed for fd {}: {} ({})",
                     fd, tls.error().message,
@@ -269,6 +274,15 @@ static void HandleConnection(Server* server, int fd) {
       close(fd);
       return;
     }
+  }
+  // Reject mismatches: ALPN said HD but server disabled it,
+  // or the client asked for DERP on an HD-only path.
+  if (alpn_proto == KtlsProto::kHd &&
+      !server->hd_enabled) {
+    spdlog::warn("client negotiated ALPN hd/1 but HD "
+                 "mode is disabled");
+    close(fd);
+    return;
   }
 
   HttpRequest req;
@@ -351,7 +365,7 @@ static void HandleConnection(Server* server, int fd) {
     server->hd_enrollments.fetch_add(
         1, std::memory_order_relaxed);
     auto hs = HdPerformHandshake(
-        fd, &server->hd_peers, &result);
+        fd, &server->hd_peers, &result, peer_ipv4_be);
     if (!hs) {
       server->hd_auth_failures.fetch_add(
           1, std::memory_order_relaxed);
@@ -629,7 +643,7 @@ static void AcceptLoop(Server* server) {
       window_count++;
     }
 
-    HandleConnection(server, fd);
+    HandleConnection(server, fd, addr.sin_addr.s_addr);
   }
 }
 
@@ -718,31 +732,64 @@ auto ServerInit(Server* server,
   }
 
   // Initialize HD protocol if relay key is configured.
+  // Accepts either raw 64-char hex or "rk_<hex>" form.
   if (!config->hd_relay_key.empty()) {
-    if (config->hd_relay_key.size() != kKeySize * 2) {
+    Key relay_key{};
+    KeyPrefix pfx = ParseKeyString(config->hd_relay_key,
+                                   &relay_key);
+    if (pfx == KeyPrefix::kInvalid) {
       spdlog::error(
-          "HD relay key must be {} hex chars, got {}",
+          "HD relay key: expected {} hex chars or "
+          "rk_<hex>, got {} chars",
           kKeySize * 2, config->hd_relay_key.size());
       DpDestroy(&server->data_plane);
       return MakeError(ServerError::DataPlaneInitFailed,
-                       "bad HD relay key length");
-    }
-    Key relay_key{};
-    size_t bin_len = 0;
-    if (sodium_hex2bin(
-            relay_key.data(), kKeySize,
-            config->hd_relay_key.c_str(),
-            config->hd_relay_key.size(),
-            nullptr, &bin_len, nullptr) != 0 ||
-        static_cast<int>(bin_len) != kKeySize) {
-      spdlog::error("HD relay key: invalid hex");
-      DpDestroy(&server->data_plane);
-      return MakeError(ServerError::DataPlaneInitFailed,
-                       "bad HD relay key hex");
+                       "bad HD relay key");
     }
     HdPeersInit(&server->hd_peers, relay_key,
                 config->hd_enroll_mode);
+    server->hd_peers.policy = config->hd_enroll_policy;
     server->hd_peers.relay_id = config->hd_relay_id;
+    server->hd_peers.denylist_path =
+        config->hd_denylist_path;
+    if (!server->hd_peers.denylist_path.empty()) {
+      HdDenylistLoad(&server->hd_peers);
+      spdlog::info("HD denylist loaded: {} entries",
+                   server->hd_peers.denylist.size());
+    }
+    server->hd_peers.peer_policy_path =
+        config->hd_peer_policy_path;
+    if (!server->hd_peers.peer_policy_path.empty()) {
+      // Deferred: peer slots are populated on enrollment;
+      // we reload after each enrollment to pick up the
+      // policy for that key. At startup, just touch the
+      // file to fail-fast on unreadable paths.
+      HdPeerPolicyLoad(&server->hd_peers);
+      spdlog::info("HD peer-policy path: {}",
+                   server->hd_peers.peer_policy_path);
+    }
+
+    // Relay + fleet policy (Phase 4).
+    server->hd_peers.relay_policy =
+        config->hd_relay_policy;
+    server->hd_peers.fleet_policy =
+        config->hd_fleet_policy;
+    server->hd_peers.federation_policy =
+        config->hd_federation_policy;
+    if (!config->hd_fleet_policy_path.empty()) {
+      auto fp = LoadFleetPolicy(
+          config->hd_fleet_policy_path.c_str(),
+          &server->hd_peers.fleet_policy);
+      if (!fp) {
+        spdlog::error("fleet policy load failed: {}",
+                      fp.error().message);
+        DpDestroy(&server->data_plane);
+        return MakeError(ServerError::ConfigInvalid,
+                         fp.error().message);
+      }
+      spdlog::info("fleet policy loaded from {}",
+                   config->hd_fleet_policy_path);
+    }
     server->hd_enabled = true;
 
     // Initialize relay table and set relay_id in data
@@ -756,6 +803,55 @@ auto ServerInit(Server* server,
                            &server->relay_table);
       spdlog::info("relay table initialized (self_id={})",
                    config->hd_relay_id);
+    }
+
+    // Phase 2: enable routing-policy resolver on the
+    // control plane.
+    CpEnableRoutingPolicy(&server->control_plane,
+                          &server->hd_peers);
+
+    // Phase 6.2: optional fleet controller (signed
+    // bundle pull).
+    if (!config->hd_fleet_controller.url.empty()) {
+      FleetControllerConfig fcc;
+      fcc.url = config->hd_fleet_controller.url;
+      fcc.signing_pubkey_b64 =
+          config->hd_fleet_controller
+              .signing_pubkey_b64;
+      fcc.client_cert =
+          config->hd_fleet_controller.client_cert;
+      fcc.client_key =
+          config->hd_fleet_controller.client_key;
+      fcc.ca_bundle =
+          config->hd_fleet_controller.ca_bundle;
+      fcc.poll_interval_secs =
+          config->hd_fleet_controller
+              .poll_interval_secs;
+      fcc.bundle_cache_path =
+          config->hd_fleet_controller
+              .bundle_cache_path;
+      fcc.fleet_id =
+          config->hd_federation_policy.local_fleet_id;
+      if (FleetControllerStart(
+              &server->fleet_controller,
+              &server->hd_peers, fcc)) {
+        server->fleet_controller_started = true;
+        spdlog::info("fleet controller polling {} "
+                     "every {}s",
+                     fcc.url,
+                     fcc.poll_interval_secs);
+      }
+    }
+
+    // Phase 4.2: optional LD-JSON audit log file sink.
+    if (!config->hd_audit_log_path.empty()) {
+      CpEnableAuditFile(&server->control_plane,
+                        config->hd_audit_log_path,
+                        config->hd_audit_log_max_bytes,
+                        config->hd_audit_log_keep);
+      spdlog::info("audit log -> {} (rotate at {}B)",
+                   config->hd_audit_log_path,
+                   config->hd_audit_log_max_bytes);
     }
 
     spdlog::info("HD protocol enabled (mode={}, "
@@ -907,7 +1003,27 @@ auto ServerRun(Server* server,
   server->metrics_server = MetricsStart(
       server->config.metrics, &server->data_plane,
       server->hd_enabled ? &server->hd_peers : nullptr,
-      hd_counters);
+      hd_counters,
+      server->hd_enabled
+          ? &server->control_plane.audit_ring
+          : nullptr);
+
+  // Start the einheit control channel (runs alongside the
+  // legacy JSON ctl_channel for the transition period so
+  // hdctl keeps working).
+  if (!server->config.einheit_ctl_endpoint.empty()) {
+    server->einheit_channel = EinheitChannelStart(
+        server->config.einheit_ctl_endpoint,
+        server->config.einheit_pub_endpoint, server);
+    if (server->einheit_channel) {
+      spdlog::info(
+          "einheit channel ready on {} (pub: {})",
+          server->config.einheit_ctl_endpoint,
+          server->config.einheit_pub_endpoint.empty()
+              ? "disabled"
+              : server->config.einheit_pub_endpoint);
+    }
+  }
 
   // Connect to seed relays in a background thread.
   if (!server->config.seed_relays.empty() &&
@@ -1039,6 +1155,53 @@ auto ServerRun(Server* server,
     stop_poller = std::thread([server, stop_flag]() {
       while (!stop_flag->load(
                  std::memory_order_acquire)) {
+        // Watch the fleet controller for self-revocation
+        // and for new peer-revocation entries. This is
+        // the same 100ms cadence we use for the stop
+        // flag.
+        if (server->fleet_controller_started) {
+          if (server->fleet_controller.self_revoked
+                  .load(std::memory_order_acquire)) {
+            spdlog::error(
+                "fleet bundle revoked this relay — "
+                "initiating shutdown");
+            stop_flag->store(
+                1, std::memory_order_release);
+            break;
+          }
+          std::vector<std::string> revoked;
+          FleetControllerGetRevokedPeers(
+              &server->fleet_controller, &revoked);
+          for (const auto& s : revoked) {
+            Key key{};
+            if (ParseKeyString(s, &key) ==
+                KeyPrefix::kInvalid) {
+              continue;
+            }
+            int fd = -1;
+            {
+              std::lock_guard lk(
+                  server->hd_peers.mutex);
+              auto* p = HdPeersLookup(
+                  &server->hd_peers, key.data());
+              if (p) fd = p->fd;
+              HdPeersRevoke(&server->hd_peers,
+                            key.data());
+            }
+            if (fd >= 0) {
+              DpRemovePeer(&server->data_plane, key);
+              close(fd);
+            }
+          }
+          if (!revoked.empty()) {
+            // Drain the controller's list so we don't
+            // revoke the same fingerprints repeatedly.
+            std::lock_guard lk(
+                server->fleet_controller.revoked_mu);
+            server->fleet_controller.revoked_peers
+                .clear();
+          }
+        }
         struct timespec ts {
           .tv_sec = 0, .tv_nsec = 100000000
         };
@@ -1180,6 +1343,14 @@ void ServerStop(Server* server) {
 }
 
 void ServerDestroy(Server* server) {
+  if (server->einheit_channel) {
+    EinheitChannelStop(server->einheit_channel);
+    server->einheit_channel = nullptr;
+  }
+  if (server->fleet_controller_started) {
+    FleetControllerStop(&server->fleet_controller);
+    server->fleet_controller_started = false;
+  }
   MetricsStop(server->metrics_server);
   server->metrics_server = nullptr;
   if (server->level2_enabled) {

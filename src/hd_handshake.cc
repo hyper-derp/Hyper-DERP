@@ -60,7 +60,8 @@ static constexpr int kMinEnrollPayload =
 
 auto HdPerformHandshake(int fd,
                         HdPeerRegistry* reg,
-                        HdEnrollResult* result)
+                        HdEnrollResult* result,
+                        uint32_t peer_ipv4_be)
     -> std::expected<void, Error<HdHandshakeError>> {
   *result = {};
 
@@ -110,6 +111,14 @@ auto HdPerformHandshake(int fd,
                      "enrollment HMAC verification failed");
   }
 
+  // Step 6a: Persistent denylist check (survives removal
+  // of the in-memory registry slot).
+  if (HdPeersIsDenied(reg, client_key.data())) {
+    HdSendDenied(fd, 0x03, "revoked");
+    return MakeError(HdHandshakeError::EnrollmentDenied,
+                     "client key revoked");
+  }
+
   // Step 6.5: Detect relay enrollment extension.
   // Relay Enroll: [32B key][32B hmac][2B relay_id]
   //   ["RELAY"].
@@ -124,10 +133,24 @@ auto HdPerformHandshake(int fd,
         payload[ext_offset + 1]);
   }
 
-  // Step 7: Insert peer into registry.
+  // Step 7: Apply policy (auto-approve mode only).
+  if (reg->enroll_mode == HdEnrollMode::kAutoApprove) {
+    const char* reject_reason = nullptr;
+    if (!HdPolicyAllows(reg, client_key, peer_ipv4_be,
+                        &reject_reason)) {
+      HdSendDenied(fd, 0x02,
+                   reject_reason ? reject_reason
+                                 : "policy rejected");
+      return MakeError(HdHandshakeError::EnrollmentDenied,
+                       reject_reason ? reject_reason
+                                     : "policy rejected");
+    }
+  }
+
+  // Step 8: Insert peer into registry.
   HdPeersInsert(reg, client_key, fd);
 
-  // Step 8: Auto-approve if configured.
+  // Step 9: Auto-approve if configured.
   if (reg->enroll_mode == HdEnrollMode::kAutoApprove) {
     HdPeersApprove(reg, client_key.data());
     auto send_result = HdSendApproved(fd, client_key);
@@ -165,6 +188,30 @@ auto HdSendDenied(int fd, uint8_t reason,
   if (WriteAll(fd, buf.get(), n) < 0) {
     return MakeError(HdHandshakeError::IoFailed,
                      "write Denied frame failed");
+  }
+  return {};
+}
+
+auto HdSendRedirect(int fd,
+                    HdRedirectReason reason,
+                    std::string_view target_url)
+    -> std::expected<void, Error<HdHandshakeError>> {
+  int url_len = static_cast<int>(target_url.size());
+  if (url_len > kHdRedirectMaxUrl) {
+    return MakeError(HdHandshakeError::BadPayloadLength,
+                     "redirect url exceeds max length");
+  }
+  int frame_size = kHdFrameHeaderSize + 1 + url_len;
+  auto buf = std::make_unique<uint8_t[]>(frame_size);
+  int n = HdBuildRedirect(buf.get(), reason,
+                          target_url.data(), url_len);
+  if (n < 0) {
+    return MakeError(HdHandshakeError::BadPayloadLength,
+                     "HdBuildRedirect rejected inputs");
+  }
+  if (WriteAll(fd, buf.get(), n) < 0) {
+    return MakeError(HdHandshakeError::IoFailed,
+                     "write Redirect frame failed");
   }
   return {};
 }

@@ -215,5 +215,169 @@ TEST_F(KtlsTest, Accept) {
   KtlsCtxDestroy(&ctx);
 }
 
+TEST_F(KtlsTest, AlpnHdNegotiation) {
+  auto probe = ProbeKtls();
+  if (!probe) {
+    GTEST_SKIP() << "kTLS not available: "
+                 << probe.error().message;
+  }
+
+  KtlsCtx ctx;
+  auto init = KtlsCtxInit(
+      &ctx, cert_path_.c_str(), key_path_.c_str());
+  ASSERT_TRUE(init.has_value()) << init.error().message;
+
+  int lfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(lfd, 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  ASSERT_EQ(bind(lfd, reinterpret_cast<sockaddr*>(&addr),
+                 sizeof(addr)), 0);
+  ASSERT_EQ(listen(lfd, 1), 0);
+  socklen_t alen = sizeof(addr);
+  getsockname(lfd, reinterpret_cast<sockaddr*>(&addr),
+              &alen);
+  uint16_t port = ntohs(addr.sin_port);
+
+  KtlsProto server_proto = KtlsProto::kUnknown;
+  int server_fd = -1;
+  std::thread server_thread([&]() {
+    int afd = ::accept(lfd, nullptr, nullptr);
+    if (afd < 0) return;
+    timeval tv{.tv_sec = 5, .tv_usec = 0};
+    setsockopt(afd, SOL_SOCKET, SO_RCVTIMEO,
+               &tv, sizeof(tv));
+    setsockopt(afd, SOL_SOCKET, SO_SNDTIMEO,
+               &tv, sizeof(tv));
+    auto r = KtlsAccept(&ctx, afd, &server_proto);
+    if (r.has_value()) {
+      server_fd = afd;
+    } else {
+      close(afd);
+    }
+  });
+
+  int cfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(cfd, 0);
+  addr.sin_port = htons(port);
+  ASSERT_EQ(connect(cfd,
+                    reinterpret_cast<sockaddr*>(&addr),
+                    sizeof(addr)), 0);
+
+  SSL_CTX* cctx = SSL_CTX_new(TLS_client_method());
+  SSL_CTX_set_min_proto_version(cctx, TLS1_3_VERSION);
+  SSL_CTX_set_verify(cctx, SSL_VERIFY_NONE, nullptr);
+  SSL_CTX_set_num_tickets(cctx, 0);
+  // Advertise hd/1 only.
+  static const unsigned char kAlpnHd[] = {
+      4, 'h', 'd', '/', '1'};
+  SSL_CTX_set_alpn_protos(cctx, kAlpnHd, sizeof(kAlpnHd));
+
+  SSL* ssl = SSL_new(cctx);
+  SSL_set_fd(ssl, cfd);
+  ASSERT_EQ(SSL_connect(ssl), 1);
+
+  const unsigned char* sel = nullptr;
+  unsigned int sel_len = 0;
+  SSL_get0_alpn_selected(ssl, &sel, &sel_len);
+  EXPECT_EQ(sel_len, 4u);
+  EXPECT_EQ(memcmp(sel, "hd/1", 4), 0);
+
+  BIO* wbio = SSL_get_wbio(ssl);
+  BIO* rbio = SSL_get_rbio(ssl);
+  if (wbio) BIO_set_close(wbio, BIO_NOCLOSE);
+  if (rbio && rbio != wbio) {
+    BIO_set_close(rbio, BIO_NOCLOSE);
+  }
+  SSL_set_quiet_shutdown(ssl, 1);
+  SSL_free(ssl);
+  SSL_CTX_free(cctx);
+
+  server_thread.join();
+  close(lfd);
+  close(cfd);
+  if (server_fd >= 0) close(server_fd);
+
+  EXPECT_EQ(server_proto, KtlsProto::kHd);
+  KtlsCtxDestroy(&ctx);
+}
+
+TEST_F(KtlsTest, AlpnNoneFallsBackToUnknown) {
+  auto probe = ProbeKtls();
+  if (!probe) {
+    GTEST_SKIP() << "kTLS not available: "
+                 << probe.error().message;
+  }
+
+  KtlsCtx ctx;
+  auto init = KtlsCtxInit(
+      &ctx, cert_path_.c_str(), key_path_.c_str());
+  ASSERT_TRUE(init.has_value()) << init.error().message;
+
+  int lfd = socket(AF_INET, SOCK_STREAM, 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  ASSERT_EQ(bind(lfd, reinterpret_cast<sockaddr*>(&addr),
+                 sizeof(addr)), 0);
+  ASSERT_EQ(listen(lfd, 1), 0);
+  socklen_t alen = sizeof(addr);
+  getsockname(lfd, reinterpret_cast<sockaddr*>(&addr),
+              &alen);
+  uint16_t port = ntohs(addr.sin_port);
+
+  KtlsProto server_proto = KtlsProto::kHd;
+  int server_fd = -1;
+  std::thread server_thread([&]() {
+    int afd = ::accept(lfd, nullptr, nullptr);
+    if (afd < 0) return;
+    timeval tv{.tv_sec = 5, .tv_usec = 0};
+    setsockopt(afd, SOL_SOCKET, SO_RCVTIMEO,
+               &tv, sizeof(tv));
+    auto r = KtlsAccept(&ctx, afd, &server_proto);
+    if (r.has_value()) {
+      server_fd = afd;
+    } else {
+      close(afd);
+    }
+  });
+
+  int cfd = socket(AF_INET, SOCK_STREAM, 0);
+  addr.sin_port = htons(port);
+  ASSERT_EQ(connect(cfd,
+                    reinterpret_cast<sockaddr*>(&addr),
+                    sizeof(addr)), 0);
+
+  SSL_CTX* cctx = SSL_CTX_new(TLS_client_method());
+  SSL_CTX_set_min_proto_version(cctx, TLS1_3_VERSION);
+  SSL_CTX_set_verify(cctx, SSL_VERIFY_NONE, nullptr);
+  SSL_CTX_set_num_tickets(cctx, 0);
+
+  SSL* ssl = SSL_new(cctx);
+  SSL_set_fd(ssl, cfd);
+  ASSERT_EQ(SSL_connect(ssl), 1);
+
+  BIO* wbio = SSL_get_wbio(ssl);
+  BIO* rbio = SSL_get_rbio(ssl);
+  if (wbio) BIO_set_close(wbio, BIO_NOCLOSE);
+  if (rbio && rbio != wbio) {
+    BIO_set_close(rbio, BIO_NOCLOSE);
+  }
+  SSL_set_quiet_shutdown(ssl, 1);
+  SSL_free(ssl);
+  SSL_CTX_free(cctx);
+
+  server_thread.join();
+  close(lfd);
+  close(cfd);
+  if (server_fd >= 0) close(server_fd);
+
+  EXPECT_EQ(server_proto, KtlsProto::kUnknown);
+  KtlsCtxDestroy(&ctx);
+}
+
 }  // namespace
 }  // namespace hyper_derp

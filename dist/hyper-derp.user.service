@@ -1,0 +1,25 @@
+[Unit]
+Description=Hyper-DERP relay (user-mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# /tmp is a tmpfs on most distros, so the ipc:// socket
+# directory has to be recreated on every boot before
+# the daemon can bind. The system-wide unit
+# (hyper-derp.service) sidesteps this with PrivateTmp=yes.
+ExecStartPre=/usr/bin/mkdir -p /tmp/einheit
+ExecStart=%h/bin/hyper-derp --config %h/hd/hyper-derp.yaml
+Restart=on-failure
+RestartSec=2s
+# The daemon's SIGTERM path currently hangs — unrelated
+# to service control, tracked separately. Keep the stop
+# window short so restarts finish in seconds instead of
+# the systemd default 90s.
+TimeoutStopSec=5s
+KillMode=mixed
+SendSIGKILL=yes
+
+[Install]
+WantedBy=default.target

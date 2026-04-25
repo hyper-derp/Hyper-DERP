@@ -23,6 +23,10 @@ list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_policy\\.cc")
 list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_ice_agent\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_open_conn\\.cc")
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_einheit_channel\\.cc")
 
 foreach(test_source ${UNIT_TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
@@ -57,6 +61,29 @@ target_link_libraries(test_hd_e2e PRIVATE
 gtest_discover_tests(test_hd_e2e
   DISCOVERY_TIMEOUT 10
   PROPERTIES TIMEOUT 60
+)
+
+# einheit control-channel integration test.
+add_executable(test_einheit_channel
+  test_einheit_channel.cc harness.cc)
+target_link_libraries(test_einheit_channel PRIVATE
+  libderp
+  GTest::gtest_main
+)
+gtest_discover_tests(test_einheit_channel
+  DISCOVERY_TIMEOUT 10
+  PROPERTIES TIMEOUT 30
+)
+
+# Routing policy OpenConnection integration tests.
+add_executable(test_open_conn test_open_conn.cc harness.cc)
+target_link_libraries(test_open_conn PRIVATE
+  libderp
+  GTest::gtest_main
+)
+gtest_discover_tests(test_open_conn
+  DISCOVERY_TIMEOUT 10
+  PROPERTIES TIMEOUT 30
 )
 
 # Production hardening tests (uses harness).

@@ -11,6 +11,7 @@
 
 #include "hyper_derp/error.h"
 #include "hyper_derp/hd_peers.h"
+#include "hyper_derp/hd_protocol.h"
 #include "hyper_derp/protocol.h"
 
 namespace hyper_derp {
@@ -62,13 +63,21 @@ struct HdEnrollResult {
 /// active, sends an Approved frame and sets
 /// result->auto_approved = true. If manual mode, the peer
 /// stays pending and no response is sent.
+///
+/// When auto-approve is active and `reg->policy` has any
+/// constraint set, the handshake verifies the candidate
+/// against the policy. Violations send a Denied frame and
+/// return EnrollmentDenied.
 /// @param fd Socket file descriptor.
 /// @param reg HD peer registry.
 /// @param result Output enrollment result.
+/// @param peer_ipv4_be Peer's IPv4 address in network
+///   byte order, or 0 to skip the ip-range check.
 /// @returns void on success, or HdHandshakeError.
 auto HdPerformHandshake(int fd,
                         HdPeerRegistry* reg,
-                        HdEnrollResult* result)
+                        HdEnrollResult* result,
+                        uint32_t peer_ipv4_be = 0)
     -> std::expected<void, Error<HdHandshakeError>>;
 
 /// @brief Sends an Approved frame to a peer.
@@ -87,6 +96,16 @@ auto HdSendApproved(int fd, const Key& client_key)
 /// @returns void on success, or HdHandshakeError.
 auto HdSendDenied(int fd, uint8_t reason,
                   const char* message)
+    -> std::expected<void, Error<HdHandshakeError>>;
+
+/// @brief Sends a Redirect frame to a peer.
+/// @param fd Socket file descriptor.
+/// @param reason Redirect reason code.
+/// @param target_url Target relay URL (UTF-8 string).
+/// @returns void on success, or HdHandshakeError.
+auto HdSendRedirect(int fd,
+                    HdRedirectReason reason,
+                    std::string_view target_url)
     -> std::expected<void, Error<HdHandshakeError>>;
 
 }  // namespace hyper_derp

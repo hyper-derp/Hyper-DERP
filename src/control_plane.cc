@@ -288,6 +288,10 @@ static constexpr uint32_t kEpollTagStunUdp =
     kMaxWorkers + 1;
 static constexpr uint32_t kEpollTagRouteAnnounce =
     kMaxWorkers + 2;
+static constexpr uint32_t kEpollTagOpenConnTimer =
+    kMaxWorkers + 3;
+
+static void ScanOpenConnTimeouts(ControlPlane* cp);
 
 /// Process STUN responses received on the UDP socket.
 static void HandleStunResponse(ControlPlane* cp) {
@@ -416,6 +420,11 @@ void CpInit(ControlPlane* cp, Ctx* dp) {
 }
 
 void CpDestroy(ControlPlane* cp) {
+  HdAuditFlusherStop(&cp->audit_flusher);
+  if (cp->open_conn_timer_fd >= 0) {
+    close(cp->open_conn_timer_fd);
+    cp->open_conn_timer_fd = -1;
+  }
   if (cp->route_announce_fd >= 0) {
     close(cp->route_announce_fd);
     cp->route_announce_fd = -1;
@@ -463,6 +472,32 @@ void CpProcessFrame(ControlPlane* cp, int fd,
   if (static_cast<uint8_t>(type) ==
       static_cast<uint8_t>(HdFrameType::kRouteAnnounce)) {
     CpHandleRouteAnnounce(cp, fd, payload, payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(HdFrameType::kOpenConnection)) {
+    CpHandleOpenConnection(cp, fd, payload, payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(
+          HdFrameType::kIncomingConnResponse)) {
+    CpHandleIncomingConnResponse(
+        cp, fd, payload, payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnection)) {
+    CpHandleFleetOpenConnection(cp, fd, payload,
+                                payload_len);
+    return;
+  }
+  if (static_cast<uint8_t>(type) ==
+      static_cast<uint8_t>(
+          HdFrameType::kFleetOpenConnectionResult)) {
+    CpHandleFleetOpenConnectionResult(cp, fd, payload,
+                                      payload_len);
     return;
   }
 
@@ -563,12 +598,24 @@ void CpRunLoop(ControlPlane* cp) {
     }
   }
 
+  // Register routing-policy deadline timer.
+  if (cp->open_conn_timer_fd >= 0) {
+    epoll_event oct{};
+    oct.events = EPOLLIN;
+    oct.data.u32 = kEpollTagOpenConnTimer;
+    if (epoll_ctl(cp->epoll_fd, EPOLL_CTL_ADD,
+                  cp->open_conn_timer_fd, &oct) < 0) {
+      spdlog::error("epoll_ctl ADD open_conn_timer: {}",
+                    strerror(errno));
+    }
+  }
+
   cp->running.store(1, std::memory_order_release);
   spdlog::info("control plane running ({} pipes)",
                nworkers);
 
-  // Extra slots for ICE timer + STUN UDP + route timer.
-  constexpr int kMaxEpollEvents = kMaxWorkers + 3;
+  // Extra slots for ICE + STUN + route + open-conn timer.
+  constexpr int kMaxEpollEvents = kMaxWorkers + 4;
   epoll_event events[kMaxEpollEvents];
 
   while (cp->running.load(std::memory_order_acquire)) {
@@ -596,6 +643,13 @@ void CpRunLoop(ControlPlane* cp) {
       }
       if (tag == kEpollTagRouteAnnounce) {
         HandleRouteAnnounce(cp);
+        continue;
+      }
+      if (tag == kEpollTagOpenConnTimer) {
+        uint64_t ticks;
+        (void)read(cp->open_conn_timer_fd,
+                   &ticks, sizeof(ticks));
+        ScanOpenConnTimeouts(cp);
         continue;
       }
 
@@ -846,6 +900,628 @@ void CpHandleHdPeerInfo(ControlPlane* cp, int fd,
     spdlog::info("ICE: formed {} pairs, checking",
                  session->pair_count);
   }
+}
+
+// -- Routing policy (Phase 2) -------------------------
+
+namespace {
+
+uint64_t NowNsMono() {
+  timespec ts{};
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
+         static_cast<uint64_t>(ts.tv_nsec);
+}
+
+// Blocking write of exactly n bytes; best-effort, no
+// retry on partial failures beyond EINTR/EAGAIN.
+int WriteFullFrame(int fd, const uint8_t* buf, int n) {
+  int total = 0;
+  while (total < n) {
+    int w = ::write(fd, buf + total, n - total);
+    if (w < 0) {
+      if (errno == EINTR || errno == EAGAIN) continue;
+      return -1;
+    }
+    if (w == 0) return -1;
+    total += w;
+  }
+  return 0;
+}
+
+int OpenConnSlotFind(ControlPlane* cp,
+                     uint64_t correlation_id,
+                     int initiator_fd) {
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (s.in_use && s.correlation_id == correlation_id &&
+        s.initiator_fd == initiator_fd) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int OpenConnSlotAlloc(ControlPlane* cp) {
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    if (!cp->open_conns[i].in_use) return i;
+  }
+  return -1;
+}
+
+void OpenConnSlotFree(ControlPlane* cp, int idx) {
+  auto& s = cp->open_conns[idx];
+  if (s.in_use && s.initiator_fd >= 0 &&
+      s.initiator_fd < kMaxFd) {
+    cp->open_conn_per_peer[s.initiator_fd]--;
+  }
+  s = ControlPlane::OpenConnEntry{};
+}
+
+void SendOpenResultAndCleanup(
+    ControlPlane* cp, int slot_idx,
+    HdConnMode mode, HdDenyReason reason,
+    uint8_t sub_reason) {
+  auto& s = cp->open_conns[slot_idx];
+  uint8_t buf[256];
+  // Gateway-side: wrap as FleetOpenConnectionResult back
+  // to the origin relay link.
+  uint16_t path[1];
+  int path_len = 0;
+  if (s.target_relay_id != 0 &&
+      !s.is_gateway_inbound) {
+    path[0] = s.target_relay_id;
+    path_len = 1;
+  }
+  int n = 0;
+  if (s.is_gateway_inbound) {
+    n = HdBuildFleetOpenConnectionResult(
+        buf, sizeof(buf), s.correlation_id, mode, reason,
+        sub_reason, nullptr, 0, nullptr, 0);
+  } else {
+    n = HdBuildOpenConnectionResult(
+        buf, sizeof(buf), s.correlation_id, mode, reason,
+        sub_reason,
+        path_len > 0 ? path : nullptr, path_len,
+        nullptr, 0);
+  }
+  if (n > 0 && s.initiator_fd >= 0) {
+    WriteFullFrame(s.initiator_fd, buf, n);
+  }
+  if (mode != HdConnMode::kDenied && s.target_fd >= 0 &&
+      s.target_relay_id == 0 &&
+      !s.is_gateway_inbound) {
+    // Mirror result to the local target if one was
+    // contacted. Skip for cross-relay forwards (the
+    // remote gateway handles its own target notification)
+    // and for gateway-inbound slots (the target is local
+    // and was mirrored when we built the Fleet result).
+    uint8_t tbuf[kHdFrameHeaderSize +
+                 kHdIncomingResultSize];
+    int tn = HdBuildIncomingConnResult(
+        tbuf, s.correlation_id, mode, reason, sub_reason);
+    WriteFullFrame(s.target_fd, tbuf, tn);
+  }
+  // Decrement direct cap if we claimed it.
+  if (cp->hd_peers &&
+      mode == HdConnMode::kDirect) {
+    // no-op here; Phase 5 doesn't yet release direct
+    // counter on tunnel close. Placeholder.
+  }
+  OpenConnSlotFree(cp, slot_idx);
+}
+
+}  // namespace
+
+void CpEnableAuditFile(ControlPlane* cp,
+                       const std::string& path,
+                       uint64_t max_bytes, int keep) {
+  HdAuditFlusherStart(&cp->audit_flusher,
+                      &cp->audit_ring, path, max_bytes,
+                      keep);
+}
+
+void CpEnableRoutingPolicy(ControlPlane* cp,
+                           HdPeerRegistry* hd_peers) {
+  cp->hd_peers = hd_peers;
+  HdAuditInit(&cp->audit_ring);
+  cp->open_conn_timer_fd =
+      timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+  if (cp->open_conn_timer_fd < 0) {
+    spdlog::error("open_conn timerfd: {}",
+                  strerror(errno));
+    return;
+  }
+  itimerspec its{};
+  its.it_interval.tv_sec = 1;
+  its.it_value.tv_sec = 1;
+  if (timerfd_settime(cp->open_conn_timer_fd, 0, &its,
+                      nullptr) < 0) {
+    spdlog::error("open_conn timer_settime: {}",
+                  strerror(errno));
+  }
+}
+
+static void ScanOpenConnTimeouts(ControlPlane* cp) {
+  uint64_t now = NowNsMono();
+  std::lock_guard lock(cp->mutex);
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (!s.in_use) continue;
+    if (now < s.deadline_ns) continue;
+    SendOpenResultAndCleanup(
+        cp, i, HdConnMode::kDenied,
+        HdDenyReason::kTargetUnresponsive, 0);
+  }
+}
+
+void CpHandleOpenConnection(ControlPlane* cp, int fd,
+                            const uint8_t* payload,
+                            int payload_len) {
+  HdOpenConnection req;
+  if (!HdParseOpenConnection(payload, payload_len,
+                             &req)) {
+    spdlog::debug("OpenConnection parse failed from fd {}",
+                  fd);
+    return;
+  }
+  spdlog::debug(
+      "OpenConnection from fd {}: target_peer_id={} "
+      "target_relay_id={} intent={} corr={:x}",
+      fd, req.target_peer_id, req.target_relay_id,
+      static_cast<int>(req.intent), req.correlation_id);
+  if (!cp->hd_peers) return;
+
+  // Per-peer outstanding-cap guard.
+  if (fd >= 0 && fd < kMaxFd &&
+      cp->open_conn_per_peer[fd] >=
+          kCpMaxOpenConnsPerPeer) {
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id,
+        HdConnMode::kDenied,
+        HdDenyReason::kTooManyOpenConns, 0, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    return;
+  }
+
+  // Look up initiator key by fd via cp->fd_map.
+  Key initiator_key{};
+  CpPeer* initiator =
+      (fd >= 0 && fd < kMaxFd) ? cp->fd_map[fd] : nullptr;
+  if (initiator) initiator_key = initiator->key;
+
+  // Build the client view from the wire request.
+  HdClientView cv;
+  cv.intent = req.intent;
+  cv.allow_upgrade =
+      (req.flags & kHdFlagAllowUpgrade) != 0;
+  cv.allow_downgrade =
+      (req.flags & kHdFlagAllowDowngrade) != 0;
+
+  // Apply the initiator's peer policy to the client view
+  // before passing down. If override_client=true, the
+  // peer's pinned intent replaces whatever the client
+  // asked for — enforced here so the audit chain records
+  // the effective intent.
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    auto* ipol = HdPeersLookupPolicy(
+        cp->hd_peers, initiator_key.data());
+    if (ipol && ipol->override_client && ipol->has_pin) {
+      cv.intent = ipol->pinned_intent;
+    }
+  }
+
+  // Phase 2 capability: direct path (Level 2 / WG) is
+  // not wired into the HD data plane yet, so advertise
+  // can_direct=false. prefer_direct falls back to
+  // relayed; require_direct correctly denies with
+  // kNatIncompatible until Phase 3/5 add real probing.
+  HdCapability cap{.can_direct = false};
+
+  // Fleet + relay views sourced from the registry.
+  HdLayerView fleet_view;
+  HdLayerView relay_view;
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    fleet_view =
+        HdBuildFleetView(cp->hd_peers->fleet_policy);
+    relay_view =
+        HdBuildRelayView(cp->hd_peers->relay_policy);
+  }
+
+  // Cross-relay path: forward as FleetOpenConnection to
+  // the gateway over the relay-mesh link.
+  if (req.target_relay_id != 0) {
+    if (!cp->relay_table) {
+      uint8_t rbuf[64];
+      int rn = HdBuildOpenConnectionResult(
+          rbuf, sizeof(rbuf), req.correlation_id,
+          HdConnMode::kDenied,
+          HdDenyReason::kFleetRoutingNotImplemented, 0,
+          nullptr, 0, nullptr, 0);
+      if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+      return;
+    }
+    int gateway_fd = -1;
+    {
+      std::lock_guard rtl(cp->relay_table->mutex);
+      auto* e = RelayTableLookup(cp->relay_table,
+                                  req.target_relay_id);
+      if (e) gateway_fd = e->fd;
+    }
+    if (gateway_fd < 0) {
+      uint8_t rbuf[64];
+      int rn = HdBuildOpenConnectionResult(
+          rbuf, sizeof(rbuf), req.correlation_id,
+          HdConnMode::kDenied,
+          HdDenyReason::kPeerUnreachable, 0, nullptr,
+          0, nullptr, 0);
+      if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+      return;
+    }
+
+    // Allocate a slot that tracks the outbound forward.
+    int slot = OpenConnSlotAlloc(cp);
+    if (slot < 0) {
+      uint8_t rbuf[64];
+      int rn = HdBuildOpenConnectionResult(
+          rbuf, sizeof(rbuf), req.correlation_id,
+          HdConnMode::kDenied,
+          HdDenyReason::kTooManyOpenConns, 0, nullptr,
+          0, nullptr, 0);
+      if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+      return;
+    }
+    auto& s = cp->open_conns[slot];
+    s.in_use = 1;
+    s.correlation_id = req.correlation_id;
+    s.initiator_fd = fd;
+    s.target_fd = gateway_fd;
+    s.initiator_key = initiator_key;
+    s.initiator_view = cv;
+    s.target_relay_id = req.target_relay_id;
+    s.is_gateway_inbound = false;
+    s.deadline_ns = NowNsMono() + kCpOpenConnTimeoutNs;
+    if (fd >= 0 && fd < kMaxFd) {
+      cp->open_conn_per_peer[fd]++;
+    }
+
+    // Build the FleetOpenConnection envelope: rebuild the
+    // inner OpenConnection payload with the effective
+    // intent (after A's peer-policy override was applied
+    // above) and ship to the gateway.
+    uint8_t inner_frame[kHdFrameHeaderSize +
+                         kHdOpenConnSize];
+    uint8_t inner_flags = 0;
+    if (cv.allow_upgrade)
+      inner_flags |= kHdFlagAllowUpgrade;
+    if (cv.allow_downgrade)
+      inner_flags |= kHdFlagAllowDowngrade;
+    HdBuildOpenConnection(inner_frame,
+                          req.target_peer_id, 0,
+                          cv.intent, inner_flags,
+                          req.correlation_id);
+
+    Key zero_key{};
+    const std::string& fid =
+        cp->hd_peers->federation_policy
+            .local_fleet_id;
+    uint8_t out_buf[256];
+    int on = HdBuildFleetOpenConnection(
+        out_buf, sizeof(out_buf),
+        cp->relay_table->self_id, fid.c_str(),
+        static_cast<int>(fid.size()), zero_key,
+        inner_frame + kHdFrameHeaderSize,
+        kHdOpenConnSize);
+    if (on <= 0 ||
+        WriteFullFrame(gateway_fd, out_buf, on) < 0) {
+      SendOpenResultAndCleanup(
+          cp, slot, HdConnMode::kDenied,
+          HdDenyReason::kPeerUnreachable, 0);
+    }
+    return;
+  }
+
+  // Local target: find by peer_id.
+  HdPeer* target = nullptr;
+  int target_fd = -1;
+  {
+    std::lock_guard lock(cp->hd_peers->mutex);
+    target = HdPeersLookupById(cp->hd_peers,
+                                req.target_peer_id);
+    if (target) target_fd = target->fd;
+  }
+  if (!target || target_fd < 0) {
+    HdDecision dec;
+    dec.mode = HdConnMode::kDenied;
+    dec.deny_reason = HdDenyReason::kPeerUnreachable;
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id,
+        dec.mode, dec.deny_reason, 0, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    Key tkey{};
+    HdAuditRecordDecision(&cp->audit_ring, initiator_key,
+                          tkey, cv, dec);
+    return;
+  }
+
+  // Allocate correlation slot.
+  int slot = OpenConnSlotAlloc(cp);
+  if (slot < 0) {
+    uint8_t rbuf[64];
+    int rn = HdBuildOpenConnectionResult(
+        rbuf, sizeof(rbuf), req.correlation_id,
+        HdConnMode::kDenied,
+        HdDenyReason::kTooManyOpenConns, 0, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+    return;
+  }
+  auto& s = cp->open_conns[slot];
+  s.in_use = 1;
+  s.correlation_id = req.correlation_id;
+  s.initiator_fd = fd;
+  s.target_fd = target_fd;
+  s.initiator_key = initiator_key;
+  s.target_key = target->key;
+  s.initiator_view = cv;
+  s.target_relay_id = req.target_relay_id;
+  s.deadline_ns = NowNsMono() + kCpOpenConnTimeoutNs;
+  if (fd >= 0 && fd < kMaxFd) {
+    cp->open_conn_per_peer[fd]++;
+  }
+
+  // Forward IncomingConnection to the target.
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingConnSize];
+  int n = HdBuildIncomingConnection(
+      buf, initiator_key,
+      initiator ? target->peer_id : 0, cv.intent,
+      req.flags, req.correlation_id);
+  if (WriteFullFrame(target_fd, buf, n) < 0) {
+    SendOpenResultAndCleanup(
+        cp, slot, HdConnMode::kDenied,
+        HdDenyReason::kPeerUnreachable, 0);
+  }
+}
+
+void CpHandleIncomingConnResponse(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len) {
+  HdIncomingConnResponse resp;
+  if (!HdParseIncomingConnResponse(payload, payload_len,
+                                   &resp)) {
+    return;
+  }
+  // Find slot by correlation_id + target_fd.
+  int slot = -1;
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (s.in_use &&
+        s.correlation_id == resp.correlation_id &&
+        s.target_fd == fd) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return;
+
+  auto& entry = cp->open_conns[slot];
+
+  HdClientView b_cv;
+  b_cv.intent = resp.intent;
+  b_cv.allow_upgrade =
+      (resp.flags & kHdFlagAllowUpgrade) != 0;
+  b_cv.allow_downgrade =
+      (resp.flags & kHdFlagAllowDowngrade) != 0;
+
+  if (!(resp.accept & kHdFlagAccept)) {
+    SendOpenResultAndCleanup(
+        cp, slot, HdConnMode::kDenied,
+        HdDenyReason::kPolicyForbids, 0);
+    return;
+  }
+
+  // Apply B's server-side peer policy to its wire intent.
+  HdPeerPolicy b_policy{};
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    auto* bpol = HdPeersLookupPolicy(
+        cp->hd_peers, entry.target_key.data());
+    if (bpol) b_policy = *bpol;
+  }
+  HdIntent effective_b =
+      HdApplyPeerPolicyIntent(b_policy, resp.intent);
+  HdLayerView peer_view =
+      HdBuildPeerView(b_policy, effective_b);
+
+  HdCapability cap{.can_direct = false};
+  HdLayerView fleet_view;
+  HdLayerView relay_view;
+  int max_direct = 0;
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    fleet_view =
+        HdBuildFleetView(cp->hd_peers->fleet_policy);
+    relay_view =
+        HdBuildRelayView(cp->hd_peers->relay_policy);
+    max_direct =
+        cp->hd_peers->relay_policy.max_direct_peers;
+  }
+  HdDecision dec = HdResolve(
+      fleet_view, HdLayerView{}, relay_view,
+      peer_view, entry.initiator_view, cap,
+      entry.target_relay_id);
+
+  // Enforce max_direct_peers as an audit-visible denial
+  // rather than silently degrading.
+  if (dec.mode == HdConnMode::kDirect && max_direct > 0) {
+    int cur = cp->hd_peers->direct_in_use.load(
+        std::memory_order_acquire);
+    if (cur >= max_direct) {
+      dec.mode = HdConnMode::kDenied;
+      dec.deny_reason =
+          HdDenyReason::kDirectCapExceeded;
+    } else {
+      cp->hd_peers->direct_in_use.fetch_add(
+          1, std::memory_order_acq_rel);
+    }
+  }
+
+  HdAuditRecordDecision(&cp->audit_ring,
+                        entry.initiator_key,
+                        entry.target_key,
+                        entry.initiator_view, dec);
+
+  SendOpenResultAndCleanup(cp, slot, dec.mode,
+                           dec.deny_reason,
+                           dec.sub_reason);
+}
+
+// -- Cross-relay (gateway + origin-forward) --------
+
+void CpHandleFleetOpenConnection(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len) {
+  HdFleetOpenConnection env;
+  if (!HdParseFleetOpenConnection(payload, payload_len,
+                                  &env)) {
+    return;
+  }
+  if (!cp->hd_peers) return;
+
+  HdOpenConnection inner;
+  if (!HdParseOpenConnection(env.inner_conn,
+                             kHdOpenConnSize, &inner)) {
+    return;
+  }
+
+  HdClientView cv;
+  cv.intent = inner.intent;
+  cv.allow_upgrade =
+      (inner.flags & kHdFlagAllowUpgrade) != 0;
+  cv.allow_downgrade =
+      (inner.flags & kHdFlagAllowDowngrade) != 0;
+
+  // Look up local target (gateway owns peer policy).
+  HdPeer* target = nullptr;
+  Key target_key{};
+  int target_fd = -1;
+  {
+    std::lock_guard lock(cp->hd_peers->mutex);
+    target = HdPeersLookupById(cp->hd_peers,
+                                inner.target_peer_id);
+    if (target) {
+      target_fd = target->fd;
+      target_key = target->key;
+    }
+  }
+
+  // Helper that sends a denial back as
+  // FleetOpenConnectionResult.
+  auto deny_back = [&](HdDenyReason r,
+                       uint8_t sub = 0) {
+    uint8_t rbuf[64];
+    int rn = HdBuildFleetOpenConnectionResult(
+        rbuf, sizeof(rbuf), inner.correlation_id,
+        HdConnMode::kDenied, r, sub, nullptr, 0,
+        nullptr, 0);
+    if (rn > 0) WriteFullFrame(fd, rbuf, rn);
+  };
+
+  if (!target || target_fd < 0) {
+    deny_back(HdDenyReason::kPeerUnreachable);
+    return;
+  }
+
+  // Federation check now that we have the resolved key.
+  const char* fed_reason = nullptr;
+  if (!HdFederationAllows(
+          cp->hd_peers->federation_policy,
+          env.origin_fleet_id, target_key,
+          &fed_reason)) {
+    deny_back(HdDenyReason::kFederationDenied);
+    return;
+  }
+
+  // Apply initiator peer policy if known (unlikely — the
+  // initiator is on a remote relay — but harmless if the
+  // gateway happens to have a record).
+  {
+    std::lock_guard plk(cp->hd_peers->mutex);
+    // Initiator key isn't carried in FleetOpenConnection
+    // today; skip the override step at the gateway.
+    (void)plk;
+  }
+
+  // Allocate a correlation slot keyed on the remote's
+  // correlation_id. A collision with a local client's id
+  // is possible; we disambiguate by storing
+  // origin_relay_id in the slot.
+  int slot = OpenConnSlotAlloc(cp);
+  if (slot < 0) {
+    deny_back(HdDenyReason::kTooManyOpenConns);
+    return;
+  }
+  auto& s = cp->open_conns[slot];
+  s.in_use = 1;
+  s.correlation_id = inner.correlation_id;
+  s.initiator_fd = fd;       // relay link back to origin
+  s.target_fd = target_fd;   // local target peer
+  s.target_key = target_key;
+  s.initiator_view = cv;
+  s.target_relay_id = 0;
+  s.is_gateway_inbound = true;
+  s.origin_relay_id = env.origin_relay_id;
+  s.deadline_ns = NowNsMono() + kCpOpenConnTimeoutNs;
+
+  // Forward IncomingConnection to the local target. The
+  // initiator key is zeroed because it lives on a remote
+  // relay and isn't available here.
+  Key zero_key{};
+  uint8_t buf[kHdFrameHeaderSize + kHdIncomingConnSize];
+  int n = HdBuildIncomingConnection(
+      buf, zero_key, target->peer_id, cv.intent,
+      inner.flags, inner.correlation_id);
+  if (WriteFullFrame(target_fd, buf, n) < 0) {
+    SendOpenResultAndCleanup(
+        cp, slot, HdConnMode::kDenied,
+        HdDenyReason::kPeerUnreachable, 0);
+  }
+}
+
+void CpHandleFleetOpenConnectionResult(
+    ControlPlane* cp, int fd,
+    const uint8_t* payload, int payload_len) {
+  HdOpenConnectionResult result;
+  if (!HdParseOpenConnectionResult(payload, payload_len,
+                                   &result)) {
+    return;
+  }
+  // Find a matching outbound-forward slot on this relay.
+  // Slots are keyed by correlation_id + target_fd (the
+  // gateway link the request went out on).
+  int slot = -1;
+  for (int i = 0; i < kCpMaxOpenConns; i++) {
+    auto& s = cp->open_conns[i];
+    if (s.in_use &&
+        s.correlation_id == result.correlation_id &&
+        s.target_fd == fd &&
+        !s.is_gateway_inbound &&
+        s.target_relay_id != 0) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return;
+
+  SendOpenResultAndCleanup(
+      cp, slot, result.mode, result.deny_reason,
+      result.sub_reason);
 }
 
 }  // namespace hyper_derp
