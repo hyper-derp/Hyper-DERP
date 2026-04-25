@@ -160,6 +160,9 @@ install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.service
   DESTINATION lib/systemd/system)
 install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/wg-mode.conf
+  DESTINATION lib/systemd/system/hyper-derp.service.d)
+install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.conf
   DESTINATION /etc/hyper-derp
   RENAME hyper-derp.conf.example)
@@ -207,6 +210,15 @@ endif()
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${_dpkg_arch}")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+# Restrict deb contents to runtime artifacts. The bundled einheit
+# sub-build emits dev-only artifacts (headers, .a, /usr/share/doc)
+# under COMPONENT devel; we bundle einheit purely as a runtime
+# binary, so exclude that component from the deb.
+# Hyper-derp's own install() rules don't set COMPONENT, so they
+# land in `Unspecified`; keep it.
+set(CPACK_COMPONENTS_ALL Unspecified runtime)
+set(CPACK_DEB_COMPONENT_INSTALL OFF)
 
 # Post-install/remove scripts for systemd integration.
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA

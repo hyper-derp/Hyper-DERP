@@ -8,8 +8,15 @@ if [ "$1" = "configure" ]; then
        /etc/hyper-derp/hyper-derp.yaml
   fi
 
-  # Load kTLS kernel module if available.
+  # Host-side IPC dir for the einheit control channel. mode 1777 so
+  # both the daemon's DynamicUser and the operator user can drop
+  # sockets in it; the daemon binds the sockets, hd-cli connects.
+  install -d -m 1777 /tmp/einheit
+
+  # kTLS for the DERP path (optional; ignored if module missing).
   modprobe tls 2>/dev/null || true
+  # WireGuard kernel module for `mode: wireguard` (optional too).
+  modprobe wireguard 2>/dev/null || true
 
   systemctl daemon-reload
   systemctl enable hyper-derp.service

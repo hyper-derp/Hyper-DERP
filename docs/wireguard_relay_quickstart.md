@@ -54,11 +54,15 @@ sudo apt install -y /path/to/hyper-derp_<version>_amd64.deb
 The deb installs:
 
 - `/usr/bin/hyper-derp` — the daemon
-- `/usr/bin/hd-cli` — operator CLI wrapper (calls `einheit`; see step 2)
+- `/usr/bin/einheit` — bundled operator CLI (the deb pulls it in so you don't manage it separately)
+- `/usr/bin/hd-cli` — convenience wrapper around `einheit` with the right adapter + IPC endpoints pre-wired
 - `/etc/hyper-derp/hyper-derp.yaml.example` — example config
 - `/usr/lib/hyper-derp/wg_relay.bpf.o` — the XDP BPF program (optional, used only when `xdp_interface` is set)
-- `/usr/lib/systemd/system/hyper-derp.service` — systemd unit (enabled by default; we'll add a drop-in for WG mode)
+- `/usr/lib/systemd/system/hyper-derp.service` — systemd unit (enabled by default)
+- `/usr/lib/systemd/system/hyper-derp.service.d/wg-mode.conf` — vendored drop-in granting `CAP_BPF` / `CAP_NET_ADMIN` / `AF_NETLINK` and `StateDirectory=hyper-derp`. Active by default; harmless in DERP mode (extra caps granted but not exercised). Override at `/etc/systemd/system/hyper-derp.service.d/wg-mode.conf` if you want to mask it
 - `/usr/share/hyper-derp/hd_chafa` — branded chafa logo for the `hd-cli` interactive welcome banner. Used automatically; `hd-cli` exports `EINHEIT_LOGO_PATH` pointing at this file when launching `einheit`. To suppress, `unset EINHEIT_LOGO_PATH` before invoking `hd-cli`
+
+The deb's `postinst` also creates `/tmp/einheit` (mode 1777) for IPC sockets and `modprobe`s `tls` + `wireguard`. Nothing else to set up before step 3.
 
 **(b) From source** if you don't have a deb:
 
@@ -77,35 +81,9 @@ hyper-derp --version
 # expected: hyper-derp 0.1.x
 ```
 
-### 2. Install `einheit` (runtime dependency of `hd-cli`)
+### 2. Configure the relay
 
-The operator drives the daemon over an IPC socket using `einheit`, a separate CLI tool that ships from its own project. The `hd-cli` wrapper is installed by the `hyper-derp` deb (see step 1) but it requires the `einheit` binary at runtime.
-
-Install `einheit` from the einheit project's release artefacts (currently distributed alongside `hyper-derp` on internal deployments — ask your deployment lead). Place the binary somewhere on `PATH`, e.g. `/usr/local/bin/einheit` or `/usr/local/sbin/einheit`, and make sure it's executable.
-
-Verify:
-
-```bash
-which einheit
-# expected: a path; if it prints nothing, einheit isn't on PATH
-
-einheit --version
-# expected: a version string
-```
-
-If `einheit` isn't on PATH, the `hd-cli` wrapper falls back to the `$EINHEIT_BIN` env var. Set that in `/etc/profile.d/hyper-derp.sh` or systemd drop-in if you keep einheit somewhere unusual:
-
-```bash
-export EINHEIT_BIN=/opt/einheit/bin/einheit
-```
-
-Don't try to use `hd-cli` yet — the daemon's not running; the IPC socket doesn't exist. We come back to it in step 4.
-
-### 3. Configure the relay
-
-Three config artefacts. All on the relay box.
-
-**3a. The yaml** at `/etc/hyper-derp/hyper-derp.yaml`:
+Write the relay yaml at `/etc/hyper-derp/hyper-derp.yaml`:
 
 ```bash
 sudo tee /etc/hyper-derp/hyper-derp.yaml >/dev/null <<'EOF'
@@ -114,8 +92,9 @@ wg_relay:
   port: 51820
   roster_path: /var/lib/hyper-derp/wg-roster
   # Uncomment to attach the XDP fast path; needs an
-  # XDP-capable NIC + the systemd capability bits in
-  # the drop-in below.
+  # XDP-capable NIC. The systemd unit already grants
+  # CAP_BPF + AF_NETLINK via the bundled wg-mode.conf
+  # drop-in, so just flipping these on is enough.
   # xdp_interface: eth0
   # xdp_bpf_obj_path: /usr/lib/hyper-derp/wg_relay.bpf.o
 log_level: info
@@ -125,49 +104,15 @@ einheit:
 EOF
 ```
 
-**3b. The systemd drop-in.** The shipped `hyper-derp.service` is hardened for the DERP path: `DynamicUser=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`. With those defaults the daemon cannot write the roster, the einheit IPC isn't visible to `hd-cli`, and (if you enable XDP) `bpf()` is blocked by the seccomp filter. The drop-in fixes all three:
+That's it for relay-side config. The deb already shipped:
 
-```bash
-sudo mkdir -p /etc/systemd/system/hyper-derp.service.d
-sudo tee /etc/systemd/system/hyper-derp.service.d/wg-mode.conf >/dev/null <<'EOF'
-[Service]
-# Writable state dir for the wg roster. systemd creates
-# /var/lib/hyper-derp owned by the per-instance
-# DynamicUser; the daemon writes through to that.
-StateDirectory=hyper-derp
+- the systemd unit + drop-in granting the WG/XDP capabilities,
+- `/tmp/einheit` (mode 1777) for the IPC sockets,
+- `wireguard` and `tls` modules loaded.
 
-# Bind-mount the host /tmp/einheit dir into the daemon's
-# PrivateTmp namespace so hd-cli can reach the IPC
-# socket. Keeps the rest of /tmp private.
-BindPaths=/tmp/einheit
+If you keep `einheit` somewhere unusual, set `$EINHEIT_BIN` in `/etc/profile.d/hyper-derp.sh`; `hd-cli` defaults to the bundled `/usr/bin/einheit`.
 
-# UMask=000 so ZeroMQ creates the IPC sockets mode 0775
-# rather than 0755. hd-cli runs as your operator user;
-# without this it can't write to a socket owned by the
-# daemon's DynamicUser. /tmp/einheit is a host-local
-# control plane, not a security boundary.
-UMask=000
-
-# Unlink stale IPC socket files from a previous run; if
-# they're still present ZeroMQ fails with EADDRINUSE.
-ExecStartPre=/bin/rm -f /tmp/einheit/hd-relay.ctl /tmp/einheit/hd-relay.pub
-
-# Below: only needed if you enable the XDP fast path
-# (xdp_interface set in the yaml above). Safe to leave in
-# even when XDP is off.
-AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_SYS_NICE
-SystemCallFilter=bpf
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
-EOF
-```
-
-**3c. The IPC dir on the host side**, mode 1777 because both the daemon's DynamicUser and your operator user need to drop sockets there:
-
-```bash
-sudo install -d -m 1777 /tmp/einheit
-```
-
-### 4. Start the relay daemon
+### 3. Start the relay daemon
 
 ```bash
 sudo systemctl daemon-reload
@@ -194,7 +139,7 @@ sudo hd-cli wg show
 
 Should print a small key/value table with `port=51820`, `peer_count=0`, `link_count=0`, `xdp_attached=false` (or `true` if you enabled XDP). If you get `oneshot: no matching command` or `Connection refused`, see [common errors](#common-errors-and-what-to-check-first).
 
-### 5. Set up the first WG client (`alice`)
+### 4. Set up the first WG client (`alice`)
 
 On `alice`:
 
@@ -226,7 +171,7 @@ EOF
 
 `<RELAY-IP>` is the relay box's public IP. Don't bring `wg0` up yet — bob's pubkey isn't known.
 
-### 6. Set up the second WG client (`bob`)
+### 5. Set up the second WG client (`bob`)
 
 On `bob`:
 
@@ -269,7 +214,7 @@ sudo wg-quick up wg0
 
 Don't expect ping to work yet — the relay doesn't know about these peers.
 
-### 7. Register peers + link on the relay
+### 6. Register peers + link on the relay
 
 On the relay box:
 
@@ -300,7 +245,7 @@ sudo hd-cli wg show
 
 `wg show` should now read `peer_count=2`, `link_count=1`. The packet counters are still zero — we haven't sent anything.
 
-### 8. Test with ping
+### 7. Test with ping
 
 On `alice`:
 
@@ -320,7 +265,7 @@ sudo hd-cli wg show
 
 That's the relay working end-to-end. From here you can run real workloads over `10.99.0.0/24`, scale to more peers (each gets their own `wg peer add`), or move on to the reference sections below.
 
-### 9. Render a wg-quick `[Peer]` block for new clients
+### 8. Render a wg-quick `[Peer]` block for new clients
 
 Once you've stamped a peer's pubkey via `wg peer pubkey`, the relay can render a ready-to-paste `[Peer]` block for any client who needs to talk to that peer:
 
@@ -352,11 +297,11 @@ The `[Interface]` block has placeholders because the relay has no business assig
 
 | symptom | cause | fix |
 | --- | --- | --- |
-| `hd-cli: command not found` | step 2 not done | install `einheit` + drop in the wrapper script |
-| `oneshot: no matching command` from `hd-cli` | daemon not running, or IPC socket dir not shared | check `journalctl -u hyper-derp`; ensure `/tmp/einheit/` is mode 1777 and the `BindPaths` drop-in is in place |
-| daemon exits immediately, `journalctl` shows `code=killed, status=31/SYS` | seccomp killed `bpf()` | the systemd drop-in's `SystemCallFilter=bpf` line is missing, or `daemon-reload` not run |
-| daemon logs `wg-relay xdp: BPF load failed: Permission denied` | `CAP_BPF`/`CAP_NET_ADMIN` not in `AmbientCapabilities` | add to drop-in, `daemon-reload`, restart |
-| daemon logs `wg-relay xdp: attach to <iface> failed: Address family not supported by protocol` | `RestrictAddressFamilies` blocks `AF_NETLINK` (libbpf attaches via netlink) | add `AF_NETLINK` to that line in the drop-in |
+| `hd-cli: command not found` | the `hyper-derp` deb isn't installed (or you removed it) | reinstall the deb — `hd-cli` and the bundled `einheit` ship together |
+| `oneshot: no matching command` from `hd-cli` | daemon not running, or IPC socket dir not shared | check `journalctl -u hyper-derp`; ensure `/tmp/einheit/` is mode 1777 (postinst creates it; if missing run `sudo install -d -m 1777 /tmp/einheit`) |
+| daemon exits immediately, `journalctl` shows `code=killed, status=31/SYS` | seccomp killed `bpf()` | the bundled `wg-mode.conf` drop-in must be present at `/lib/systemd/system/hyper-derp.service.d/`. If you masked it, restore by `sudo rm /etc/systemd/system/hyper-derp.service.d/wg-mode.conf` and `daemon-reload` |
+| daemon logs `wg-relay xdp: BPF load failed: Permission denied` | `CAP_BPF`/`CAP_NET_ADMIN` not in `AmbientCapabilities` | the bundled drop-in adds these; check it isn't masked, then `daemon-reload` + restart |
+| daemon logs `wg-relay xdp: attach to <iface> failed: Address family not supported by protocol` | `RestrictAddressFamilies` blocks `AF_NETLINK` (libbpf attaches via netlink) | the bundled drop-in includes `AF_NETLINK`; same check as above |
 | daemon logs `wg-relay xdp: 'XXX' has no IPv4 — cross-NIC redirect to it will fall back to userspace` | NIC has no v4 address (yet) | bring the NIC up with `ip addr add ...` before starting the daemon, or restart after IP comes up |
 | daemon logs `XDP load failed: ... should be less than or equal to half the maximum number of RX/TX queues` (gVNIC) | gve XDP requires reserving half the channels for XDP_TX | `sudo ethtool -L <iface> rx 1 tx 1` (or `rx 2 tx 2` on bigger machines), then restart |
 | `xdp: Operation not supported` (gVNIC on c3/c3d/c4/n4/h3/h4) | DQO_RDA queue format doesn't have XDP support in upstream gve yet | leave `xdp_interface` empty, run on the userspace path |

@@ -9,6 +9,20 @@ ExecStart=/usr/bin/hyper-derp --config /etc/hyper-derp/hyper-derp.yaml
 Restart=on-failure
 RestartSec=5
 
+# Clean up stale einheit IPC sockets from a prior run; if they're
+# still on disk from a hard crash, ZeroMQ binds fail with EADDRINUSE.
+ExecStartPre=/bin/rm -f /tmp/einheit/hd-relay.ctl /tmp/einheit/hd-relay.pub
+
+# Bind-mount the host /tmp/einheit dir into PrivateTmp so hd-cli
+# (running as the operator user) can reach the daemon's IPC sockets.
+BindPaths=/tmp/einheit
+
+# UMask=000 so ZeroMQ creates IPC sockets mode 0775 — the operator
+# user needs write access to a socket owned by the daemon's
+# DynamicUser. /tmp/einheit is a host-local control plane, not a
+# security boundary.
+UMask=000
+
 # Hardening
 DynamicUser=yes
 ProtectSystem=strict

@@ -7,10 +7,9 @@
 # operators were maintaining as a private wrapper before
 # hyper-derp 0.1.6.
 #
-# Runtime dependency: the `einheit` binary must be
-# installed and on PATH (or pointed at by $EINHEIT_BIN).
-# It's distributed by the einheit project; install it
-# from there before using this wrapper.
+# The einheit binary is bundled in the hyper-derp deb at
+# /usr/bin/einheit, so `apt install hyper-derp` produces a
+# fully working operator CLI out of the box.
 #
 # Environment overrides (rarely needed):
 #   EINHEIT_BIN              path to einheit binary
@@ -24,15 +23,22 @@
 
 set -eu
 
-BIN="${EINHEIT_BIN:-$(command -v einheit 2>/dev/null || true)}"
+# Resolution order: explicit override → bundled location → $PATH.
+if [ -n "${EINHEIT_BIN:-}" ]; then
+  BIN="$EINHEIT_BIN"
+elif [ -x /usr/bin/einheit ]; then
+  BIN=/usr/bin/einheit
+else
+  BIN="$(command -v einheit 2>/dev/null || true)"
+fi
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
   cat >&2 <<'EOF'
-hd-cli: 'einheit' binary not found on PATH and $EINHEIT_BIN not set.
+hd-cli: 'einheit' binary not found.
 
-The einheit CLI is a runtime dependency of hd-cli. Install it
-alongside hyper-derp (it ships separately as part of the
-einheit project) and ensure it is reachable on $PATH, or set
-$EINHEIT_BIN to the absolute path of the einheit binary.
+The einheit binary is normally bundled in the hyper-derp deb at
+/usr/bin/einheit. If you're running from a build tree or installed
+to a custom prefix, set $EINHEIT_BIN to the absolute path of the
+einheit binary, or put it on $PATH.
 EOF
   exit 127
 fi

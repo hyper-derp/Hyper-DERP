@@ -64,3 +64,56 @@ elseif(TARGET Crow)
 else()
   message(FATAL_ERROR "Crow target missing.")
 endif()
+
+# einheit-cli — operator CLI shipped inside the hyper-derp deb so
+# `apt install hyper-derp` is fully functional out of the box. The
+# einheit sub-build emits a `/usr/bin/einheit` install target; hyper-
+# derp's `hd-cli` wrapper resolves it via $PATH.
+#
+# Source resolution priority:
+#   1. EINHEIT_SOURCE_DIR cmake var or env (sibling source tree)
+#   2. ../einheit/cli relative to the Hyper-DERP repo root
+#   3. FetchContent from einheitdev/cli (ssh; needs access)
+#
+# Build-time only; not on the runtime data path.
+set(_einheit_local "")
+if(DEFINED EINHEIT_SOURCE_DIR AND EXISTS "${EINHEIT_SOURCE_DIR}/CMakeLists.txt")
+  set(_einheit_local "${EINHEIT_SOURCE_DIR}")
+elseif(DEFINED ENV{EINHEIT_SOURCE_DIR}
+       AND EXISTS "$ENV{EINHEIT_SOURCE_DIR}/CMakeLists.txt")
+  set(_einheit_local "$ENV{EINHEIT_SOURCE_DIR}")
+elseif(EXISTS "${PROJECT_SOURCE_DIR}/../einheit/cli/CMakeLists.txt")
+  set(_einheit_local "${PROJECT_SOURCE_DIR}/../einheit/cli")
+endif()
+
+set(EINHEIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(EINHEIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING_einheit OFF CACHE BOOL "" FORCE)
+# Don't ship einheit's headers / static archive in the hyper-derp
+# deb; we only consume the runtime binary.
+set(EINHEIT_INSTALL_DEVEL OFF CACHE BOOL "" FORCE)
+
+# We deliberately do NOT pass EXCLUDE_FROM_ALL to add_subdirectory
+# — that flag also disables install() rules in the subdirectory,
+# which would silently drop the einheit binary out of the deb.
+# With tests/examples already gated off above, the only outputs
+# pulled in are the framework libs + adapter + binary, which is
+# what we want.
+if(_einheit_local)
+  message(STATUS "einheit: using local source at ${_einheit_local}")
+  add_subdirectory("${_einheit_local}"
+    "${CMAKE_BINARY_DIR}/_deps/einheit-build")
+else()
+  message(STATUS "einheit: fetching via FetchContent")
+  FetchContent_Declare(einheit-cli
+    GIT_REPOSITORY git@github.com:einheitdev/cli.git
+    GIT_TAG main
+    GIT_SHALLOW TRUE
+  )
+  FetchContent_MakeAvailable(einheit-cli)
+endif()
+
+if(NOT TARGET einheit)
+  message(FATAL_ERROR
+    "einheit-cli sub-build did not expose an `einheit` target")
+endif()
