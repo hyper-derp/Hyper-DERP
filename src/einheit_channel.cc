@@ -1923,6 +1923,18 @@ void WgShow(Server* s, const Request& /*req*/,
   b += std::format("drop_unknown_src={}\n",
                    stats.drop_unknown_src);
   b += std::format("drop_no_link={}\n", stats.drop_no_link);
+  b += std::format("xdp_attached={}\n",
+                   stats.xdp_attached ? "true" : "false");
+  if (stats.xdp_attached) {
+    b += std::format("xdp_rx_packets={}\n",
+                     stats.xdp.rx_xdp);
+    b += std::format("xdp_fwd_packets={}\n",
+                     stats.xdp.fwd_xdp);
+    b += std::format("xdp_pass_no_peer={}\n",
+                     stats.xdp.pass_no_peer);
+    b += std::format("xdp_pass_no_mac={}\n",
+                     stats.xdp.pass_no_mac);
+  }
   SetBody(r, b);
 }
 

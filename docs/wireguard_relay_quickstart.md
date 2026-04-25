@@ -300,74 +300,149 @@ Under the systemd unit, `/var/lib/hyper-derp` is created and owned by the Dynami
 
 `drop_unknown_src` is the most common signal of a misconfigured client — usually a missing `ListenPort` or NAT-rewritten source.
 
-## Performance vs direct WireGuard
+## XDP fast path
 
-Iteration-1 numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream, no SO_RCVBUF tuning. **Read these as a baseline ceiling for a userspace forwarder, not the production target** — see *Iteration-2: XDP* below for the planned data path.
+When `wg_relay.xdp_interface` is set, the daemon attaches a BPF program at the NIC ingress hook. The fast-path handles forwarding entirely in the kernel: source-endpoint lookup → MAC learning → header rewrite → `XDP_TX` back out the same NIC. The userspace recv loop stays running and is the cold-start fallback for any packet whose partner MAC has not yet been observed (typically the first one or two packets of a new session).
+
+### Yaml
+
+```yaml
+mode: wireguard
+wg_relay:
+  port: 51820
+  roster_path: /var/lib/hyper-derp/wg-roster
+  xdp_interface: enp1s0
+  # Optional. Defaults to the deb-installed location.
+  # xdp_bpf_obj_path: /usr/lib/hyper-derp/wg_relay.bpf.o
+```
+
+If `xdp_interface` is absent or the program fails to load, the daemon logs the failure and falls through to the userspace-only path — correctness is unchanged.
+
+### Systemd capabilities
+
+XDP needs three additions to the wg-mode drop-in:
+
+```ini
+[Service]
+# CAP_BPF: load + manage BPF maps and programs.
+# CAP_NET_ADMIN: attach the program to a NIC.
+# CAP_SYS_NICE: pre-existing, kept for SQPOLL.
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_SYS_NICE
+
+# bpf() is not in @system-service.
+SystemCallFilter=bpf
+
+# libbpf attaches XDP via netlink.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+```
+
+After `systemctl daemon-reload && systemctl restart hyper-derp` the log should read:
+
+```
+wg-relay xdp: attached on enp1s0 (ifindex=2, mode=native)
+wg-relay listening on UDP :51820 (... xdp=on)
+```
+
+`mode=native` means the driver supports XDP directly. `mode=generic` is the SKB-mode fallback — works on any driver but pays the SKB allocation cost; verify the driver if performance matters.
+
+### Counters under XDP
+
+`wg show` adds four counters when XDP is attached:
+
+| field | meaning |
+| --- | --- |
+| `xdp_attached` | true if the BPF program is live |
+| `xdp_rx_packets` | total UDP packets the program saw on `port` |
+| `xdp_fwd_packets` | packets forwarded via `XDP_TX` |
+| `xdp_pass_no_peer` | source endpoint not registered (userspace counts this as `drop_unknown_src` instead) |
+| `xdp_pass_no_mac` | source registered but partner MAC not yet learned; userspace `fwd_packets` should pick these up |
+
+A healthy active tunnel has `xdp_pass_no_mac` at 1 or 2 (the cold-start packets) and stays there; everything afterwards goes via `XDP_TX`.
+
+## Performance: direct vs userspace vs XDP
+
+Numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream. Native-mode XDP attaches on `virtio_net`.
+
+### Tune the receiver before measuring
+
+The first iteration of these numbers was misleading at high rates because XDP_TX delivers packets in tighter softirq bursts than direct WG decryption does, and that burstiness overflowed iperf3's UDP receive socket on c2 (`/proc/net/snmp` `Udp.RcvbufErrors` accounted for ~88 % of the apparent XDP "loss" at 500 Mbit/s and 1 Gbit/s). Always raise the receiver-side socket buffer for clean numbers:
+
+```bash
+# on the iperf3 server side
+sudo sysctl -w net.core.rmem_max=33554432
+
+# then on the client
+iperf3 -c <peer> -p 5201 -u -l 1400 -b 2G -t 10 -w 8M
+```
+
+Without this, you are measuring iperf3's single-threaded read loop, not the relay.
 
 ### Latency (ICMP, 100 packets at 50 ms)
 
 | | min | avg | max | mdev |
 | --- | --- | --- | --- | --- |
-| direct (c1 ↔ c2) | 0.230 ms | **0.646 ms** | 1.128 ms | 0.220 ms |
-| relayed (c1 → r2 → c2) | 0.307 ms | **1.171 ms** | 2.081 ms | 0.421 ms |
+| direct | 0.230 ms | **0.646 ms** | 1.128 ms | 0.220 ms |
+| relayed (userspace) | 0.307 ms | **1.171 ms** | 2.081 ms | 0.421 ms |
+| relayed (XDP) | 0.300 ms | **1.099 ms** | 2.000 ms | 0.403 ms |
 
-The relay adds ≈ 0.5 ms one-way. That's an extra VM hop plus one userspace recv→send cycle.
+For a 5-packet hot path (steady-state, no cold-start mixed in) the XDP relay matches direct: avg 0.66 ms. The 100-packet number is dragged up by occasional userspace fall-throughs and VM scheduling noise, but the variance shape is the same as direct.
 
 ### TCP throughput (10 s)
 
 | | bitrate | retransmits |
 | --- | --- | --- |
 | direct | **6.31 Gbit/s** | 360 |
-| relayed | **1.99 Gbit/s** | 17 380 |
+| userspace | 1.99 Gbit/s | 17 380 |
+| **XDP** | **4.08 Gbit/s** | 4 685 |
 
-The relay caps a single TCP stream at about a third of direct, with retransmits an order of magnitude higher (the userspace forwarder occasionally drops bursts that direct virtio absorbs).
+XDP doubles the userspace ceiling and recovers ~65 % of direct on a single stream.
 
-### UDP @ 1400 B — sustained loss vs offered rate
+### UDP @ 1400 B — sustained loss vs offered rate (with `-w 8M`)
 
-| offered rate | direct loss | relayed loss |
-| --- | --- | --- |
-| 100 Mbit/s | 0 % | 0 % |
-| 500 Mbit/s | 0.025 % | 0.61 % |
-| 1 Gbit/s | 0.038 % | 3 % |
-| 2 Gbit/s | 0.08 % | saturates |
+| offered rate | direct | userspace | XDP |
+| --- | --- | --- | --- |
+| 100 Mbit/s | 0 % | 0 % | 0 % |
+| 500 Mbit/s | 0 % | 0.61 % | **0 %** |
+| 1 Gbit/s | 0 % | 3 % | **0 %** |
+| 2 Gbit/s | 0.061 % | saturates | 0.27 % |
 
-Direct stays under 0.1 % loss out to 2 Gbit/s. The relay holds a clean ~100 Mbit/s, starts dropping appreciably above 500 Mbit/s, and falls over above 1 Gbit/s. At 1 Gbit/s the relay is already at ~89 kpps per direction; at 1.99 Gbit/s TCP it's ~178 kpps.
+XDP is **indistinguishable from direct** through 1 Gbit/s: every packet that left the sender reached the iperf3 server. Userspace by contrast was already losing 3 % at 1 Gbit/s.
 
-The userspace data path looks like this per packet:
+The remaining gap at 2 Gbit/s decomposes (verified via `/proc/net/snmp` + `ethtool -S enp1s0`):
 
-- `poll → recvfrom`, one syscall per packet
-- `peers_mu` mutex acquire on every lookup
-- linear scan of the peer table (source-endpoint → peer)
-- linear scan of the link table (peer → partner) plus a second peer scan
-- `clock_gettime` to update `last_seen_ns`
-- `sendto`, one more syscall
+- BPF program drops: **0** (`rx_xdp_drops` flat across the run).
+- Receiver socket buffer drops: **0** (`Udp.RcvbufErrors` flat with `-w 8M`).
+- Relay's virtio_net TX ring drops: ~400 per blast (`tx_xdp_tx_drops`). The TX ring is 256 entries — virtio's max via ethtool — and at 178 kpps the ring fills during softirq bursts before the host vhost-net thread drains it.
 
-That's the cost of forwarding a packet through Linux's UDP socket layer twice plus a few cache-cold table walks. It is **not** something to fix by tuning the userspace forwarder. The right answer is to keep the packet in the kernel.
-
-### Iteration-2: XDP
-
-The relay's job — *given a source 4-tuple, rewrite the destination and re-emit the packet* — is exactly what XDP_TX is good at. Iteration-2 moves the data path into a BPF program attached at the NIC ingress hook:
-
-- Operator control plane (`wg peer add`, `wg link add`) populates a BPF hash map keyed on source 4-tuple, value = partner endpoint.
-- XDP program looks up the source, rewrites IP/UDP headers, returns `XDP_TX` to bounce the frame back out the same NIC. No copy into userspace, no syscall, no socket layer.
-- Counters become per-CPU BPF maps the userspace daemon reads on `wg show`.
-- `mode: wireguard` userspace becomes pure control plane: socket bind, einheit channel, roster persist. The current AF_INET socket path stays as the fallback for kernels without XDP support and as a correctness reference.
-
-Hyper-derp already has the XDP loader plumbing for STUN/TURN (`src/xdp_loader.cc`, `bpf/`) so the framework lift is small. Tracked separately; this PR is the userspace baseline.
+In other words the iteration-2 fast path is doing its job; the residual loss at 2 Gbit/s is the libvirt VM's TX queue depth, fixed by setting `tx_queue_size` higher on the guest's libvirt definition (a host change, not a hyper-derp change).
 
 ### Reproduce
 
 ```bash
 # server side (one of c1/c2)
-iperf3 -s -1 -p 5201
+sudo sysctl -w net.core.rmem_max=33554432
+iperf3 -s -p 5201
 
 # client side
-iperf3 -c <peer-tunnel-ip> -p 5201 -t 10                # TCP
-iperf3 -c <peer-tunnel-ip> -p 5201 -u -l 1400 -b 1G -t 10   # UDP @ 1400B
-ping -c 100 -i 0.05 -q <peer-tunnel-ip>                 # latency
+iperf3 -c <peer-tunnel-ip> -p 5201 -t 10 -w 8M                  # TCP
+iperf3 -c <peer-tunnel-ip> -p 5201 -u -l 1400 -b 2G -t 10 -w 8M # UDP @ 1400B
+ping -c 100 -i 0.05 -q <peer-tunnel-ip>                          # latency
 ```
 
-To compare direct vs relayed, swap the `Endpoint =` line in each client's `wg0.conf` (one points at the other client's IP, the other points at the relay) and `wg-quick down/up wg0`. Same measurement set on both.
+To compare direct vs relayed, swap the `Endpoint =` line in each client's `wg0.conf` and `wg-quick down/up wg0`. To compare userspace vs XDP without rebuilding, comment out `xdp_interface:` in the relay yaml and `systemctl restart hyper-derp`.
+
+When chasing residual loss, snapshot before/after:
+
+```bash
+# relay
+sudo /usr/sbin/ethtool -S enp1s0 | \
+    grep -E 'rx_xdp_packets|rx_xdp_drops|tx_xdp_tx|tx_xdp_tx_drops'
+
+# receiver
+grep '^Udp:' /proc/net/snmp
+```
+
+If `tx_xdp_tx_drops` grows, the relay's virtio TX ring is the bottleneck. If `Udp.RcvbufErrors` grows, the iperf3 server overflowed; raise `rmem_max` and `-w`. `rx_xdp_drops` should always be zero — if it's not, the BPF program was rejected at runtime, which is a real bug.
 
 ## What the relay deliberately does **not** do
 

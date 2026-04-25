@@ -5,15 +5,21 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <bpf/bpf.h>
+#include <bpf/libbpf.h>
+#include <linux/if_link.h>
+
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -397,6 +403,240 @@ void RecvLoop(WgRelay* r) {
   }
 }
 
+// -- XDP fast-path helpers -----------------------------
+
+// These structs MUST match bpf/wg_relay.bpf.c byte for
+// byte. The BPF program reads/writes them from kernel
+// context and the verifier hates layout drift.
+#pragma pack(push, 1)
+struct XdpEpKey {
+  uint32_t ip;
+  uint16_t port;
+  uint16_t pad;
+};
+struct XdpEpVal {
+  uint32_t ip;
+  uint16_t port;
+  uint16_t pad;
+};
+#pragma pack(pop)
+static_assert(sizeof(XdpEpKey) == 8, "ep_key layout");
+static_assert(sizeof(XdpEpVal) == 8, "ep_val layout");
+
+// Convert a sockaddr_storage (v4 or v4-mapped v6) to the
+// (ip, port) pair the BPF program keys on. Returns false
+// if the endpoint can't be expressed as plain IPv4.
+bool EndpointToV4(const sockaddr_storage& ss, socklen_t len,
+                   uint32_t* out_ip, uint16_t* out_port) {
+  if (ss.ss_family == AF_INET) {
+    const auto* a =
+        reinterpret_cast<const sockaddr_in*>(&ss);
+    *out_ip = a->sin_addr.s_addr;
+    *out_port = a->sin_port;
+    return true;
+  }
+  if (ss.ss_family == AF_INET6) {
+    const auto* a =
+        reinterpret_cast<const sockaddr_in6*>(&ss);
+    if (!IN6_IS_ADDR_V4MAPPED(&a->sin6_addr)) return false;
+    std::memcpy(out_ip, &a->sin6_addr.s6_addr[12], 4);
+    *out_port = a->sin6_port;
+    return true;
+  }
+  (void)len;
+  return false;
+}
+
+bool XdpAttach(WgRelay* r, const std::string& iface,
+                const std::string& bpf_obj_path,
+                uint16_t port) {
+  unsigned int ifindex = if_nametoindex(iface.c_str());
+  if (ifindex == 0) {
+    spdlog::error("wg-relay xdp: interface '{}' not found: {}",
+                  iface, std::strerror(errno));
+    return false;
+  }
+  struct bpf_object* obj =
+      bpf_object__open_file(bpf_obj_path.c_str(), nullptr);
+  if (!obj) {
+    spdlog::error("wg-relay xdp: open '{}' failed: {}",
+                  bpf_obj_path, std::strerror(errno));
+    return false;
+  }
+  if (bpf_object__load(obj) < 0) {
+    spdlog::error("wg-relay xdp: BPF load failed: {}",
+                  std::strerror(errno));
+    bpf_object__close(obj);
+    return false;
+  }
+  struct bpf_program* prog =
+      bpf_object__find_program_by_name(obj, "wg_relay_xdp");
+  struct bpf_map* peers_map =
+      bpf_object__find_map_by_name(obj, "wg_peers");
+  struct bpf_map* macs_map =
+      bpf_object__find_map_by_name(obj, "wg_macs");
+  struct bpf_map* stats_map =
+      bpf_object__find_map_by_name(obj, "wg_xdp_stats");
+  struct bpf_map* port_map =
+      bpf_object__find_map_by_name(obj, "wg_port");
+  if (!prog || !peers_map || !macs_map || !stats_map ||
+      !port_map) {
+    spdlog::error("wg-relay xdp: program/maps not found "
+                  "in {}", bpf_obj_path);
+    bpf_object__close(obj);
+    return false;
+  }
+  int prog_fd = bpf_program__fd(prog);
+  int peers_fd = bpf_map__fd(peers_map);
+  int macs_fd = bpf_map__fd(macs_map);
+  int stats_fd = bpf_map__fd(stats_map);
+  int port_fd = bpf_map__fd(port_map);
+
+  uint32_t key0 = 0;
+  if (bpf_map_update_elem(port_fd, &key0, &port, BPF_ANY) <
+      0) {
+    spdlog::error("wg-relay xdp: set port: {}",
+                  std::strerror(errno));
+    bpf_object__close(obj);
+    return false;
+  }
+
+  // Native first, generic on fallback. Generic works on
+  // any driver via a kernel SKB shim and is enough for
+  // virtio_net + libvirt fleet testing.
+  int rc = bpf_xdp_attach(static_cast<int>(ifindex),
+                          prog_fd, XDP_FLAGS_DRV_MODE,
+                          nullptr);
+  bool native = rc == 0;
+  if (rc < 0) {
+    rc = bpf_xdp_attach(static_cast<int>(ifindex), prog_fd,
+                        XDP_FLAGS_SKB_MODE, nullptr);
+    if (rc < 0) {
+      spdlog::error("wg-relay xdp: attach to {} failed: {}",
+                    iface, std::strerror(-rc));
+      bpf_object__close(obj);
+      return false;
+    }
+  }
+  r->xdp.bpf_obj = obj;
+  r->xdp.prog_fd = prog_fd;
+  r->xdp.ifindex = static_cast<int>(ifindex);
+  r->xdp.peers_map_fd = peers_fd;
+  r->xdp.macs_map_fd = macs_fd;
+  r->xdp.stats_map_fd = stats_fd;
+  r->xdp.port_map_fd = port_fd;
+  r->xdp.attached = true;
+  spdlog::info(
+      "wg-relay xdp: attached on {} (ifindex={}, mode={})",
+      iface, ifindex, native ? "native" : "generic");
+  return true;
+}
+
+void XdpDetach(WgRelay* r) {
+  if (!r->xdp.attached) return;
+  if (r->xdp.ifindex > 0) {
+    int rc = bpf_xdp_detach(r->xdp.ifindex, 0, nullptr);
+    if (rc < 0) {
+      spdlog::warn("wg-relay xdp: detach failed: {}",
+                   std::strerror(-rc));
+    }
+  }
+  if (r->xdp.bpf_obj) {
+    bpf_object__close(
+        static_cast<struct bpf_object*>(r->xdp.bpf_obj));
+  }
+  r->xdp = {};
+}
+
+// Insert (or update) a single direction in the BPF
+// peer map: src_endpoint -> partner endpoint. Called once
+// per direction when a link is added.
+void XdpInsertLinkDir(WgRelay* r, const sockaddr_storage& src,
+                       socklen_t src_len,
+                       const sockaddr_storage& dst,
+                       socklen_t dst_len) {
+  if (!r->xdp.attached) return;
+  XdpEpKey key{};
+  XdpEpVal val{};
+  if (!EndpointToV4(src, src_len, &key.ip, &key.port)) return;
+  if (!EndpointToV4(dst, dst_len, &val.ip, &val.port)) return;
+  int rc = bpf_map_update_elem(r->xdp.peers_map_fd, &key,
+                                &val, BPF_ANY);
+  if (rc < 0) {
+    spdlog::warn("wg-relay xdp: peer insert failed: {}",
+                 std::strerror(-rc));
+  }
+}
+
+void XdpRemoveLinkDir(WgRelay* r, const sockaddr_storage& src,
+                       socklen_t src_len) {
+  if (!r->xdp.attached) return;
+  XdpEpKey key{};
+  if (!EndpointToV4(src, src_len, &key.ip, &key.port)) return;
+  // ENOENT is fine — operator may delete a peer/link the
+  // BPF map never had (e.g. v6-only endpoint).
+  int rc =
+      bpf_map_delete_elem(r->xdp.peers_map_fd, &key);
+  if (rc < 0 && rc != -ENOENT) {
+    spdlog::warn("wg-relay xdp: peer delete failed: {}",
+                 std::strerror(-rc));
+  }
+  // Also clear any learned MAC for this endpoint so a
+  // re-added peer starts from a clean cold-start cycle.
+  bpf_map_delete_elem(r->xdp.macs_map_fd, &key);
+}
+
+void XdpReadStats(const WgRelay* r, WgXdpStats* out) {
+  *out = {};
+  if (!r->xdp.attached) return;
+  int ncpus = libbpf_num_possible_cpus();
+  if (ncpus < 0) return;
+  auto vals = std::make_unique<uint64_t[]>(
+      static_cast<size_t>(ncpus));
+  uint64_t* sums[] = {&out->rx_xdp, &out->fwd_xdp,
+                       &out->pass_no_peer, &out->pass_no_mac};
+  for (uint32_t k = 0; k < 4; ++k) {
+    if (bpf_map_lookup_elem(r->xdp.stats_map_fd, &k,
+                             vals.get()) < 0) {
+      continue;
+    }
+    for (int c = 0; c < ncpus; ++c) {
+      *sums[k] += vals[static_cast<size_t>(c)];
+    }
+  }
+}
+
+// Convenience: insert both directions for a link by name.
+// Caller holds peers_mu.
+void XdpInsertLinkByNameLocked(WgRelay* r,
+                                const std::string& a,
+                                const std::string& b) {
+  const WgRelayPeer* pa = nullptr;
+  const WgRelayPeer* pb = nullptr;
+  for (const auto& p : r->peers) {
+    if (p.name == a) pa = &p;
+    if (p.name == b) pb = &p;
+  }
+  if (!pa || !pb) return;
+  XdpInsertLinkDir(r, pa->endpoint, pa->endpoint_len,
+                    pb->endpoint, pb->endpoint_len);
+  XdpInsertLinkDir(r, pb->endpoint, pb->endpoint_len,
+                    pa->endpoint, pa->endpoint_len);
+}
+
+void XdpRemoveLinkByNameLocked(WgRelay* r,
+                                const std::string& a,
+                                const std::string& b) {
+  const WgRelayPeer* pa = nullptr;
+  const WgRelayPeer* pb = nullptr;
+  for (const auto& p : r->peers) {
+    if (p.name == a) pa = &p;
+    if (p.name == b) pb = &p;
+  }
+  if (pa) XdpRemoveLinkDir(r, pa->endpoint, pa->endpoint_len);
+  if (pb) XdpRemoveLinkDir(r, pb->endpoint, pb->endpoint_len);
+}
+
 }  // namespace
 
 WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
@@ -459,6 +699,25 @@ WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
 
   r->running.store(true, std::memory_order_release);
   r->loop_thread = std::thread(RecvLoop, r);
+
+  // Bring up the XDP fast path if the operator asked for
+  // it. Failure here is non-fatal — we log and stay on
+  // the userspace path; correctness is unchanged.
+  if (!cfg.xdp_interface.empty()) {
+    std::string obj_path = cfg.xdp_bpf_obj_path.empty()
+        ? std::string("/usr/lib/hyper-derp/wg_relay.bpf.o")
+        : cfg.xdp_bpf_obj_path;
+    if (XdpAttach(r, cfg.xdp_interface, obj_path,
+                   cfg.port)) {
+      // Replay current links into the BPF map so the fast
+      // path is live for already-loaded roster entries.
+      std::lock_guard lk(r->peers_mu);
+      for (const auto& l : r->links) {
+        XdpInsertLinkByNameLocked(r, l.a, l.b);
+      }
+    }
+  }
+
   size_t pc, lc;
   {
     std::lock_guard lk(r->peers_mu);
@@ -466,8 +725,9 @@ WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
     lc = r->links.size();
   }
   spdlog::info(
-      "wg-relay listening on UDP :{} ({} peers, {} links)",
-      cfg.port, pc, lc);
+      "wg-relay listening on UDP :{} ({} peers, {} links, "
+      "xdp={})",
+      cfg.port, pc, lc, r->xdp.attached ? "on" : "off");
   return r;
 }
 
@@ -475,6 +735,7 @@ void WgRelayStop(WgRelay* r) {
   if (!r) return;
   r->running.store(false, std::memory_order_release);
   if (r->loop_thread.joinable()) r->loop_thread.join();
+  XdpDetach(r);
   if (r->sock_fd >= 0) close(r->sock_fd);
   delete r;
 }
@@ -501,7 +762,21 @@ bool WgRelayPeerKey(WgRelay* r, const std::string& name,
 bool WgRelayPeerRemove(WgRelay* r,
                         const std::string& name) {
   std::lock_guard lk(r->peers_mu);
+  // Snapshot the links the peer participates in BEFORE we
+  // mutate the table — PeerRemoveLocked also tears those
+  // links down and we need both sides of each one to
+  // remove the BPF entries.
+  std::vector<std::pair<std::string, std::string>>
+      removed_links;
+  for (const auto& l : r->links) {
+    if (l.a == name || l.b == name) {
+      removed_links.push_back({l.a, l.b});
+    }
+  }
   if (!PeerRemoveLocked(r, name)) return false;
+  for (const auto& l : removed_links) {
+    XdpRemoveLinkByNameLocked(r, l.first, l.second);
+  }
   PersistRosterLocked(r);
   return true;
 }
@@ -510,6 +785,7 @@ bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
                      const std::string& b) {
   std::lock_guard lk(r->peers_mu);
   if (LinkAddLocked(r, a, b) != 0) return false;
+  XdpInsertLinkByNameLocked(r, a, b);
   PersistRosterLocked(r);
   return true;
 }
@@ -518,6 +794,7 @@ bool WgRelayLinkRemove(WgRelay* r, const std::string& a,
                         const std::string& b) {
   std::lock_guard lk(r->peers_mu);
   if (!LinkRemoveLocked(r, a, b)) return false;
+  XdpRemoveLinkByNameLocked(r, a, b);
   PersistRosterLocked(r);
   return true;
 }
@@ -639,6 +916,8 @@ WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r) {
       std::memory_order_relaxed);
   s.drop_no_link = r->stats.drop_no_link.load(
       std::memory_order_relaxed);
+  s.xdp_attached = r->xdp.attached;
+  XdpReadStats(r, &s.xdp);
   std::lock_guard lk(r->peers_mu);
   s.peer_count = r->peers.size();
   s.link_count = r->links.size();

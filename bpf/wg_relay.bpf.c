@@ -1,0 +1,220 @@
+// SPDX-License-Identifier: GPL-2.0
+// XDP fast path for `mode: wireguard`.
+//
+// Looks up the source 4-tuple of an inbound UDP packet in
+// the operator-managed peer map, finds that peer's link
+// partner, rewrites L2/L3/L4 headers, and bounces the
+// packet back out the same NIC via XDP_TX. Anything we
+// can't handle (unknown source, partner MAC not yet
+// learned, non-IPv4, IP options present) returns XDP_PASS
+// and falls through to the userspace forwarder, which
+// keeps `mode: wireguard` correct on every kernel /
+// driver combo even when the fast path can't fire.
+//
+// Maps:
+//   wg_peers     : endpoint -> partner endpoint
+//   wg_macs      : endpoint -> Ethernet src MAC observed
+//                  on the last packet from that endpoint
+//   wg_xdp_stats : per-CPU counters
+//   wg_port      : array[1] holding the relay's UDP port
+//                  in host byte order
+
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/in.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+
+// Stats indices.
+#define STAT_RX			0
+#define STAT_FWD		1
+#define STAT_PASS_NO_PEER	2
+#define STAT_PASS_NO_MAC	3
+
+// -- Map types --------------------------------------------
+
+// Endpoint = (src_ip, src_port). Padding so the verifier
+// stays happy and userspace + BPF agree on the layout.
+struct ep_key {
+	__u32 ip;	// network byte order
+	__u16 port;	// network byte order
+	__u16 _pad;	// must be zeroed by writers
+};
+
+struct ep_val {
+	__u32 ip;	// network byte order
+	__u16 port;	// network byte order
+	__u16 _pad;
+};
+
+struct mac_val {
+	__u8  mac[6];
+	__u16 _pad;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, struct ep_key);
+	__type(value, struct ep_val);
+} wg_peers SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1024);
+	__type(key, struct ep_key);
+	__type(value, struct mac_val);
+} wg_macs SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 4);
+	__type(key, __u32);
+	__type(value, __u64);
+} wg_xdp_stats SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u16);
+} wg_port SEC(".maps");
+
+// -- Helpers ----------------------------------------------
+
+static __always_inline void
+inc_stat(__u32 idx)
+{
+	__u64 *val = bpf_map_lookup_elem(&wg_xdp_stats, &idx);
+	if (val)
+		__sync_fetch_and_add(val, 1);
+}
+
+// Recompute the IPv4 header checksum from scratch. The
+// caller has already bounds-checked the header (ihl==5,
+// (ip + 1) <= data_end), so this needs no loop and no
+// per-word check — the verifier copes with a flat 10-word
+// sum where it chokes on the unrolled-loop variant.
+static __always_inline __u16
+ipv4_csum(struct iphdr *ip)
+{
+	__u16 *p = (__u16 *)ip;
+	__u32 sum = (__u32)p[0] + p[1] + p[2] + p[3] + p[4]
+		  + p[5] + p[6] + p[7] + p[8] + p[9];
+	sum = (sum >> 16) + (sum & 0xFFFF);
+	sum += sum >> 16;
+	return ~sum;
+}
+
+// -- Entry point ------------------------------------------
+
+SEC("xdp")
+int wg_relay_xdp(struct xdp_md *ctx)
+{
+	void *data = (void *)(long)ctx->data;
+	void *data_end = (void *)(long)ctx->data_end;
+
+	// Eth header.
+	struct ethhdr *eth = data;
+	if ((void *)(eth + 1) > data_end)
+		return XDP_PASS;
+	if (eth->h_proto != bpf_htons(ETH_P_IP))
+		return XDP_PASS;
+
+	// IPv4 header. No options.
+	struct iphdr *ip = (void *)(eth + 1);
+	if ((void *)(ip + 1) > data_end)
+		return XDP_PASS;
+	if (ip->protocol != IPPROTO_UDP)
+		return XDP_PASS;
+	if (ip->ihl != 5)
+		return XDP_PASS;
+
+	// UDP header.
+	struct udphdr *udp = (void *)(ip + 1);
+	if ((void *)(udp + 1) > data_end)
+		return XDP_PASS;
+
+	// Gate on the relay's listen port.
+	__u32 zero = 0;
+	__u16 *cfg_port = bpf_map_lookup_elem(&wg_port, &zero);
+	if (!cfg_port)
+		return XDP_PASS;
+	if (udp->dest != bpf_htons(*cfg_port))
+		return XDP_PASS;
+
+	inc_stat(STAT_RX);
+
+	// Look up the source endpoint in the peer map. Miss
+	// means either an unregistered peer or one whose
+	// source IP/port doesn't match the operator's pin —
+	// either way userspace counts it as drop_unknown_src.
+	struct ep_key src_key = {
+		.ip = ip->saddr,
+		.port = udp->source,
+		._pad = 0,
+	};
+	struct ep_val *partner =
+		bpf_map_lookup_elem(&wg_peers, &src_key);
+	if (!partner) {
+		inc_stat(STAT_PASS_NO_PEER);
+		return XDP_PASS;
+	}
+
+	// Learn the source MAC for this endpoint. Idempotent —
+	// rewriting the same MAC every packet is fine; if the
+	// peer's L2 changes (it won't on a stable bridge but
+	// could on some ARP refresh), we pick up the new one.
+	struct mac_val src_mv;
+	__builtin_memcpy(src_mv.mac, eth->h_source, 6);
+	src_mv._pad = 0;
+	bpf_map_update_elem(&wg_macs, &src_key, &src_mv,
+			    BPF_ANY);
+
+	// Look up the partner's MAC. Miss means we haven't
+	// observed a packet from the partner yet; let the
+	// userspace fast path forward it (which writes a real
+	// sendto and gets the kernel's ARP/route to fill in
+	// the L2). Once both peers have sent at least one
+	// packet, every subsequent packet rides XDP_TX.
+	struct ep_key dst_key = {
+		.ip = partner->ip,
+		.port = partner->port,
+		._pad = 0,
+	};
+	struct mac_val *dst_mv =
+		bpf_map_lookup_elem(&wg_macs, &dst_key);
+	if (!dst_mv) {
+		inc_stat(STAT_PASS_NO_MAC);
+		return XDP_PASS;
+	}
+
+	// L2 rewrite: source becomes the inbound dest (our
+	// NIC's MAC, unchanged on the wire), destination
+	// becomes the partner's learned MAC.
+	__builtin_memcpy(eth->h_source, eth->h_dest, 6);
+	__builtin_memcpy(eth->h_dest, dst_mv->mac, 6);
+
+	// L3 rewrite: source becomes the inbound dst (the
+	// relay's IP), destination becomes the partner's IP.
+	ip->saddr = ip->daddr;
+	ip->daddr = partner->ip;
+	ip->ttl = 64;
+	ip->check = 0;
+	ip->check = ipv4_csum(ip);
+
+	// L4 rewrite: source becomes the relay's port,
+	// destination becomes the partner's port. UDP
+	// checksum=0 is valid for IPv4 (RFC 768); avoids
+	// the pseudo-header recompute on the hot path.
+	udp->source = udp->dest;
+	udp->dest = partner->port;
+	udp->check = 0;
+
+	inc_stat(STAT_FWD);
+	return XDP_TX;
+}
+
+char _license[] SEC("license") = "GPL";
