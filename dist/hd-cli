@@ -37,6 +37,17 @@ EOF
   exit 127
 fi
 
+# Brand the einheit banner as "hyper-derp" instead of the default
+# "einheit", and use the deb-shipped chafa logo if it's still on
+# disk. Both env vars are read by einheit's banner renderer; if
+# unsupported (older einheit), they're harmless.
+: "${EINHEIT_BRAND:=hyper-derp}"
+if [ -z "${EINHEIT_LOGO_PATH:-}" ] && [ -r /usr/share/hyper-derp/hd_chafa ]; then
+  EINHEIT_LOGO_PATH=/usr/share/hyper-derp/hd_chafa
+fi
+export EINHEIT_BRAND
+[ -n "${EINHEIT_LOGO_PATH:-}" ] && export EINHEIT_LOGO_PATH
+
 exec env "EINHEIT_ROLE=${EINHEIT_ROLE:-admin}" "$BIN" \
     --adapter hd-relay \
     --endpoint "${HD_RELAY_ENDPOINT:-ipc:///tmp/einheit/hd-relay.ctl}" \

@@ -154,6 +154,9 @@ install(FILES
   ${CMAKE_BINARY_DIR}/bpf/wg_relay.bpf.o
   DESTINATION lib/hyper-derp)
 install(FILES
+  ${CMAKE_SOURCE_DIR}/dist/hd_chafa
+  DESTINATION share/hyper-derp)
+install(FILES
   ${CMAKE_SOURCE_DIR}/dist/hyper-derp.service
   DESTINATION lib/systemd/system)
 install(FILES

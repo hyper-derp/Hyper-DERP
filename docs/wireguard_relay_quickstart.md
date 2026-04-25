@@ -58,6 +58,7 @@ The deb installs:
 - `/etc/hyper-derp/hyper-derp.yaml.example` — example config
 - `/usr/lib/hyper-derp/wg_relay.bpf.o` — the XDP BPF program (optional, used only when `xdp_interface` is set)
 - `/usr/lib/systemd/system/hyper-derp.service` — systemd unit (enabled by default; we'll add a drop-in for WG mode)
+- `/usr/share/hyper-derp/hd_chafa` — branded chafa logo for the `hd-cli` interactive welcome banner. Used automatically; `hd-cli` exports `EINHEIT_LOGO_PATH` pointing at this file when launching `einheit`. To suppress, `unset EINHEIT_LOGO_PATH` before invoking `hd-cli`
 
 **(b) From source** if you don't have a deb:
 
