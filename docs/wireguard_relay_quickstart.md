@@ -302,7 +302,7 @@ Under the systemd unit, `/var/lib/hyper-derp` is created and owned by the Dynami
 
 ## Performance vs direct WireGuard
 
-Iteration-1 numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream, no SO_RCVBUF tuning. **Read these as a relative baseline, not absolute capacity** — they bound how much the userspace forwarder costs over a virtio fast path; physical NIC + io_uring will move the ceiling.
+Iteration-1 numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream, no SO_RCVBUF tuning. **Read these as a baseline ceiling for a userspace forwarder, not the production target** — see *Iteration-2: XDP* below for the planned data path.
 
 ### Latency (ICMP, 100 packets at 50 ms)
 
@@ -331,14 +331,29 @@ The relay caps a single TCP stream at about a third of direct, with retransmits 
 | 1 Gbit/s | 0.038 % | 3 % |
 | 2 Gbit/s | 0.08 % | saturates |
 
-Direct stays under 0.1 % loss out to 2 Gbit/s. The relay holds a clean ~100 Mbit/s, starts dropping appreciably above 500 Mbit/s, and falls over above 1 Gbit/s. At 1 Gbit/s the relay is already at ~89 kpps per direction; at 1.99 Gbit/s TCP it's ~178 kpps. With:
+Direct stays under 0.1 % loss out to 2 Gbit/s. The relay holds a clean ~100 Mbit/s, starts dropping appreciably above 500 Mbit/s, and falls over above 1 Gbit/s. At 1 Gbit/s the relay is already at ~89 kpps per direction; at 1.99 Gbit/s TCP it's ~178 kpps.
 
-- a single-threaded `poll → recvfrom → mutex → table lookup → sendto` loop,
-- no io_uring on the WG path,
-- the operator-table mutex covering each lookup,
-- and no per-batch syscall amortisation,
+The userspace data path looks like this per packet:
 
-that's roughly the order of magnitude expected. The optimisations the rest of `hyper-derp` already uses (per-shard `recvmmsg`/`sendmmsg`, io_uring multishot, lockless lookup) are not yet wired into `mode: wireguard`. Iteration-2 work.
+- `poll → recvfrom`, one syscall per packet
+- `peers_mu` mutex acquire on every lookup
+- linear scan of the peer table (source-endpoint → peer)
+- linear scan of the link table (peer → partner) plus a second peer scan
+- `clock_gettime` to update `last_seen_ns`
+- `sendto`, one more syscall
+
+That's the cost of forwarding a packet through Linux's UDP socket layer twice plus a few cache-cold table walks. It is **not** something to fix by tuning the userspace forwarder. The right answer is to keep the packet in the kernel.
+
+### Iteration-2: XDP
+
+The relay's job — *given a source 4-tuple, rewrite the destination and re-emit the packet* — is exactly what XDP_TX is good at. Iteration-2 moves the data path into a BPF program attached at the NIC ingress hook:
+
+- Operator control plane (`wg peer add`, `wg link add`) populates a BPF hash map keyed on source 4-tuple, value = partner endpoint.
+- XDP program looks up the source, rewrites IP/UDP headers, returns `XDP_TX` to bounce the frame back out the same NIC. No copy into userspace, no syscall, no socket layer.
+- Counters become per-CPU BPF maps the userspace daemon reads on `wg show`.
+- `mode: wireguard` userspace becomes pure control plane: socket bind, einheit channel, roster persist. The current AF_INET socket path stays as the fallback for kernels without XDP support and as a correctness reference.
+
+Hyper-derp already has the XDP loader plumbing for STUN/TURN (`src/xdp_loader.cc`, `bpf/`) so the framework lift is small. Tracked separately; this PR is the userspace baseline.
 
 ### Reproduce
 
