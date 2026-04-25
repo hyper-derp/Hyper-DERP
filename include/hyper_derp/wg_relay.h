@@ -69,11 +69,39 @@ struct WgRelayLink {
 };
 
 /// Aggregate counters surfaced via the einheit channel.
+/// These cover the userspace forwarding path. When XDP is
+/// attached the bulk of forwarded packets bypass userspace
+/// entirely and are counted in WgXdpStats below.
 struct WgRelayStats {
   std::atomic<uint64_t> rx_packets{0};
   std::atomic<uint64_t> fwd_packets{0};
   std::atomic<uint64_t> drop_unknown_src{0};
   std::atomic<uint64_t> drop_no_link{0};
+};
+
+/// XDP fast-path state. Populated when wg_relay.xdp_interface
+/// is set in the config and the BPF program loads successfully.
+/// All fds are closed in WgRelayStop.
+struct WgXdpCtx {
+  void* bpf_obj = nullptr;
+  int prog_fd = -1;
+  int ifindex = 0;
+  int peers_map_fd = -1;
+  int macs_map_fd = -1;
+  int stats_map_fd = -1;
+  int port_map_fd = -1;
+  bool attached = false;
+};
+
+/// Per-CPU stats summed across all cores. These count
+/// packets that took the BPF/XDP_TX path (rx_xdp,
+/// fwd_xdp) plus the two reasons XDP fell through to
+/// userspace (pass_no_peer, pass_no_mac).
+struct WgXdpStats {
+  uint64_t rx_xdp = 0;
+  uint64_t fwd_xdp = 0;
+  uint64_t pass_no_peer = 0;
+  uint64_t pass_no_mac = 0;
 };
 
 struct WgRelay {
@@ -90,6 +118,11 @@ struct WgRelay {
   std::atomic<bool> running{false};
   std::thread loop_thread;
   std::string roster_path;
+  /// XDP fast path. attached == true iff the BPF program
+  /// is live on a NIC. Map updates from `wg link add`
+  /// land here; the userspace recv loop still runs as the
+  /// fallback for cold-start packets (XDP_PASS).
+  WgXdpCtx xdp;
 };
 
 /// Bring up the relay: load roster, bind UDP, spawn
@@ -150,6 +183,9 @@ struct WgRelayStatsSnapshot {
   uint64_t drop_no_link;
   size_t peer_count;
   size_t link_count;
+  /// XDP-path counters, zero when xdp.attached is false.
+  WgXdpStats xdp;
+  bool xdp_attached;
 };
 WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r);
 

@@ -172,6 +172,13 @@ static auto ParseWgRelayBlock(ryml::ConstNodeRef w,
   if (w.has_child("roster_path")) {
     ReadStr(w["roster_path"], &config->wg.roster_path);
   }
+  if (w.has_child("xdp_interface")) {
+    ReadStr(w["xdp_interface"], &config->wg.xdp_interface);
+  }
+  if (w.has_child("xdp_bpf_obj_path")) {
+    ReadStr(w["xdp_bpf_obj_path"],
+            &config->wg.xdp_bpf_obj_path);
+  }
   if (w.has_child("peers")) {
     auto ps = w["peers"];
     if (ps.is_seq()) {

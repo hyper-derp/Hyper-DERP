@@ -71,6 +71,18 @@ struct WgRelayConfig {
     std::string b;
   };
   std::vector<LinkEntry> links;
+  /// NIC name for XDP attachment (e.g. "enp1s0"). Empty
+  /// disables the XDP fast path; the userspace forwarder
+  /// alone handles every packet (correct, slow). When set,
+  /// the BPF program for `mode: wireguard` is attached and
+  /// most packets bypass userspace via XDP_TX. Userspace
+  /// remains the fallback for cold-start packets (before
+  /// the partner's MAC has been observed) and for any
+  /// kernel/driver combination that rejects the program.
+  std::string xdp_interface;
+  /// Path to the compiled BPF object. Defaults to a
+  /// CMake-installed location; rarely set explicitly.
+  std::string xdp_bpf_obj_path;
 };
 
 /// Connection level for a peer pair. Level 0 (DERP) is
