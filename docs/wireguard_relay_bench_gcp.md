@@ -7,9 +7,10 @@ Real-cloud characterization of `mode: wireguard` on GCP. Companion to [`wireguar
 - **`gve` driver only supports XDP on the GQI_QPL queue format.** That's all GCP families before C3/N4: `n1`, `n2`, `n2d`, `c2`, `t2d`, `e2`. The newer Sapphire/Genoa/Granite Rapids families (**`c3`, `c3d`, `c4`, `n4`, `h3`, `h4`**) use **DQO_RDA**, where XDP attach returns `Operation not supported` for both native and generic mode.
 - **Cloud bench numbers below are on `n2-standard-4`**, with native-mode XDP attached. RX=1 / TX=1 (gve XDP requires reserving half the channels for XDP_TX, and `n2-standard-4` has max 4 channels).
 - **The relay's per-CPU cost is small** — sustained 1 Gbit/s UDP forwarding burns ~2 % of one of the four vCPUs.
-- **The single-peer ceiling on cloud is the receiver's RX softirq + WG decrypt path on one CPU.** Direct WG between two cloud VMs (no relay) hits the same ~1 Gbit/s UDP / 2.3 Gbit/s TCP cap; the receiver's CPU 0 sits at 100 % softirq. The relay adds <10 % on top.
-- **Per-peer scaling works.** Adding a second WG peer between the same two VMs nearly doubles aggregate (2 × ~2.3 Gbit/s = 4.7 Gbit/s). Each peer gets its own RX hash bucket + its own WG workqueue. **The relay carries this transparently** — its BPF processing was at <2 % CPU at every operating point.
-- **To get higher single-peer numbers**: hardware NIC with multi-queue RSS + offloads (see haswell numbers in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md), where a single-peer single-flow TCP hits 10.7 Gbit/s).
+- **The relay does its job cheaply.** BPF processing was at <2 % CPU at every operating point we measured. End-to-end overhead vs direct WG (no relay): <10 %.
+- **The single-peer ceiling on cloud is the upstream Linux `wireguard` kernel module's RX path.** Direct WG between two cloud VMs (no relay) hits the same wall — ~2.3 Gbit/s TCP, ~1 Gbit/s UDP, single-flow, with the receiver's CPU 0 pinned at 100 % softirq. That ceiling is WG, not us. We document it so operators know what to expect; raising it is a WG kernel-module question, not a relay question.
+- **Per-peer scaling works.** Adding a second WG peer between the same two VMs nearly doubles aggregate (2 × ~2.3 Gbit/s = 4.7 Gbit/s). The relay carries this transparently and stays at <2 % CPU.
+- **For higher single-peer numbers**: hardware NIC with multi-queue RSS + offloads. The on-prem haswell run in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md) hits 10.7 Gbit/s single-peer TCP on real silicon.
 
 ## Setup
 
