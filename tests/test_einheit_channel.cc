@@ -141,6 +141,8 @@ TEST_F(EinheitChannelTest, RelayInitReturnsKey) {
   einheit::Request req;
   req.id = "t4";
   req.command = "relay_init";
+  // relay_init is admin-only on the daemon's role gate.
+  req.role = "admin";
   auto resp = SendRequest(req);
   EXPECT_EQ(resp.status, einheit::ResponseStatus::kOk);
   const std::string body(resp.data.begin(),
@@ -213,6 +215,8 @@ TEST_F(EinheitChannelTest, PeerApproveRejectsBadKey) {
   req.id = "t5";
   req.command = "peer_approve";
   req.args = {"not-a-key"};
+  // peer_* verbs require operator on the role gate.
+  req.role = "operator";
   auto resp = SendRequest(req);
   EXPECT_EQ(resp.status, einheit::ResponseStatus::kError);
   ASSERT_TRUE(resp.error.has_value());
