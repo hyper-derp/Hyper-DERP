@@ -7,7 +7,9 @@ Real-cloud characterization of `mode: wireguard` on GCP. Companion to [`wireguar
 - **`gve` driver only supports XDP on the GQI_QPL queue format.** That's all GCP families before C3/N4: `n1`, `n2`, `n2d`, `c2`, `t2d`, `e2`. The newer Sapphire/Genoa/Granite Rapids families (**`c3`, `c3d`, `c4`, `n4`, `h3`, `h4`**) use **DQO_RDA**, where XDP attach returns `Operation not supported` for both native and generic mode.
 - **Cloud bench numbers below are on `n2-standard-4`**, with native-mode XDP attached. RX=1 / TX=1 (gve XDP requires reserving half the channels for XDP_TX, and `n2-standard-4` has max 4 channels).
 - **The relay's per-CPU cost is small** — sustained 1 Gbit/s UDP forwarding burns ~2 % of one of the four vCPUs.
-- **The single-flow ceiling on cloud is WireGuard itself, not the relay.** Direct WG between two cloud VMs (no relay) hits the same ~1 Gbit/s UDP / 2-3 Gbit/s TCP cap. The Linux `wireguard` kernel module is single-threaded per-peer for crypto; per-packet overhead bounds a single-peer flow to ~1-2 Gbps regardless of CPU. The relay adds ~10 % on top of that. To push past it: more peers (each gets its own workqueue) or hardware NIC with offloads (see haswell numbers in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md)).
+- **The single-peer ceiling on cloud is the receiver's RX softirq + WG decrypt path on one CPU.** Direct WG between two cloud VMs (no relay) hits the same ~1 Gbit/s UDP / 2.3 Gbit/s TCP cap; the receiver's CPU 0 sits at 100 % softirq. The relay adds <10 % on top.
+- **Per-peer scaling works.** Adding a second WG peer between the same two VMs nearly doubles aggregate (2 × ~2.3 Gbit/s = 4.7 Gbit/s). Each peer gets its own RX hash bucket + its own WG workqueue. **The relay carries this transparently** — its BPF processing was at <2 % CPU at every operating point.
+- **To get higher single-peer numbers**: hardware NIC with multi-queue RSS + offloads (see haswell numbers in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md), where a single-peer single-flow TCP hits 10.7 Gbit/s).
 
 ## Setup
 
@@ -95,7 +97,7 @@ Across the three platforms we benched:
 
 ### What's actually capping single-flow on cloud
 
-We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two cloud VMs:
+We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two cloud VMs, then profiling CPUs on both ends:
 
 | topology | TCP single | UDP @ 5 G offered |
 | --- | --- | --- |
@@ -103,11 +105,28 @@ We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two c
 | direct WG (peers point at each other) | 2.31 Gbit/s | 875 Mbit/s, 12 % loss |
 | WG via hyper-derp relay | 2.11 Gbit/s | ~900 Mbit/s, 12 % loss |
 
-Direct WG hits the same ceiling as relayed WG. The relay adds <10 % overhead. **The cap is the Linux `wireguard` kernel module's single-peer single-flow throughput**, not the relay or the cloud network.
+Direct WG hits the same ceiling as relayed WG. The relay adds <10 % overhead. **The cap on the receiver is one CPU at 100 % softirq** (mpstat showed bob's CPU 0 pinned at 100 % during the run; alice's CPUs were 7-30 % each). That CPU is doing RX softirq + WG decrypt for the entire flow.
 
-Per-peer WG runs encrypt + decrypt each in one kernel workqueue. ChaCha20-Poly1305 itself is fast (~16 Gbps theoretical), but per-packet overhead — replay protection, nonce handling, peer-table locking, skb juggling — caps a single peer-pair flow at ~1-2 Gbps on x86 Linux. **More peers in parallel scale linearly** because each peer has its own workqueue. A single greedy iperf3 stream measures the worst-case ceiling.
+Two things stack up:
 
-The Mellanox haswell numbers escape this because hardware NIC offloads (TSO/GSO/GRO) coalesce WG-encrypted segments into superframes that pass through the kernel work-queue with fewer per-packet trips.
+1. **gVNIC RSS hashes a single source IP to one queue.** All inbound packets from one peer land on one CPU's softirq.
+2. **Linux `wireguard` kernel module is single-threaded per-peer.** Even if RX were spread across queues, decrypt would funnel into one workqueue per peer.
+
+Together: one peer's flow is bounded by one receiver CPU's per-packet path. ~2.3 Gbit/s TCP, ~1 Gbit/s UDP on n2 Cascade Lake.
+
+### Per-peer scaling — adding peers actually works
+
+The fix is more peers, not bigger VMs. Each peer gets its own RX hash bucket *and* its own WG workqueue. Verified by adding a second WG interface (wg1) on its own port between the same two VMs:
+
+| peers | per-peer TCP | aggregate |
+| --- | --- | --- |
+| 1 (wg0 only) | 2.31 Gbit/s | 2.31 Gbit/s |
+| 2 (wg0 + wg1) | 2.36 + 2.35 Gbit/s | **4.71 Gbit/s** |
+| 4 (wg0..wg3) | 2.64 / 1.36 / 1.39 / 0.03 (one glitched) | **~5.4 Gbit/s** |
+
+Near-linear scaling at 2 peers; diminishing returns at 4 as we approach the cloud per-VM aggregate egress. The relay processed every packet via XDP cleanly through all of these.
+
+The Mellanox haswell numbers escape the single-CPU cap because hardware NIC offloads (TSO/GSO/GRO) and multi-queue RSS spread RX work, and on bare metal a single peer can hit 10 Gbit/s+ TCP because the per-packet overhead is amortised over GRO superframes. On gVNIC those offloads aren't as effective for UDP-encapsulated WG, which is why cloud per-peer ceilings are visible.
 
 GCP's per-flow caps are aggressive — single-flow throughput on n2-standard-4 is bracketed below the libvirt+virtio bench. Latency on the cloud VM is the lowest of any setup tested (0.60 ms) — same-zone GCP networking is fast and consistent. **Most importantly, the relay is so unloaded at the cap that scaling out to many concurrent peers should still see clean per-flow numbers** as long as the aggregate stays under the VM's egress limit.
 
