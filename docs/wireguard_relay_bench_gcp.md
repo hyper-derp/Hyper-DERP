@@ -8,9 +8,9 @@ Real-cloud characterization of `mode: wireguard` on GCP. Companion to [`wireguar
 - **Cloud bench numbers below are on `n2-standard-4`**, with native-mode XDP attached. RX=1 / TX=1 (gve XDP requires reserving half the channels for XDP_TX, and `n2-standard-4` has max 4 channels).
 - **The relay's per-CPU cost is small** — sustained 1 Gbit/s UDP forwarding burns ~2 % of one of the four vCPUs.
 - **The relay does its job cheaply.** BPF processing was at <2 % CPU at every operating point we measured. End-to-end overhead vs direct WG (no relay): <10 %.
-- **The single-peer ceiling on cloud is the upstream Linux `wireguard` kernel module's RX path.** Direct WG between two cloud VMs (no relay) hits the same wall — ~2.3 Gbit/s TCP, ~1 Gbit/s UDP, single-flow, with the receiver's CPU 0 pinned at 100 % softirq. That ceiling is WG, not us. We document it so operators know what to expect; raising it is a WG kernel-module question, not a relay question.
-- **Per-peer scaling works.** Adding a second WG peer between the same two VMs nearly doubles aggregate (2 × ~2.3 Gbit/s = 4.7 Gbit/s). The relay carries this transparently and stays at <2 % CPU.
-- **For higher single-peer numbers**: hardware NIC with multi-queue RSS + offloads. The on-prem haswell run in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md) hits 10.7 Gbit/s single-peer TCP on real silicon.
+- **The single-peer ceiling on cloud is gVNIC's NAPI poll on a single CPU**, ~2.3 Gbit/s TCP, ~1 Gbit/s UDP. With RPS enabled to fan post-RX work across cores, one CPU is still 100 % busy in the gve driver's NAPI/softirq loop — RX itself is the bottleneck, not WG decrypt. WG `padata` actually parallelises decrypt across CPUs fine; we can see it (multiple cores at sys%) once the packets get past RX. WG.ko is **not** single-threaded per peer. The cap is one layer below WG.
+- **Per-peer scaling works because each peer (different source IP) hashes to a different RX queue**, which lets a different CPU drive its NAPI loop. Adding a second WG peer between the same two VMs nearly doubles aggregate (2 × ~2.3 Gbit/s = 4.7 Gbit/s).
+- **For higher single-peer numbers**: hardware NIC with faster per-queue RX (and ideally hardware GRO). The on-prem haswell run in [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md) hits 10.7 Gbit/s single-peer TCP on Mellanox CX-4 LX — same kernel WG, same single-peer config, just a NIC whose NAPI poll drains 5× faster.
 
 ## Setup
 
@@ -98,7 +98,7 @@ Across the three platforms we benched:
 
 ### What's actually capping single-flow on cloud
 
-We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two cloud VMs, then profiling CPUs on both ends:
+We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two cloud VMs, then profiling CPUs with mpstat, then enabling RPS to spread post-RX work, then re-profiling:
 
 | topology | TCP single | UDP @ 5 G offered |
 | --- | --- | --- |
@@ -106,14 +106,27 @@ We bisected by running iperf3 over a *direct* WG tunnel (no relay) between two c
 | direct WG (peers point at each other) | 2.31 Gbit/s | 875 Mbit/s, 12 % loss |
 | WG via hyper-derp relay | 2.11 Gbit/s | ~900 Mbit/s, 12 % loss |
 
-Direct WG hits the same ceiling as relayed WG. The relay adds <10 % overhead. **The cap on the receiver is one CPU at 100 % softirq** (mpstat showed bob's CPU 0 pinned at 100 % during the run; alice's CPUs were 7-30 % each). That CPU is doing RX softirq + WG decrypt for the entire flow.
+Direct WG hits the same ceiling as relayed WG. The relay adds <10 % overhead.
 
-Two things stack up:
+**Where the bottleneck actually is** — with RPS enabled (`rps_cpus=ff` on each RX queue) so post-RX work spreads across all 8 CPUs, mpstat showed:
 
-1. **gVNIC RSS hashes a single source IP to one queue.** All inbound packets from one peer land on one CPU's softirq.
-2. **Linux `wireguard` kernel module is single-threaded per-peer.** Even if RX were spread across queues, decrypt would funnel into one workqueue per peer.
+```
+cpu=2   soft=100.0 sys=  0.0 idle=  0.0   <- gve NAPI poll, every sample
+cpu=0   soft=  2.8 sys= 18.3 idle=  0.0
+cpu=1   soft=  2.9 sys= 17.1 idle=  0.0
+cpu=3   soft=  1.2 sys= 21.9 idle=  0.0
+cpu=4   soft=  1.2 sys= 17.9 idle=  0.0
+cpu=5   soft=  1.4 sys= 37.0 idle=  0.0
+cpu=6   soft=  2.6 sys= 29.5 idle=  0.0
+cpu=7   soft=  1.3 sys= 22.4 idle=  0.0
+```
 
-Together: one peer's flow is bounded by one receiver CPU's per-packet path. ~2.3 Gbit/s TCP, ~1 Gbit/s UDP on n2 Cascade Lake.
+CPU 2 is pinned at 100 % softirq running gve's NAPI poll. The other 7 CPUs are doing 17-37 % sys (WG decrypt, TCP processing, copy-to-user) — that's WG `padata` parallelising decrypt across cores, **exactly the way it's supposed to.** TCP throughput stays at 2.13 Gbit/s because the NAPI poll feeds packets out faster than the per-queue receive throughput. **It's the gVNIC driver's single-CPU NAPI throughput that caps the flow, not WG.**
+
+Two things to take away:
+
+1. **gVNIC software-receive caps around 2 Gbit/s per RX queue per CPU.** That's a property of GCP's virtio-style virtual NIC implementation. RPS spreads downstream work but not the NAPI poll itself.
+2. **WireGuard kernel module is genuinely capable of more.** `padata` is doing what it's supposed to — once packets are past the NAPI bottleneck, decrypt parallelises across CPUs. The same kernel WG on real silicon (Mellanox CX-4 LX, see [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md)) hits 10.7 Gbit/s single-peer TCP. Same WG.ko, same single-peer config, just a NIC whose RX path drains ~5× faster per CPU.
 
 ### Per-peer scaling — adding peers actually works
 
