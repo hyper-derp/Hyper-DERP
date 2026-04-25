@@ -528,7 +528,10 @@ std::vector<std::string> SplitIfaceList(const std::string& s) {
   std::string cur;
   for (char c : s) {
     if (c == ',' || c == ' ') {
-      if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+      if (!cur.empty()) {
+        out.push_back(cur);
+        cur.clear();
+      }
     } else {
       cur += c;
     }
@@ -1021,7 +1024,10 @@ bool WgRelayPeerNic(WgRelay* r, const std::string& name,
   if (!nic.empty() && r->xdp.attached) {
     bool found = false;
     for (const auto& a : r->xdp.attachments) {
-      if (a.iface == nic) { found = true; break; }
+      if (a.iface == nic) {
+        found = true;
+        break;
+      }
     }
     if (!found) return false;
   }
