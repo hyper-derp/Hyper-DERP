@@ -147,6 +147,9 @@ endif()
 # ============================================================================
 install(TARGETS hyper-derp hd-wg hdctl derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test hd-scale-test-uring
   RUNTIME DESTINATION bin)
+install(PROGRAMS
+  ${CMAKE_SOURCE_DIR}/dist/hd-cli
+  DESTINATION bin)
 install(FILES
   ${CMAKE_BINARY_DIR}/bpf/wg_relay.bpf.o
   DESTINATION lib/hyper-derp)

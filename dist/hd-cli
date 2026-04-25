@@ -1,0 +1,44 @@
+#!/bin/sh
+# hd-cli — operator wrapper for hyper-derp.
+#
+# Calls `einheit` with the right adapter + IPC endpoints
+# so operators can drive the daemon without typing the
+# full einheit invocation. Drop-in replacement for what
+# operators were maintaining as a private wrapper before
+# hyper-derp 0.1.6.
+#
+# Runtime dependency: the `einheit` binary must be
+# installed and on PATH (or pointed at by $EINHEIT_BIN).
+# It's distributed by the einheit project; install it
+# from there before using this wrapper.
+#
+# Environment overrides (rarely needed):
+#   EINHEIT_BIN              path to einheit binary
+#   EINHEIT_ROLE             local-IPC role; default admin
+#   HD_RELAY_ENDPOINT        ROUTER endpoint URL
+#   HD_RELAY_EVENT_ENDPOINT  PUB endpoint URL
+#
+# The endpoint defaults match `dist/hyper-derp.yaml.example`'s
+# `einheit:` block; if you've changed those in your own yaml,
+# set the env vars to match.
+
+set -eu
+
+BIN="${EINHEIT_BIN:-$(command -v einheit 2>/dev/null || true)}"
+if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
+  cat >&2 <<'EOF'
+hd-cli: 'einheit' binary not found on PATH and $EINHEIT_BIN not set.
+
+The einheit CLI is a runtime dependency of hd-cli. Install it
+alongside hyper-derp (it ships separately as part of the
+einheit project) and ensure it is reachable on $PATH, or set
+$EINHEIT_BIN to the absolute path of the einheit binary.
+EOF
+  exit 127
+fi
+
+exec env "EINHEIT_ROLE=${EINHEIT_ROLE:-admin}" "$BIN" \
+    --adapter hd-relay \
+    --endpoint "${HD_RELAY_ENDPOINT:-ipc:///tmp/einheit/hd-relay.ctl}" \
+    --event-endpoint "${HD_RELAY_EVENT_ENDPOINT:-ipc:///tmp/einheit/hd-relay.pub}" \
+    "$@"
