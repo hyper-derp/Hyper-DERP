@@ -58,6 +58,12 @@ struct WgRelayPeer {
   /// Cumulative byte counters.
   uint64_t rx_bytes = 0;
   uint64_t fwd_bytes = 0;
+  /// Operator-assigned NIC name for this peer's L2
+  /// segment. Empty = use the first xdp_interface (the
+  /// default for backward-compatible single-NIC setups).
+  /// Populates the BPF peer entry's ifindex so
+  /// XDP_REDIRECT can pick the right egress NIC.
+  std::string nic;
 };
 
 /// One operator-declared forwarding link between two
@@ -79,13 +85,28 @@ struct WgRelayStats {
   std::atomic<uint64_t> drop_no_link{0};
 };
 
+/// One attached NIC. The same BPF program is attached to
+/// each entry; the maps are shared across them so MAC
+/// learning and peer lookups are global.
+struct WgXdpAttachment {
+  std::string iface;
+  int ifindex = 0;
+  uint8_t mac[6] = {0};
+  /// Primary IPv4 address on this NIC, network byte order.
+  /// Used as the egress source IP on cross-NIC redirect.
+  uint32_t ipv4_be = 0;
+};
+
 /// XDP fast-path state. Populated when wg_relay.xdp_interface
 /// is set in the config and the BPF program loads successfully.
 /// All fds are closed in WgRelayStop.
 struct WgXdpCtx {
   void* bpf_obj = nullptr;
   int prog_fd = -1;
-  int ifindex = 0;
+  /// One or more NICs the BPF program is attached to.
+  /// Iteration-1 single-NIC configs have one entry; the
+  /// dual-NIC XDP_REDIRECT topology has one per NIC.
+  std::vector<WgXdpAttachment> attachments;
   int peers_map_fd = -1;
   int macs_map_fd = -1;
   int stats_map_fd = -1;
@@ -94,6 +115,19 @@ struct WgXdpCtx {
   /// into per-peer rx_bytes/fwd_bytes in `wg peer list` so
   /// the operator sees XDP-path traffic alongside userspace.
   int peer_bytes_map_fd = -1;
+  /// Devmap (key = ifindex, value = ifindex) used for
+  /// cross-NIC redirect. Populated at attach with one
+  /// entry per attachment's ifindex.
+  int devmap_fd = -1;
+  /// NIC source-MAC map (key = ifindex, value = 6-byte
+  /// MAC). Populated at attach. The BPF program reads it
+  /// for the egress source MAC on cross-NIC redirect.
+  int nic_macs_map_fd = -1;
+  /// NIC primary-IPv4 map (key = ifindex, value = u32 IP
+  /// in network byte order). Used for the egress source
+  /// IP on cross-NIC redirect, since WG peers silently
+  /// drop packets whose src endpoint doesn't match.
+  int nic_ips_map_fd = -1;
   bool attached = false;
 };
 
@@ -144,6 +178,12 @@ bool WgRelayPeerAdd(WgRelay* r, const std::string& name,
                      const std::string& label);
 bool WgRelayPeerKey(WgRelay* r, const std::string& name,
                      const std::string& pubkey_b64);
+/// Pin a peer to a specific NIC for XDP_REDIRECT. The NIC
+/// must be one of the names in wg_relay.xdp_interface or
+/// the call is rejected. Empty `nic` clears the binding
+/// (peer falls back to the first attached NIC).
+bool WgRelayPeerNic(WgRelay* r, const std::string& name,
+                     const std::string& nic);
 bool WgRelayPeerRemove(WgRelay* r,
                         const std::string& name);
 bool WgRelayLinkAdd(WgRelay* r, const std::string& a,

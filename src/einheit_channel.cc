@@ -1785,6 +1785,24 @@ void WgPeerKey(Server* s, const Request& req,
                           req.args[0]));
 }
 
+void WgPeerNic(Server* s, const Request& req, Response* r) {
+  if (!WgGate(s, r)) return;
+  if (!RequireArg(req, 0, "name", r)) return;
+  // Empty nic clears the binding; allow that with one
+  // positional arg.
+  std::string nic = req.args.size() > 1 ? req.args[1] : "";
+  if (!WgRelayPeerNic(s->wg_relay, req.args[0], nic)) {
+    r->status = ResponseStatus::kError;
+    r->error = ErrorOf(
+        "wg_peer_nic_failed",
+        "unknown peer name, or NIC not in xdp_interface "
+        "list");
+    return;
+  }
+  SetBody(r, std::format("peer={}\nnic={}\n", req.args[0],
+                          nic));
+}
+
 void WgPeerRemove(Server* s, const Request& req,
                   Response* r) {
   if (!WgGate(s, r)) return;
@@ -2121,6 +2139,16 @@ Registry MakeRegistry() {
                           "a peer (metadata only, used by "
                           "`wg show config`)",
                           false, wg_peer_key_args};
+  const std::vector<ArgInfo> wg_peer_nic_args = {
+      {"name", "peer name", true},
+      {"nic",
+       "NIC name from wg_relay.xdp_interface (omit to clear)",
+       false}};
+  m["wg_peer_nic"] = {WgPeerNic, Role::kOperator,
+                       "wg peer nic",
+                       "Pin a peer to a specific NIC (for "
+                       "dual-NIC XDP_REDIRECT topologies)",
+                       false, wg_peer_nic_args};
   m["wg_peer_remove"] = {WgPeerRemove, Role::kOperator,
                           "wg peer remove",
                           "Remove a peer (and any links "
