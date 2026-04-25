@@ -6,6 +6,314 @@ The clients run vanilla WireGuard. They don't know `hyper-derp` exists; they jus
 
 > Not the same product as the HD-aware path (`mode: derp` and `hd-wg`). See [hd_wg.md](hd_wg.md) for that. They can coexist on different ports; this doc covers `mode: wireguard` only.
 
+This doc has two halves:
+
+- **[Quickstart from a fresh box](#quickstart-from-a-fresh-box)** — linear copy-paste walkthrough, ~15 minutes from clean Debian.
+- **Reference** — [mental model](#mental-model), [XDP fast path](#xdp-fast-path), [performance](#performance-direct-vs-userspace-vs-xdp), [ops](#operations), [what the relay deliberately doesn't do](#what-the-relay-deliberately-does-not-do). Read after the quickstart, or as needed.
+
+---
+
+## Quickstart from a fresh box
+
+Three Linux boxes:
+
+- **`relay`** — runs `hyper-derp` in `mode: wireguard`. Public IP reachable from both clients.
+- **`alice`** — first WG client. Stock `wg-quick`. Inner tunnel IP `10.99.0.1`.
+- **`bob`** — second WG client. Stock `wg-quick`. Inner tunnel IP `10.99.0.2`.
+
+The procedure below is copy-paste in order. Where placeholders appear (`<RELAY-IP>`, `<ALICE-IP>`, `<BOB-IP>`) substitute the real public-or-routable IPs of each host before pasting.
+
+### 0. Prerequisites
+
+On the relay and both clients:
+
+- Linux kernel **6.6 or newer** (XDP support; older kernels fall back to userspace forwarding which still works but is slower — see [performance](#performance-direct-vs-userspace-vs-xdp)).
+- Debian 12+/13+ or any equivalent distro. The daemon is C++23 + libbpf + libsodium; if you're on RHEL-family substitute the package manager and dependency names accordingly.
+- `sudo` available.
+- The relay needs to permit inbound UDP on port 51820 from the client IPs (firewall, security group, whatever).
+
+Install the runtime dependencies on each box:
+
+```bash
+sudo apt update
+sudo apt install -y wireguard-tools iperf3 ethtool
+```
+
+`wireguard-tools` is required on the clients (not the relay). `iperf3` and `ethtool` are useful for verification + debugging.
+
+### 1. Install `hyper-derp` on the relay
+
+Two paths: installing the deb from a release artifact, or building from source.
+
+**(a) From a release deb**, if you have one:
+
+```bash
+sudo apt install -y /path/to/hyper-derp_<version>_amd64.deb
+```
+
+The deb installs:
+
+- `/usr/bin/hyper-derp` — the daemon
+- `/usr/bin/einheit` — bundled operator CLI (the deb pulls it in so you don't manage it separately)
+- `/usr/bin/hd-cli` — convenience wrapper around `einheit` with the right adapter + IPC endpoints pre-wired
+- `/etc/hyper-derp/hyper-derp.yaml.example` — example config
+- `/usr/lib/hyper-derp/wg_relay.bpf.o` — the XDP BPF program (optional, used only when `xdp_interface` is set)
+- `/usr/lib/systemd/system/hyper-derp.service` — systemd unit (enabled by default)
+- `/usr/lib/systemd/system/hyper-derp.service.d/wg-mode.conf` — vendored drop-in granting `CAP_BPF` / `CAP_NET_ADMIN` / `AF_NETLINK` and `StateDirectory=hyper-derp`. Active by default; harmless in DERP mode (extra caps granted but not exercised). Override at `/etc/systemd/system/hyper-derp.service.d/wg-mode.conf` if you want to mask it
+- `/usr/share/hyper-derp/hd_chafa` — branded chafa logo for the `hd-cli` interactive welcome banner. Used automatically; `hd-cli` exports `EINHEIT_LOGO_PATH` pointing at this file when launching `einheit`. To suppress, `unset EINHEIT_LOGO_PATH` before invoking `hd-cli`
+
+The deb's `postinst` also creates `/tmp/einheit` (mode 1777) for IPC sockets and `modprobe`s `tls` + `wireguard`. Nothing else to set up before step 3.
+
+**(b) From source** if you don't have a deb:
+
+```bash
+git clone https://github.com/hyper-derp/Hyper-DERP.git
+cd Hyper-DERP
+sudo apt install -y cmake clang libbpf-dev libsodium-dev libzmq3-dev libssl-dev
+cmake --preset default && cmake --build build -j
+sudo cmake --install build
+```
+
+After install, sanity-check:
+
+```bash
+hyper-derp --version
+# expected: hyper-derp 0.1.x
+```
+
+### 2. Configure the relay
+
+Write the relay yaml at `/etc/hyper-derp/hyper-derp.yaml`:
+
+```bash
+sudo tee /etc/hyper-derp/hyper-derp.yaml >/dev/null <<'EOF'
+mode: wireguard
+wg_relay:
+  port: 51820
+  roster_path: /var/lib/hyper-derp/wg-roster
+  # Uncomment to attach the XDP fast path; needs an
+  # XDP-capable NIC. The systemd unit already grants
+  # CAP_BPF + AF_NETLINK via the bundled wg-mode.conf
+  # drop-in, so just flipping these on is enough.
+  # xdp_interface: eth0
+  # xdp_bpf_obj_path: /usr/lib/hyper-derp/wg_relay.bpf.o
+log_level: info
+einheit:
+  ctl_endpoint: ipc:///tmp/einheit/hd-relay.ctl
+  pub_endpoint: ipc:///tmp/einheit/hd-relay.pub
+EOF
+```
+
+That's it for relay-side config. The deb already shipped:
+
+- the systemd unit + drop-in granting the WG/XDP capabilities,
+- `/tmp/einheit` (mode 1777) for the IPC sockets,
+- `wireguard` and `tls` modules loaded.
+
+If you keep `einheit` somewhere unusual, set `$EINHEIT_BIN` in `/etc/profile.d/hyper-derp.sh`; `hd-cli` defaults to the bundled `/usr/bin/einheit`.
+
+### 3. Start the relay daemon
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart hyper-derp
+sudo journalctl -u hyper-derp -n 20 --no-pager
+```
+
+You want to see lines like:
+
+```
+hyper-derp starting in wireguard relay mode on UDP :51820
+wg-relay listening on UDP :51820 (0 peers, 0 links, xdp=off)
+einheit channel ready on ipc:///tmp/einheit/hd-relay.ctl
+einheit channel listening on ipc:///tmp/einheit/hd-relay.ctl
+```
+
+If `xdp_interface` was set, the line just before "listening" should also read `wg-relay xdp: attached on <iface> (mode=native)` (or `mode=generic` on drivers without native XDP support).
+
+Test that the operator CLI can reach the daemon:
+
+```bash
+sudo hd-cli wg show
+```
+
+Should print a small key/value table with `port=51820`, `peer_count=0`, `link_count=0`, `xdp_attached=false` (or `true` if you enabled XDP). If you get `oneshot: no matching command` or `Connection refused`, see [common errors](#common-errors-and-what-to-check-first).
+
+### 4. Set up the first WG client (`alice`)
+
+On `alice`:
+
+```bash
+# Generate a key pair
+wg genkey | tee alice.priv | wg pubkey > alice.pub
+chmod 600 alice.priv
+
+# Note alice's public key — you'll paste it into bob's config later
+cat alice.pub
+```
+
+Write `/etc/wireguard/wg0.conf`:
+
+```bash
+sudo tee /etc/wireguard/wg0.conf >/dev/null <<EOF
+[Interface]
+PrivateKey = $(cat alice.priv)
+Address    = 10.99.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey           = <BOB-PUBLIC-KEY>          # filled in step 6
+AllowedIPs          = 10.99.0.2/32
+Endpoint            = <RELAY-IP>:51820
+PersistentKeepalive = 25
+EOF
+```
+
+`<RELAY-IP>` is the relay box's public IP. Don't bring `wg0` up yet — bob's pubkey isn't known.
+
+### 5. Set up the second WG client (`bob`)
+
+On `bob`:
+
+```bash
+wg genkey | tee bob.priv | wg pubkey > bob.pub
+chmod 600 bob.priv
+cat bob.pub
+```
+
+Write `/etc/wireguard/wg0.conf`:
+
+```bash
+sudo tee /etc/wireguard/wg0.conf >/dev/null <<EOF
+[Interface]
+PrivateKey = $(cat bob.priv)
+Address    = 10.99.0.2/24
+ListenPort = 51820
+
+[Peer]
+PublicKey           = $(cat /path/to/alice.pub)   # paste alice's public key here
+AllowedIPs          = 10.99.0.1/32
+Endpoint            = <RELAY-IP>:51820
+PersistentKeepalive = 25
+EOF
+```
+
+Now go back to `alice` and fill in `<BOB-PUBLIC-KEY>` in her wg0.conf with the contents of `bob.pub`.
+
+Bring up the WG interface on both:
+
+```bash
+# on alice
+sudo wg-quick up wg0
+
+# on bob
+sudo wg-quick up wg0
+```
+
+`wg-quick` automatically picks an `MTU` based on the route to the peer's endpoint, so on cloud NICs (gVNIC, etc.) it'll land on 1380 instead of the default 1420. That avoids the WG-fragmenting-on-1460-MTU footgun. Don't set `MTU =` manually unless you know your underlay needs it.
+
+Don't expect ping to work yet — the relay doesn't know about these peers.
+
+### 6. Register peers + link on the relay
+
+On the relay box:
+
+```bash
+# Use whatever IPs the relay actually sees alice and bob coming from.
+# In a typical NAT-free setup these are alice's and bob's public IPs.
+# If clients are behind NAT, use the post-NAT addresses (you may need
+# to inspect tcpdump on the relay to figure them out).
+sudo hd-cli wg peer add alice <ALICE-IP>:51820 alice-laptop
+sudo hd-cli wg peer add bob   <BOB-IP>:51820   bob-laptop
+sudo hd-cli wg link add alice bob
+```
+
+**Optional but recommended:** also paste each peer's WG public key into the relay. The relay never inspects it, but it lets `wg show config` render a complete `[Peer]` block on demand for clients you onboard later:
+
+```bash
+sudo hd-cli wg peer pubkey alice "$(cat /path/to/alice.pub)"
+sudo hd-cli wg peer pubkey bob   "$(cat /path/to/bob.pub)"
+```
+
+Verify the relay's view:
+
+```bash
+sudo hd-cli wg peer list
+sudo hd-cli wg link list
+sudo hd-cli wg show
+```
+
+`wg show` should now read `peer_count=2`, `link_count=1`. The packet counters are still zero — we haven't sent anything.
+
+### 7. Test with ping
+
+On `alice`:
+
+```bash
+ping -c 4 10.99.0.2
+```
+
+Should report `4 received, 0% packet loss`. Latency depends on path; same-region cloud is typically <1 ms.
+
+Verify the relay actually saw the traffic:
+
+```bash
+sudo hd-cli wg show
+```
+
+`rx_packets`/`fwd_packets` should be non-zero and equal (every received packet was forwarded). If XDP is attached, `xdp_fwd_packets` carries the bulk and the userspace `rx_packets`/`fwd_packets` only show the cold-start (first 1-2 packets per direction before MAC learning completes).
+
+That's the relay working end-to-end. From here you can run real workloads over `10.99.0.0/24`, scale to more peers (each gets their own `wg peer add`), or move on to the reference sections below.
+
+### 8. Render a wg-quick `[Peer]` block for new clients
+
+Once you've stamped a peer's pubkey via `wg peer pubkey`, the relay can render a ready-to-paste `[Peer]` block for any client who needs to talk to that peer:
+
+```bash
+sudo hd-cli wg show config alice <RELAY-IP>:51820
+```
+
+The second argument is the relay's advertised host:port — i.e. what should appear in the rendered `Endpoint =` line. Output looks like:
+
+```
+[Interface]
+# PrivateKey = (paste your `wg genkey` output)
+# Address    = (your tunnel IP, e.g. 10.99.0.1/24)
+ListenPort   = 51820
+
+# bob (bob-laptop)
+[Peer]
+PublicKey           = <bob's-pubkey>
+AllowedIPs          = (your call)
+Endpoint            = <RELAY-IP>:51820
+PersistentKeepalive = 25
+```
+
+The `[Interface]` block has placeholders because the relay has no business assigning tunnel IPs or holding private keys. The `[Peer]` block is concrete and copy-pasteable.
+
+---
+
+## Common errors and what to check first
+
+| symptom | cause | fix |
+| --- | --- | --- |
+| `hd-cli: command not found` | the `hyper-derp` deb isn't installed (or you removed it) | reinstall the deb — `hd-cli` and the bundled `einheit` ship together |
+| `oneshot: no matching command` from `hd-cli` | daemon not running, or IPC socket dir not shared | check `journalctl -u hyper-derp`; ensure `/tmp/einheit/` is mode 1777 (postinst creates it; if missing run `sudo install -d -m 1777 /tmp/einheit`) |
+| daemon exits immediately, `journalctl` shows `code=killed, status=31/SYS` | seccomp killed `bpf()` | the bundled `wg-mode.conf` drop-in must be present at `/lib/systemd/system/hyper-derp.service.d/`. If you masked it, restore by `sudo rm /etc/systemd/system/hyper-derp.service.d/wg-mode.conf` and `daemon-reload` |
+| daemon logs `wg-relay xdp: BPF load failed: Permission denied` | `CAP_BPF`/`CAP_NET_ADMIN` not in `AmbientCapabilities` | the bundled drop-in adds these; check it isn't masked, then `daemon-reload` + restart |
+| daemon logs `wg-relay xdp: attach to <iface> failed: Address family not supported by protocol` | `RestrictAddressFamilies` blocks `AF_NETLINK` (libbpf attaches via netlink) | the bundled drop-in includes `AF_NETLINK`; same check as above |
+| daemon logs `wg-relay xdp: 'XXX' has no IPv4 — cross-NIC redirect to it will fall back to userspace` | NIC has no v4 address (yet) | bring the NIC up with `ip addr add ...` before starting the daemon, or restart after IP comes up |
+| daemon logs `XDP load failed: ... should be less than or equal to half the maximum number of RX/TX queues` (gVNIC) | gve XDP requires reserving half the channels for XDP_TX | `sudo ethtool -L <iface> rx 1 tx 1` (or `rx 2 tx 2` on bigger machines), then restart |
+| `xdp: Operation not supported` (gVNIC on c3/c3d/c4/n4/h3/h4) | DQO_RDA queue format doesn't have XDP support in upstream gve yet | leave `xdp_interface` empty, run on the userspace path |
+| ping works but TCP throughput collapses | underlying NIC has MTU < 1500 (e.g. gVNIC's 1460); WG packets fragment | use `wg-quick` (auto-detects path MTU), or `ip link set wg0 mtu 1380` manually |
+| ping fails, relay's `xdp_pass_no_peer` or `drop_unknown_src` increments | the source 4-tuple of incoming WG packets doesn't match what you registered (NAT?) | run `tcpdump -i <relay-iface> udp port 51820` on the relay; the source ip:port you see is what to register |
+| ping fails, relay's `drop_no_link` increments | peers registered, link not added | `hd-cli wg link add <a> <b>` |
+| `wg peer key` returns `oneshot: no matching command` | the einheit CLI's oneshot parser conflates `key` with its arg slot | use the longer form `wg peer pubkey` (we registered both names; this is documented) |
+
+If you're stuck somewhere not on this list, capture `journalctl -u hyper-derp -n 50 --no-pager` and `sudo hd-cli wg show` and `sudo tcpdump -i <relay-iface> -nn -c 20 udp port 51820` and check for whichever is the obvious mismatch.
+
+---
+
 ## Mental model
 
 ```
@@ -19,234 +327,14 @@ The clients run vanilla WireGuard. They don't know `hyper-derp` exists; they jus
             │     mode: wireguard, :51820       │
             │                                    │
             │   peer table (operator-set):       │
-            │     alice  192.168.122.189:51820   │
-            │     bob    192.168.122.239:51820   │
+            │     alice  <ALICE-IP>:51820        │
+            │     bob    <BOB-IP>:51820          │
             │   link table:                      │
             │     alice ↔ bob                    │
             └────────────────────────────────────┘
 ```
 
 Forwarding rule: a packet whose source 4-tuple matches a registered peer's pinned endpoint is sent to that peer's link partner's endpoint. Iteration-1 invariant — each peer is in **at most one link** so the destination is unambiguous from the source alone. Multi-link mesh routing is future work.
-
-## Relay setup
-
-### Config
-
-Drop a yaml at `/etc/hyper-derp/hyper-derp.yaml` (or wherever the systemd unit points):
-
-```yaml
-mode: wireguard
-wg_relay:
-  port: 51820
-  roster_path: /var/lib/hyper-derp/wg-roster
-log_level: info
-einheit:
-  ctl_endpoint: ipc:///tmp/einheit/hd-relay.ctl
-  pub_endpoint: ipc:///tmp/einheit/hd-relay.pub
-```
-
-`mode: wireguard` skips the entire DERP/HD plumbing — no TLS, no kTLS, no HD peers, no metrics server. The daemon binds the single UDP port in `wg_relay.port` and runs the einheit channel for operator commands. `roster_path` is rewritten atomically on every successful `wg peer add` / `wg link add` and reloaded on startup.
-
-You can pre-seed peers + links from yaml; entries here win on name collisions during reload:
-
-```yaml
-wg_relay:
-  port: 51820
-  roster_path: /var/lib/hyper-derp/wg-roster
-  peers:
-    - { name: alice, endpoint: 192.168.122.189:51820, label: alice-laptop }
-    - { name: bob,   endpoint: 192.168.122.239:51820, label: bob-laptop }
-  links:
-    - { a: alice, b: bob }
-```
-
-### Systemd drop-in
-
-The shipped `hyper-derp.service` is hardened for the DERP path: `DynamicUser=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`. With those defaults the daemon **cannot** write `/var/lib/hyper-derp/wg-roster` (no state dir) and the einheit IPC under `/tmp/einheit/` is invisible to anything else on the host (private namespace). You need a small drop-in to make WG mode actually usable:
-
-```bash
-sudo systemctl edit hyper-derp
-```
-
-```ini
-[Service]
-# Writable state dir for the wg roster.
-# Becomes /var/lib/hyper-derp owned by the DynamicUser
-# (and bind-mounted to /var/lib/private/hyper-derp on
-# disk; both paths are stable across DynamicUser
-# rotations).
-StateDirectory=hyper-derp
-
-# Share /tmp/einheit between the daemon's PrivateTmp
-# namespace and the host so hd-cli can reach the IPC
-# socket. Keeps the rest of /tmp private.
-BindPaths=/tmp/einheit
-
-# UMask=000 so ZeroMQ creates the IPC sockets mode 0775
-# rather than 0755. Without it, hd-cli (running as your
-# operator user) cannot connect to a socket owned by the
-# daemon's per-instance DynamicUser. /tmp/einheit is a
-# host-local control plane, not a security boundary.
-UMask=000
-
-# Unlink stale IPC socket files from a previous instance
-# before binding; otherwise ZeroMQ fails with
-# EADDRINUSE on the .pub socket.
-ExecStartPre=/bin/rm -f /tmp/einheit/hd-relay.ctl /tmp/einheit/hd-relay.pub
-```
-
-Then create the shared IPC dir once (host side, before first start) — mode 1777 because the daemon's DynamicUser and your operator user both need to drop sockets there:
-
-```bash
-sudo install -d -m 1777 /tmp/einheit
-```
-
-### Start it
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart hyper-derp
-journalctl -u hyper-derp -n 20 --no-pager
-```
-
-You want lines like:
-
-```
-hyper-derp starting in wireguard relay mode on UDP :51820
-wg-relay listening on UDP :51820 (0 peers, 0 links)
-einheit channel listening on ipc:///tmp/einheit/hd-relay.ctl
-```
-
-### Running outside systemd (dev/fleet testing)
-
-For test rigs you can skip systemd entirely and run the binary directly under any user that owns the roster path and `/tmp/einheit/`:
-
-```bash
-nohup hyper-derp --config ./hyper-derp.yaml > hyper-derp.log 2>&1 &
-```
-
-This is what the in-tree fleet test (`hd-r2`) uses; it sidesteps every hardening interaction at the cost of the protections the systemd unit gives you.
-
-## Operator workflow (hyper-derp CLI)
-
-All mutations happen through the hyper-derp CLI. From the relay host:
-
-```bash
-hd-cli wg peer add alice 192.168.122.189:51820 alice-laptop
-hd-cli wg peer add bob   192.168.122.239:51820 bob-laptop
-hd-cli wg link add alice bob
-```
-
-That's enough for forwarding to start. The clients can begin sending traffic the moment those three commands return — the relay matches the source endpoint, looks up the link, and forwards.
-
-To see what's there:
-
-```bash
-hd-cli wg peer list      # name, endpoint, pubkey, link, counters
-hd-cli wg link list      # configured A↔B pairs
-hd-cli wg show           # aggregate counters + roster size
-```
-
-### Optional: pubkey for `show config`
-
-You can also paste each peer's WireGuard public key (base64, as `wg genkey | wg pubkey` emits) into the relay. **The relay never inspects this** — it's purely metadata that lets `wg show config` render a complete `[Peer]` block for the operator to copy onto a client.
-
-```bash
-hd-cli wg peer pubkey alice 2R7TcAy1njtLPGr0Eu/RWvVcYoDADXZERFfPA7nIJhs=
-hd-cli wg peer pubkey bob   +9/gqzMIAGlsHZ1Y6c5ji02v4ymdwnGOoVEonN3uWiY=
-```
-
-> The path is `wg peer pubkey`, not `wg peer key` — the einheit CLI's oneshot parser conflates the bare token `key` with its standard `key=...` arg slot. Interactive mode handles either, but oneshot needs the longer name.
-
-### Render a wg-quick `[Peer]` block
-
-```bash
-hd-cli wg show config alice 192.168.122.83:51820
-```
-
-The second argument is the relay's advertised host:port — what you want to appear in the rendered `Endpoint =` line.
-
-Before you've set the partner's pubkey, the output reminds you to do it:
-
-```
-[Interface]
-# PrivateKey = (paste your `wg genkey` output)
-# Address    = (your tunnel IP, e.g. 10.99.0.1/24)
-ListenPort   = 51820
-
-# bob (bob-laptop)
-[Peer]
-# PublicKey           = (set with `wg peer pubkey bob <pubkey>` on the relay)
-AllowedIPs          = (your call)
-Endpoint            = 192.168.122.83:51820
-PersistentKeepalive = 25
-```
-
-After `wg peer pubkey bob <pubkey>` the `[Peer]` block is complete:
-
-```
-[Peer]
-PublicKey           = +9/gqzMIAGlsHZ1Y6c5ji02v4ymdwnGOoVEonN3uWiY=
-AllowedIPs          = (your call)
-Endpoint            = 192.168.122.83:51820
-PersistentKeepalive = 25
-```
-
-The `[Interface]` block has placeholders because the relay has no business assigning tunnel IPs or holding private keys — that's between the WG peers and the operator running them.
-
-## Client setup (stock wg-quick)
-
-On each client, write `/etc/wireguard/wg0.conf`:
-
-```ini
-# alice — /etc/wireguard/wg0.conf
-[Interface]
-PrivateKey = <alice-private-key>
-Address    = 10.99.0.1/24
-ListenPort = 51820
-
-[Peer]
-PublicKey           = <bob-public-key>
-AllowedIPs          = 10.99.0.2/32
-Endpoint            = <relay-public-ip>:51820
-PersistentKeepalive = 25
-```
-
-```ini
-# bob — /etc/wireguard/wg0.conf
-[Interface]
-PrivateKey = <bob-private-key>
-Address    = 10.99.0.2/24
-ListenPort = 51820
-
-[Peer]
-PublicKey           = <alice-public-key>
-AllowedIPs          = 10.99.0.1/32
-Endpoint            = <relay-public-ip>:51820
-PersistentKeepalive = 25
-```
-
-The two `Endpoint =` lines both point at the relay. Each peer's `[Peer] PublicKey` is the **other client's** key, not the relay's — the relay does not terminate the tunnel.
-
-Bring it up:
-
-```bash
-sudo wg-quick up wg0
-```
-
-Verify:
-
-```bash
-ping 10.99.0.2     # from alice
-sudo wg show       # latest handshake should be recent, transfer should grow
-```
-
-On the relay:
-
-```bash
-hd-cli wg show
-# rx_packets and fwd_packets climb in lockstep; drops stay at 0.
-```
 
 ## Hard requirement: pinned source endpoints
 
@@ -262,6 +350,55 @@ sudo tcpdump -i any -nn udp port 51820
 ```
 
 Each accepted packet should produce two lines — one inbound from a client, one outbound to its link partner. If you only see the inbound, either the source doesn't match a registered peer (`drop_unknown_src`) or the peer has no link (`drop_no_link`).
+
+## XDP fast path
+
+When `wg_relay.xdp_interface` is set, the daemon attaches a BPF program at the NIC ingress hook. The fast-path handles forwarding entirely in the kernel: source-endpoint lookup → MAC learning → header rewrite → `XDP_TX` back out the same NIC. The userspace recv loop stays running and is the cold-start fallback for any packet whose partner MAC has not yet been observed (typically the first one or two packets of a new session).
+
+Single-NIC setup (uses `XDP_TX` to bounce out the ingress NIC):
+
+```yaml
+mode: wireguard
+wg_relay:
+  port: 51820
+  roster_path: /var/lib/hyper-derp/wg-roster
+  xdp_interface: eth0
+  # Optional. Defaults to the deb-installed location.
+  # xdp_bpf_obj_path: /usr/lib/hyper-derp/wg_relay.bpf.o
+```
+
+Dual-NIC setup (uses `XDP_REDIRECT` between two NICs, one per peer):
+
+```yaml
+mode: wireguard
+wg_relay:
+  port: 51820
+  roster_path: /var/lib/hyper-derp/wg-roster
+  xdp_interface: ens4f0,ens4f1     # comma-separated
+```
+
+After registering each peer, pin it to one of the NICs:
+
+```bash
+hd-cli wg peer nic alice ens4f0
+hd-cli wg peer nic bob   ens4f1
+```
+
+If `xdp_interface` is absent or the program fails to load, the daemon logs the failure and falls through to the userspace-only path — correctness is unchanged.
+
+### Counters under XDP
+
+`wg show` adds four counters when XDP is attached:
+
+| field | meaning |
+| --- | --- |
+| `xdp_attached` | true if the BPF program is live |
+| `xdp_rx_packets` | total UDP packets the program saw on `port` |
+| `xdp_fwd_packets` | packets forwarded via `XDP_TX` / `XDP_REDIRECT` |
+| `xdp_pass_no_peer` | source endpoint not registered (userspace counts this as `drop_unknown_src` instead) |
+| `xdp_pass_no_mac` | source registered but partner MAC not yet learned; userspace `fwd_packets` should pick these up |
+
+A healthy active tunnel has `xdp_pass_no_mac` at 1 or 2 (the cold-start packets) and stays there; everything afterwards goes via `XDP_TX` / `XDP_REDIRECT`.
 
 ## Operations
 
@@ -293,79 +430,32 @@ Under the systemd unit, `/var/lib/hyper-derp` is created and owned by the Dynami
 
 | field | meaning |
 | --- | --- |
-| `rx_packets` | UDP datagrams received on the relay's port |
-| `fwd_packets` | datagrams forwarded to a registered partner |
-| `drop_unknown_src` | source 4-tuple did not match any peer |
-| `drop_no_link` | source matched a peer but it has no link |
+| `rx_packets` | UDP datagrams received on the relay's port (userspace path) |
+| `fwd_packets` | datagrams forwarded by the userspace path |
+| `drop_unknown_src` | userspace saw a packet whose source 4-tuple matches no peer |
+| `drop_no_link` | userspace saw a packet from a registered peer that has no link |
 
-`drop_unknown_src` is the most common signal of a misconfigured client — usually a missing `ListenPort` or NAT-rewritten source.
+When XDP is attached, the userspace counters only count cold-start fallbacks; the bulk of traffic moves via the `xdp_*` counters described above.
 
-## XDP fast path
+`drop_unknown_src` (or `xdp_pass_no_peer`) is the most common signal of a misconfigured client — usually a missing `ListenPort` or NAT-rewritten source.
 
-When `wg_relay.xdp_interface` is set, the daemon attaches a BPF program at the NIC ingress hook. The fast-path handles forwarding entirely in the kernel: source-endpoint lookup → MAC learning → header rewrite → `XDP_TX` back out the same NIC. The userspace recv loop stays running and is the cold-start fallback for any packet whose partner MAC has not yet been observed (typically the first one or two packets of a new session).
+### Running outside systemd (dev / test rigs)
 
-### Yaml
+For test rigs you can skip systemd entirely and run the binary directly under any user that owns the roster path and `/tmp/einheit/`:
 
-```yaml
-mode: wireguard
-wg_relay:
-  port: 51820
-  roster_path: /var/lib/hyper-derp/wg-roster
-  xdp_interface: enp1s0
-  # Optional. Defaults to the deb-installed location.
-  # xdp_bpf_obj_path: /usr/lib/hyper-derp/wg_relay.bpf.o
+```bash
+sudo bash -c 'umask 000; nohup /usr/bin/hyper-derp --config /etc/hyper-derp/hyper-derp.yaml > /tmp/hyper-derp.log 2>&1 < /dev/null & disown'
 ```
 
-If `xdp_interface` is absent or the program fails to load, the daemon logs the failure and falls through to the userspace-only path — correctness is unchanged.
-
-### Systemd capabilities
-
-XDP needs three additions to the wg-mode drop-in:
-
-```ini
-[Service]
-# CAP_BPF: load + manage BPF maps and programs.
-# CAP_NET_ADMIN: attach the program to a NIC.
-# CAP_SYS_NICE: pre-existing, kept for SQPOLL.
-AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_SYS_NICE
-
-# bpf() is not in @system-service.
-SystemCallFilter=bpf
-
-# libbpf attaches XDP via netlink.
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
-```
-
-After `systemctl daemon-reload && systemctl restart hyper-derp` the log should read:
-
-```
-wg-relay xdp: attached on enp1s0 (ifindex=2, mode=native)
-wg-relay listening on UDP :51820 (... xdp=on)
-```
-
-`mode=native` means the driver supports XDP directly. `mode=generic` is the SKB-mode fallback — works on any driver but pays the SKB allocation cost; verify the driver if performance matters.
-
-### Counters under XDP
-
-`wg show` adds four counters when XDP is attached:
-
-| field | meaning |
-| --- | --- |
-| `xdp_attached` | true if the BPF program is live |
-| `xdp_rx_packets` | total UDP packets the program saw on `port` |
-| `xdp_fwd_packets` | packets forwarded via `XDP_TX` |
-| `xdp_pass_no_peer` | source endpoint not registered (userspace counts this as `drop_unknown_src` instead) |
-| `xdp_pass_no_mac` | source registered but partner MAC not yet learned; userspace `fwd_packets` should pick these up |
-
-A healthy active tunnel has `xdp_pass_no_mac` at 1 or 2 (the cold-start packets) and stays there; everything afterwards goes via `XDP_TX`.
+This is what the in-tree fleet test (`tests/integration/wg_relay_fleet.sh`) uses; it sidesteps every hardening interaction at the cost of the protections the systemd unit gives you.
 
 ## Performance: direct vs userspace vs XDP
 
-Numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream. Native-mode XDP attaches on `virtio_net`.
+Numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream. Native-mode XDP attaches on `virtio_net`. See [`wireguard_relay_bench.md`](wireguard_relay_bench.md) and [`wireguard_relay_bench_25g.md`](wireguard_relay_bench_25g.md) for the full bench reports including 25 GbE silicon and GCP cloud comparisons.
 
 ### Tune the receiver before measuring
 
-The first iteration of these numbers was misleading at high rates because XDP_TX delivers packets in tighter softirq bursts than direct WG decryption does, and that burstiness overflowed iperf3's UDP receive socket on c2 (`/proc/net/snmp` `Udp.RcvbufErrors` accounted for ~88 % of the apparent XDP "loss" at 500 Mbit/s and 1 Gbit/s). Always raise the receiver-side socket buffer for clean numbers:
+The first iteration of these numbers was misleading at high rates because XDP_TX delivers packets in tighter softirq bursts than direct WG decryption does, and that burstiness overflowed iperf3's UDP receive socket on the receiver (`/proc/net/snmp` `Udp.RcvbufErrors` accounted for ~88 % of the apparent XDP "loss" at 500 Mbit/s and 1 Gbit/s). Always raise the receiver-side socket buffer for clean numbers:
 
 ```bash
 # on the iperf3 server side
@@ -435,7 +525,7 @@ When chasing residual loss, snapshot before/after:
 
 ```bash
 # relay
-sudo /usr/sbin/ethtool -S enp1s0 | \
+sudo /usr/sbin/ethtool -S <iface> | \
     grep -E 'rx_xdp_packets|rx_xdp_drops|tx_xdp_tx|tx_xdp_tx_drops'
 
 # receiver

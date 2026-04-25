@@ -1,0 +1,61 @@
+#!/bin/sh
+# hd-cli — operator wrapper for hyper-derp.
+#
+# Calls `einheit` with the right adapter + IPC endpoints
+# so operators can drive the daemon without typing the
+# full einheit invocation. Drop-in replacement for what
+# operators were maintaining as a private wrapper before
+# hyper-derp 0.1.6.
+#
+# The einheit binary is bundled in the hyper-derp deb at
+# /usr/bin/einheit, so `apt install hyper-derp` produces a
+# fully working operator CLI out of the box.
+#
+# Environment overrides (rarely needed):
+#   EINHEIT_BIN              path to einheit binary
+#   EINHEIT_ROLE             local-IPC role; default admin
+#   HD_RELAY_ENDPOINT        ROUTER endpoint URL
+#   HD_RELAY_EVENT_ENDPOINT  PUB endpoint URL
+#
+# The endpoint defaults match `dist/hyper-derp.yaml.example`'s
+# `einheit:` block; if you've changed those in your own yaml,
+# set the env vars to match.
+
+set -eu
+
+# Resolution order: explicit override → bundled location → $PATH.
+if [ -n "${EINHEIT_BIN:-}" ]; then
+  BIN="$EINHEIT_BIN"
+elif [ -x /usr/bin/einheit ]; then
+  BIN=/usr/bin/einheit
+else
+  BIN="$(command -v einheit 2>/dev/null || true)"
+fi
+if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
+  cat >&2 <<'EOF'
+hd-cli: 'einheit' binary not found.
+
+The einheit binary is normally bundled in the hyper-derp deb at
+/usr/bin/einheit. If you're running from a build tree or installed
+to a custom prefix, set $EINHEIT_BIN to the absolute path of the
+einheit binary, or put it on $PATH.
+EOF
+  exit 127
+fi
+
+# Brand the einheit banner as "hyper-derp" instead of the default
+# "einheit", and use the deb-shipped chafa logo if it's still on
+# disk. Both env vars are read by einheit's banner renderer; if
+# unsupported (older einheit), they're harmless.
+: "${EINHEIT_BRAND:=hyper-derp}"
+if [ -z "${EINHEIT_LOGO_PATH:-}" ] && [ -r /usr/share/hyper-derp/hd_chafa ]; then
+  EINHEIT_LOGO_PATH=/usr/share/hyper-derp/hd_chafa
+fi
+export EINHEIT_BRAND
+[ -n "${EINHEIT_LOGO_PATH:-}" ] && export EINHEIT_LOGO_PATH
+
+exec env "EINHEIT_ROLE=${EINHEIT_ROLE:-admin}" "$BIN" \
+    --adapter hd-relay \
+    --endpoint "${HD_RELAY_ENDPOINT:-ipc:///tmp/einheit/hd-relay.ctl}" \
+    --event-endpoint "${HD_RELAY_EVENT_ENDPOINT:-ipc:///tmp/einheit/hd-relay.pub}" \
+    "$@"
