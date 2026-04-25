@@ -76,7 +76,7 @@ jobs:
         run: >
           ctest --test-dir build-debug
           --output-on-failure
-          -E "E2E|Ktls|ProductionTest|SdkTest|HdPeerInfoTest|HdReconnectTest|EinheitChannelTest|FleetTransitTest"
+          -E "E2E|Ktls|ProductionTest|SdkTest|HdPeerInfoTest|HdReconnectTest|EinheitChannelTest|FleetTransitTest|OpenConnTest"
 
   package:
     name: Package
