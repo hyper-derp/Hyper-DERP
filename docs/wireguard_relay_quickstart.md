@@ -361,7 +361,21 @@ A healthy active tunnel has `xdp_pass_no_mac` at 1 or 2 (the cold-start packets)
 
 ## Performance: direct vs userspace vs XDP
 
-Numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream, no SO_RCVBUF tuning. Native-mode XDP attaches on `virtio_net`.
+Numbers from a libvirt fleet (3× Intel Xeon SierraForest VMs, 2 vCPU / 1 GiB each, virtio bridge), `wg-quick` on both clients, MTU 1420, payload 1400 B per CLAUDE.md. Single iperf3 stream. Native-mode XDP attaches on `virtio_net`.
+
+### Tune the receiver before measuring
+
+The first iteration of these numbers was misleading at high rates because XDP_TX delivers packets in tighter softirq bursts than direct WG decryption does, and that burstiness overflowed iperf3's UDP receive socket on c2 (`/proc/net/snmp` `Udp.RcvbufErrors` accounted for ~88 % of the apparent XDP "loss" at 500 Mbit/s and 1 Gbit/s). Always raise the receiver-side socket buffer for clean numbers:
+
+```bash
+# on the iperf3 server side
+sudo sysctl -w net.core.rmem_max=33554432
+
+# then on the client
+iperf3 -c <peer> -p 5201 -u -l 1400 -b 2G -t 10 -w 8M
+```
+
+Without this, you are measuring iperf3's single-threaded read loop, not the relay.
 
 ### Latency (ICMP, 100 packets at 50 ms)
 
@@ -381,33 +395,54 @@ For a 5-packet hot path (steady-state, no cold-start mixed in) the XDP relay mat
 | userspace | 1.99 Gbit/s | 17 380 |
 | **XDP** | **4.08 Gbit/s** | 4 685 |
 
-XDP doubles the userspace ceiling and recovers ~65 % of direct on a single stream. The remaining gap is the cost of one extra NIC bounce — the packet still has to traverse the bridge twice.
+XDP doubles the userspace ceiling and recovers ~65 % of direct on a single stream.
 
-### UDP @ 1400 B — sustained loss vs offered rate
+### UDP @ 1400 B — sustained loss vs offered rate (with `-w 8M`)
 
 | offered rate | direct | userspace | XDP |
 | --- | --- | --- | --- |
 | 100 Mbit/s | 0 % | 0 % | 0 % |
-| 500 Mbit/s | 0.025 % | 0.61 % | 0.027 % |
-| 1 Gbit/s | 0.038 % | 3 % | 0.16 % |
-| 2 Gbit/s | 0.08 % | saturates | 0.29 % |
-| 3 Gbit/s | — | — | 7.1 % |
+| 500 Mbit/s | 0 % | 0.61 % | **0 %** |
+| 1 Gbit/s | 0 % | 3 % | **0 %** |
+| 2 Gbit/s | 0.061 % | saturates | 0.27 % |
 
-Userspace had a clean ceiling at ~100 Mbit/s; XDP holds clean to ~2 Gbit/s and only starts losing at 3 Gbit/s. At iteration-1's pain-points (500 Mbit/s, 1 Gbit/s) loss drops by **20–30×**. At 2 Gbit/s XDP is within 4× of direct's loss rate (0.29 % vs 0.08 %), whereas userspace had already collapsed.
+XDP is **indistinguishable from direct** through 1 Gbit/s: every packet that left the sender reached the iperf3 server. Userspace by contrast was already losing 3 % at 1 Gbit/s.
+
+The remaining gap at 2 Gbit/s decomposes (verified via `/proc/net/snmp` + `ethtool -S enp1s0`):
+
+- BPF program drops: **0** (`rx_xdp_drops` flat across the run).
+- Receiver socket buffer drops: **0** (`Udp.RcvbufErrors` flat with `-w 8M`).
+- Relay's virtio_net TX ring drops: ~400 per blast (`tx_xdp_tx_drops`). The TX ring is 256 entries — virtio's max via ethtool — and at 178 kpps the ring fills during softirq bursts before the host vhost-net thread drains it.
+
+In other words the iteration-2 fast path is doing its job; the residual loss at 2 Gbit/s is the libvirt VM's TX queue depth, fixed by setting `tx_queue_size` higher on the guest's libvirt definition (a host change, not a hyper-derp change).
 
 ### Reproduce
 
 ```bash
 # server side (one of c1/c2)
-iperf3 -s -1 -p 5201
+sudo sysctl -w net.core.rmem_max=33554432
+iperf3 -s -p 5201
 
 # client side
-iperf3 -c <peer-tunnel-ip> -p 5201 -t 10                # TCP
-iperf3 -c <peer-tunnel-ip> -p 5201 -u -l 1400 -b 1G -t 10   # UDP @ 1400B
-ping -c 100 -i 0.05 -q <peer-tunnel-ip>                 # latency
+iperf3 -c <peer-tunnel-ip> -p 5201 -t 10 -w 8M                  # TCP
+iperf3 -c <peer-tunnel-ip> -p 5201 -u -l 1400 -b 2G -t 10 -w 8M # UDP @ 1400B
+ping -c 100 -i 0.05 -q <peer-tunnel-ip>                          # latency
 ```
 
 To compare direct vs relayed, swap the `Endpoint =` line in each client's `wg0.conf` and `wg-quick down/up wg0`. To compare userspace vs XDP without rebuilding, comment out `xdp_interface:` in the relay yaml and `systemctl restart hyper-derp`.
+
+When chasing residual loss, snapshot before/after:
+
+```bash
+# relay
+sudo /usr/sbin/ethtool -S enp1s0 | \
+    grep -E 'rx_xdp_packets|rx_xdp_drops|tx_xdp_tx|tx_xdp_tx_drops'
+
+# receiver
+grep '^Udp:' /proc/net/snmp
+```
+
+If `tx_xdp_tx_drops` grows, the relay's virtio TX ring is the bottleneck. If `Udp.RcvbufErrors` grows, the iperf3 server overflowed; raise `rmem_max` and `-w`. `rx_xdp_drops` should always be zero — if it's not, the BPF program was rejected at runtime, which is a real bug.
 
 ## What the relay deliberately does **not** do
 
