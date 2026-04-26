@@ -85,6 +85,11 @@ const config: Config = {
           position: 'left',
         },
         {
+          to: '/docs/wireguard-relay/',
+          label: 'WireGuard',
+          position: 'left',
+        },
+        {
           to: '/benchmarks/',
           label: 'Benchmarks',
           position: 'left',
