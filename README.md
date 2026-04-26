@@ -194,6 +194,7 @@ FleetData frames) and a set of client tools built on it.
 | `hd-wg` | WireGuard tunnel daemon. Uses HD as signaling; tries direct UDP first, falls back (and auto-recovers) through the relay when direct paths die | [hd_wg.md](docs/hd_wg.md) |
 | `hdcat` | netcat/socat over HD tunnels. TCP / UDP / unix-socket / stdin-stdout, YAML config, wildcard peers | — |
 | `hdctl` | ZMQ IPC control CLI for the relay (list peers, drive a config-driven bridge) | — |
+| `hd-cli` | Operator REPL for `mode: wireguard` — peer / link table, XDP counters, `wg show config` to render `[Peer]` blocks. Wraps the bundled `einheit` framework with hyper-derp's adapter + IPC endpoints pre-wired | [wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md) |
 
 ## Building
 
