@@ -12,57 +12,54 @@
 
 ## What Is This?
 
-[DERP](https://tailscale.com/blog/how-tailscale-works/) (Designated
-Encrypted Relay for Packets) is the relay protocol that Tailscale
-clients fall back to when direct WireGuard connections fail.
-Hyper-DERP is a drop-in replacement for Tailscale's Go-based
-[derper](https://pkg.go.dev/tailscale.com/derp) that delivers
-2-10x higher throughput and 40% lower tail latency under load. It is compatible
-with Tailscale, Headscale, and any standard DERP client.
+A high-performance relay server that does two things:
+
+- **DERP relay** — drop-in replacement for Tailscale's Go [derper](https://pkg.go.dev/tailscale.com/derp). Hyper-DERP speaks the same protocol over the same TLS port, so Tailscale, Headscale, and any standard DERP client just work. Built around `io_uring` and kTLS, it moves **2–10× more bytes per CPU** than the Go reference at lower tail latency.
+- **WireGuard relay** — a transparent UDP middlebox for stock WireGuard clients (no Tailscale required). Two peers behind NAT point their `Endpoint =` at hyper-derp; the relay forwards based on a peer + link table you set up once. Works with `wg-quick`, pfSense, mobile WireGuard apps. Optional XDP fast path keeps forwarding in the kernel.
+
+[DERP](https://tailscale.com/blog/how-tailscale-works/) is the relay protocol Tailscale clients fall back to when direct WireGuard fails. WireGuard-relay mode covers the same problem at a different layer — for people running plain `wg-quick` on both ends.
 
 ## Performance
 
-2-10x throughput, 40% lower tail latency, half the
-hardware. 4,903 benchmark runs on GCP c4-highcpu VMs
-against Go derper v1.96.4.
+**2–10× throughput, 40 % lower tail latency, half the hardware.** 4,903 benchmark runs on GCP c4-highcpu VMs against Go derper v1.96.4.
 
-Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark)
-| [hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/)
+Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark) · [hyper-derp.dev/benchmarks](https://hyper-derp.dev/benchmarks/)
 
 ### HD Protocol (native, zero-copy relay)
 
 | Test | HD | Go derper | Ratio |
 |------|---:|----------:|------:|
-| TCP relay (8w, 25GbE) | 19,880 Mbps | 7,800 Mbps | **2.55x** |
-| AF_XDP relay (25GbE) | 24,600 Mbps | 7,800 Mbps | **3.15x** |
+| TCP relay (8w, 25GbE) | 19,880 Mbps | 7,800 Mbps | **2.55×** |
+| AF_XDP relay (25GbE) | 24,600 Mbps | 7,800 Mbps | **3.15×** |
+
+### WireGuard relay (XDP fast path)
+
+| Setup | Single-peer TCP |
+|-------|----------------:|
+| Mellanox CX-4 LX, 25 GbE | **10.4 Gbit/s** |
+| GCP n2-standard-4 (gVNIC GQI) | **3.7 Gbit/s** |
 
 ## WireGuard Relay Mode
 
-Beyond the DERP path, `hyper-derp` can run as a transparent UDP relay
-for stock WireGuard clients (`mode: wireguard`). Two peers behind NAT
-point their `Endpoint =` at the relay; the relay forwards UDP based
-on a peer + link table you set up via `hdcli`. No WG semantics in
-the relay, no signalling, no managed keys — works with `wg-quick`,
-pfSense, the mobile WireGuard apps. XDP fast-path optional.
+`mode: wireguard` turns hyper-derp into a UDP middlebox for stock WG clients. Set it up with three commands in the operator REPL:
+
+```
+hyper-derp> wg peer add alice <ALICE-IP>:51820 alice-laptop
+hyper-derp> wg peer add bob   <BOB-IP>:51820   bob-laptop
+hyper-derp> wg link add alice bob
+```
+
+Clients run vanilla `wg-quick` with `Endpoint = <relay>:51820`. The relay never decrypts traffic — it just rewrites the destination based on which peer the source 4-tuple matches.
 
 <p align="center">
   <img src="graphics/wg-relay-cli.png" alt="hdcli setting up a wireguard relay" width="640" />
 </p>
 
-Full walkthrough: [docs/wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md).
+Full walkthrough — eight copy-paste steps from a clean Debian box: [docs/wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md).
 
-## Quick Start
+## Install
 
-```sh
-cmake --preset default
-cmake --build build -j
-sudo modprobe tls
-./build/hyper-derp --config dist/hyper-derp.yaml
-```
-
-## Install (Debian)
-
-From the apt repo:
+From the apt repo (Debian / Ubuntu):
 
 ```sh
 curl -fsSL https://hyper-derp.dev/repo/key.gpg | \
@@ -75,31 +72,27 @@ echo "deb [signed-by=/usr/share/keyrings/hyper-derp.gpg] \
 sudo apt update && sudo apt install hyper-derp
 ```
 
-Or from a local-built `.deb`:
+That's it — postinst enables the service, loads the `tls` and
+`wireguard` kernel modules, sets up `/tmp/einheit` for the operator
+IPC channel, and bundles the `einheit` framework plus the `hdcli`
+operator REPL. The deb drops:
+
+- `/usr/bin/hyper-derp` — the daemon
+- `/usr/bin/hdcli` — operator REPL (no sudo required)
+- `/usr/bin/hdwg`, `/usr/bin/hdctl`, `/usr/bin/hdcat` — client-side tools
+- `/etc/hyper-derp/hyper-derp.yaml.example` — sample config
+- `/usr/lib/systemd/system/hyper-derp.service` — systemd unit
+
+### Run it
 
 ```sh
-cmake --build build --target package
-sudo apt install ./build/hyper-derp_*.deb
+sudo vi /etc/hyper-derp/hyper-derp.yaml      # tweak the example
+sudo systemctl start hyper-derp              # start the daemon
+journalctl -u hyper-derp -f                  # tail the logs
+hdcli                                        # drop into the operator REPL
 ```
 
-Either path installs the binary to `/usr/bin/`, the bundled
-operator CLI (`einheit` + `hdcli`), an example config at
-`/etc/hyper-derp/hyper-derp.yaml`, and the systemd unit.
-The postinst enables the service, loads the `tls` and
-`wireguard` kernel modules, and creates `/tmp/einheit`
-(mode 1777) for the operator IPC channel.
-
-```sh
-# Edit config
-sudo vi /etc/hyper-derp/hyper-derp.yaml
-
-# Start
-sudo systemctl start hyper-derp
-
-# Check status
-sudo systemctl status hyper-derp
-journalctl -u hyper-derp -f
-```
+To build from source instead of using the apt repo, see [Building](#building) below.
 
 ## Configuration
 
@@ -194,7 +187,7 @@ FleetData frames) and a set of client tools built on it.
 | `hdwg` | WireGuard tunnel daemon. Uses HD as signaling; tries direct UDP first, falls back (and auto-recovers) through the relay when direct paths die | [hdwg.md](docs/hdwg.md) |
 | `hdcat` | netcat/socat over HD tunnels. TCP / UDP / unix-socket / stdin-stdout, YAML config, wildcard peers | — |
 | `hdctl` | ZMQ IPC control CLI for the relay (list peers, drive a config-driven bridge) | — |
-| `hdcli` | Operator REPL for `mode: wireguard` — peer / link table, XDP counters, `wg show config` to render `[Peer]` blocks. Wraps the bundled `einheit` framework with hyper-derp's adapter + IPC endpoints pre-wired | [wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md) |
+| `hdcli` | Interactive operator shell for the running daemon. Shows status, peers, and counters, drives the candidate-config / commit lifecycle, runs `wg`-relay verbs in `mode: wireguard`, and follows live events. Tab-completion, `?` mid-line help, oneshot or REPL | [cli_handbook.md](docs/cli_handbook.md) |
 
 ## Building
 
