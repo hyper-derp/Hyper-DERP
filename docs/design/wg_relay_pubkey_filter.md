@@ -222,18 +222,46 @@ BPF_MAP_TYPE_HASH wg_blocklist
 Map is sized for ~10k active blocks (640 KB). Stale entries
 sweep on access.
 
-### What blocklisting can't do
+### Why blocklisting matters: the relay-as-amplifier problem
 
-A determined attacker rotates source IPs faster than the strike
-threshold, so the blocklist alone doesn't stop a sustained
-distributed attack. It does:
+Without it, an attacker who knows bob's pubkey can blast the
+relay with arbitrarily many forged handshake inits, and the
+relay will dutifully forward every one to bob — because
+"forward to partner" is what the candidate-registration path
+does. The candidate-confirm gate stops the *endpoint hijack*,
+but it doesn't stop the relay from acting as a forwarder of
+attack traffic. Concretely:
 
-- shut down the obvious case (single attacker pounding from one
-  IP);
-- give a second tier of operator visibility — anything in
-  `wg blocklist list` is *known* abuse;
-- buy time. The candidate-confirm gate is the actual protection;
-  the blocklist is housekeeping.
+- **Bob pays the cost.** Each forwarded init costs bob's CPU
+  (MAC1 verify, ChaPoly decrypt attempt) and his ingress
+  bandwidth. At 200 byte init * 10k pps = 16 Mbit/s pinned on
+  bob's NIC, plus ~5 % of one CPU on his side.
+- **The attacker is hidden behind the relay's IP.** From bob's
+  `wg.ko` logs and from any defensive tooling on bob's side,
+  the source of the flood is the relay. Bob can't blocklist
+  the real attacker — he can't see them.
+- **The relay becomes the laundering layer.** Anyone investigating
+  bob's attack traffic finds the relay, not the source. That's
+  bad operationally (the relay's reputation), bad legally (the
+  relay operator looks like the abuser), and bad ergonomically
+  (bob's only fix is to take down the link to alice, which is
+  exactly the disruption we were trying to avoid).
+
+The blocklist is the actual fix for this. After 2 failed
+confirms, the source's *every* packet drops at the top of XDP
+— never reaches the forward path, never lands on bob's NIC.
+Bob sees nothing. The relay isn't laundering anything anymore.
+
+### What blocklisting still can't do
+
+A distributed attacker rotating source IPs faster than the strike
+threshold can still get the first ≤ 2 forgeries per IP through.
+That's a fundamental tradeoff between false-positive rate and
+attack-surface reduction; lower the strikes/window threshold to
+trade off in either direction. The candidate-confirm gate
+remains the protection for alice's endpoint regardless — neither
+the rotating-IP attacker nor the single-IP attacker can hijack
+the slot, only briefly waste forwarding cycles.
 
 False-positive risk:
 
