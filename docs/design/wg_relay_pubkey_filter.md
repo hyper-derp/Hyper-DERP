@@ -222,35 +222,44 @@ BPF_MAP_TYPE_HASH wg_blocklist
 Map is sized for ~10k active blocks (640 KB). Stale entries
 sweep on access.
 
-### Why blocklisting matters: the relay-as-amplifier problem
+### Why blocklisting matters: the relay-as-anonymizer problem
 
-Without it, an attacker who knows bob's pubkey can blast the
-relay with arbitrarily many forged handshake inits, and the
-relay will dutifully forward every one to bob — because
-"forward to partner" is what the candidate-registration path
-does. The candidate-confirm gate stops the *endpoint hijack*,
-but it doesn't stop the relay from acting as a forwarder of
-attack traffic. Concretely:
+Bob's exposure to handshake-flooding from anyone who knows his
+pubkey isn't new — a public WG endpoint is already attackable
+directly. The relay doesn't add attack volume (forward is 1:1,
+no amplification). What the relay *does* add is **source
+rewriting**: every forwarded handshake init arrives at bob
+with the relay's IP as the source instead of the actual
+attacker's IP.
 
-- **Bob pays the cost.** Each forwarded init costs bob's CPU
-  (MAC1 verify, ChaPoly decrypt attempt) and his ingress
-  bandwidth. At 200 byte init * 10k pps = 16 Mbit/s pinned on
-  bob's NIC, plus ~5 % of one CPU on his side.
-- **The attacker is hidden behind the relay's IP.** From bob's
-  `wg.ko` logs and from any defensive tooling on bob's side,
-  the source of the flood is the relay. Bob can't blocklist
-  the real attacker — he can't see them.
-- **The relay becomes the laundering layer.** Anyone investigating
-  bob's attack traffic finds the relay, not the source. That's
-  bad operationally (the relay's reputation), bad legally (the
-  relay operator looks like the abuser), and bad ergonomically
-  (bob's only fix is to take down the link to alice, which is
-  exactly the disruption we were trying to avoid).
+That's a problem on three axes:
 
-The blocklist is the actual fix for this. After 2 failed
-confirms, the source's *every* packet drops at the top of XDP
-— never reaches the forward path, never lands on bob's NIC.
-Bob sees nothing. The relay isn't laundering anything anymore.
+- **Bob can't defend at his end.** Direct attack: bob's
+  defensive tooling sees the attacker's IP, blocks it, done.
+  Through the relay: bob sees the relay's IP. Blocking the
+  relay means killing alice's tunnel too — exactly what the
+  attacker wanted.
+- **The relay's reputation.** Whoever investigates bob's
+  attack traffic finds the relay, not the source. That's bad
+  operationally for the relay operator and bad legally — the
+  relay looks like the abuser to anyone reading bob's logs.
+- **Asymmetric incentives.** Alice gets the benefit of the
+  relay (NAT traversal for free); bob and the relay operator
+  carry the cost when alice's pubkey leaks and an attacker
+  flogs the relay with forgeries.
+
+The blocklist is the relay operator's answer to all three.
+After 2 failed confirms, the source's *every* packet drops at
+the top of XDP — never reaches the forward path, never lands
+on bob's NIC. Bob's logs go quiet. The relay operator can
+answer "no, I'm not laundering attack traffic" with a counter
+(`drop_blocklisted` rising, then plateauing) and a list of
+blocked sources (`wg blocklist list`).
+
+Direct WG exposure to forgeries is unchanged by this design —
+that's the WG protocol's choice. What the relay can do is
+ensure that *being a relay* doesn't make things worse by
+hiding the attacker.
 
 ### What blocklisting still can't do
 
