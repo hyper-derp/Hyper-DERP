@@ -62,15 +62,32 @@ sudo modprobe tls
 
 ## Install (Debian)
 
+From the apt repo:
+
 ```sh
-cmake --build build --target package
-sudo dpkg -i build/hyper-derp_*.deb
+curl -fsSL https://hyper-derp.dev/repo/key.gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/hyper-derp.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/hyper-derp.gpg] \
+  https://hyper-derp.dev/repo stable main" | \
+  sudo tee /etc/apt/sources.list.d/hyper-derp.list
+
+sudo apt update && sudo apt install hyper-derp
 ```
 
-This installs the binary to `/usr/bin/`, an example config
-to `/etc/hyper-derp/hyper-derp.yaml`, and a systemd unit.
-The postinst enables the service and loads the `tls` kernel
-module.
+Or from a local-built `.deb`:
+
+```sh
+cmake --build build --target package
+sudo apt install ./build/hyper-derp_*.deb
+```
+
+Either path installs the binary to `/usr/bin/`, the bundled
+operator CLI (`einheit` + `hd-cli`), an example config at
+`/etc/hyper-derp/hyper-derp.yaml`, and the systemd unit.
+The postinst enables the service, loads the `tls` and
+`wireguard` kernel modules, and creates `/tmp/einheit`
+(mode 1777) for the operator IPC channel.
 
 ```sh
 # Edit config
