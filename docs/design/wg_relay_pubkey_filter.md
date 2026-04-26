@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Not implemented in 0.2.0.
+Proposed. Targeting **0.2.1** if implemented.
 
 ## Goal
 
