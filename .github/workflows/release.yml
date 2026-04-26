@@ -161,9 +161,14 @@ jobs:
       - name: Create GitHub release
         run: |
           notes_file="dist/release-notes/${GITHUB_REF_NAME}.md"
+          # Release title becomes the discussion title; prefix
+          # with the project name so the Discussions tab reads
+          # "Hyper-DERP v0.2.0" instead of bare "v0.2.0".
+          title="Hyper-DERP $GITHUB_REF_NAME"
           if [ -f "$notes_file" ]; then
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
               --notes-file "$notes_file" \
               --discussion-category Announcements \
               hyper-derp_*.deb
@@ -172,6 +177,7 @@ jobs:
             # we forgot to add a curated notes file.
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
               --generate-notes \
               --discussion-category Announcements \
               hyper-derp_*.deb
