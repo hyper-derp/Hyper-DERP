@@ -62,10 +62,14 @@ jobs:
         run: cmake --build build-debug -j$(nproc)
 
       - name: Unit tests
+        # Excludes anything that forks an HD relay — the GHA
+        # sandbox blocks setsockopt(TCP_ULP, "tls") so the
+        # in-test relay can't finish coming up. Same exclusion
+        # list as build.yml.
         run: >
           ctest --test-dir build-debug
           --output-on-failure
-          -E "E2E|Ktls"
+          -E "E2E|Ktls|ProductionTest|SdkTest|HdPeerInfoTest|HdReconnectTest|EinheitChannelTest|FleetTransitTest|OpenConnTest"
 
   build-amd64:
     name: Build (amd64)
