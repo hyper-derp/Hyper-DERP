@@ -1,6 +1,6 @@
 # Hyper-DERP CLI Handbook
 
-This is the operator handbook for driving a hyper-derp relay through the einheit CLI. It assumes the relay is already running and the einheit binary is on the operator's `$PATH`.
+This is the operator handbook for driving a hyper-derp relay through the einheit CLI. The hyper-derp deb bundles `einheit` at `/usr/bin/einheit` and the `hdcli` wrapper at `/usr/bin/hdcli` — typical operators just run `hdcli`. This handbook covers the underlying einheit invocation for cases where you need finer control (different role, custom endpoints, scripting).
 
 ## What you're talking to
 
@@ -30,12 +30,14 @@ EINHEIT_ROLE=admin einheit \
   --event-endpoint ipc:///tmp/einheit/hd-relay.pub
 ```
 
-The test fleet ships a wrapper that bakes those flags in:
+The hyper-derp deb ships a wrapper at `/usr/bin/hdcli` that
+bakes those flags in (and exports the chafa-branded banner):
 
 ```bash
-hd-cli                 # interactive shell, admin role
-hd-cli show status     # one-shot
-hd-cli show fleet
+hdcli                 # interactive REPL, admin role
+hdcli show status     # one-shot
+hdcli show fleet
+hdcli wg show         # wg-relay-mode counters (mode: wireguard only)
 ```
 
 ### Over SSH
@@ -48,14 +50,14 @@ Host hd-r1-cli
   User worker
   IdentityFile ~/.ssh/id_ed25519_targets
   RequestTTY yes
-  RemoteCommand ~/bin/hd-cli
+  RemoteCommand /usr/bin/hdcli
 ```
 
 Then:
 
 ```bash
 ssh hd-r1-cli                    # drops into the einheit shell
-ssh hd-r1 hd-cli show status     # oneshot via plain ssh
+ssh hd-r1 hdcli show status     # oneshot via plain ssh
 ```
 
 ### Roles

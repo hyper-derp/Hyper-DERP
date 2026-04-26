@@ -165,7 +165,7 @@ target_link_libraries(test_ice_agent PRIVATE
 gtest_discover_tests(test_ice_agent
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
 
-# hd-wg end-to-end (netns-based, requires root + wireguard
+# hdwg end-to-end (netns-based, requires root + wireguard
 # kernel module). Auto-skips otherwise via exit code 77.
 add_test(
   NAME hd_wg_e2e

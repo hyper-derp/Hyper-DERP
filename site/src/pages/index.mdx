@@ -1,9 +1,9 @@
 ---
 title: Hyper-DERP
 description: >-
-  A high-performance DERP relay server written in C++23
-  using io_uring. 2-10x throughput, 40% lower tail
-  latency than Tailscale's derper.
+  High-performance DERP and WireGuard relay server.
+  Drop-in replacement for Tailscale's derper plus a UDP
+  relay for stock WireGuard. C++23, io_uring, XDP.
 hide_table_of_contents: true
 ---
 
@@ -14,7 +14,7 @@ import InstallTabs from '@site/src/components/InstallTabs';
        style={{height: '160px', marginTop: '1.5rem',
                marginBottom: '2.5rem',
                paddingLeft: '3rem', paddingRight: '3rem'}} />
-  <p className="hero__subtitle">A faster DERP relay for Tailscale and Headscale. Same protocol, same clients, half the hardware.</p>
+  <p className="hero__subtitle">A faster DERP relay for Tailscale and Headscale -- plus a UDP relay for stock WireGuard. Same clients, half the hardware.</p>
 </div>
 
 <div className="stats-grid">
@@ -38,13 +38,16 @@ import InstallTabs from '@site/src/components/InstallTabs';
 
 ## What is Hyper-DERP?
 
-When Tailscale or Headscale can't establish a direct WireGuard connection between two peers -- because of NAT, firewalls, or CGNAT -- traffic falls back to a DERP relay. Tailscale ships `derper`, a Go-based relay that works well for most setups.
+A high-performance relay server that does two things in one daemon:
 
-Hyper-DERP is a drop-in replacement for `derper`. It speaks the same protocol, works with the same clients, and needs no changes to your Tailscale or Headscale configuration beyond pointing the DERP map at a new address.
+- **DERP relay** -- drop-in replacement for Tailscale's Go [derper](https://pkg.go.dev/tailscale.com/derp). Same protocol, same clients, no Tailscale or Headscale config changes beyond pointing the DERP map at the new address. 2-10x more bytes per CPU at lower tail latency.
+- **WireGuard relay** -- a transparent UDP middlebox for stock WireGuard clients (no Tailscale required). Two peers behind NAT point their `Endpoint =` at hyper-derp; the relay forwards based on a peer + link table you set up once. Optional XDP fast path keeps forwarding in the kernel. [→ quickstart](/docs/wireguard-relay/).
 
-The difference is performance. If you're running DERP as a permanent relay path -- for industrial networks, enterprise deployments, or any setup where the relay carries sustained traffic rather than occasional fallback -- Hyper-DERP delivers more throughput on less hardware.
+When Tailscale or Headscale can't establish a direct WireGuard connection between two peers -- because of NAT, firewalls, or CGNAT -- traffic falls back to a DERP relay. If you're running DERP as a permanent relay path (industrial networks, enterprise deployments, any setup where the relay carries sustained traffic rather than occasional fallback), Hyper-DERP delivers more throughput on less hardware. WireGuard-relay mode covers the same NAT-traversal problem at a different layer -- for people running plain `wg-quick` on both ends.
 
 ## Performance
+
+### DERP relay vs Tailscale derper
 
 | vCPU | HD Peak (Mbps) | TS Ceiling (Mbps) | HD/TS |
 |-----:|---------------:|-------------------:|------:|
@@ -54,6 +57,13 @@ The difference is performance. If you're running DERP as a permanent relay path 
 |   16 |         16,545 |              7,834 |  2.1x |
 
 HD on 8 vCPUs outperforms derper on 16. Across the board, HD matches derper's throughput on half the cores -- a 50% compute cost reduction for a relay fleet.
+
+### WireGuard relay (XDP fast path)
+
+| Setup | Single-peer TCP |
+|-------|----------------:|
+| Mellanox CX-4 LX, 25 GbE bare-metal | **10.4 Gbit/s** |
+| GCP n2-standard-4 (gVNIC GQI) | **3.7 Gbit/s** |
 
 [Full benchmark results](/benchmarks/) -- 4,903 runs across throughput, latency, tunnel quality, and peer scaling.
 
@@ -73,6 +83,6 @@ echo "deb [signed-by=/usr/share/keyrings/hyper-derp.gpg] \
 sudo apt update && sudo apt install hyper-derp
 ```
 
-Or [build from source](/docs/install/#build-from-source). Then point your DERP map at the new relay and you're done.
+Or [build from source](/docs/install/#build-from-source). Then point your DERP map at the new relay (for Tailscale/Headscale) -- or follow the [WireGuard relay quickstart](/docs/wireguard-relay/) (for stock `wg-quick` setups).
 
-[Installation guide](/docs/install/) | [Configuration](/docs/configuration/) | [Source on GitHub](https://github.com/hyper-derp/Hyper-DERP)
+[Installation guide](/docs/install/) | [Configuration](/docs/configuration/) | [WireGuard relay](/docs/wireguard-relay/) | [Source on GitHub](https://github.com/hyper-derp/Hyper-DERP)

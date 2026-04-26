@@ -5,7 +5,7 @@
 #
 # Creates:
 #   hd-relay        — c4-highcpu-{relay_vcpu}
-#   hd-client-{0..3} — c4-highcpu-8
+#   hdclient-{0..3} — c4-highcpu-8
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ sysctl -w net.ipv4.tcp_rmem="4096 262144 4194304"
 
 echo "Creating 4 client VMs (c4-highcpu-8)..."
 for i in 0 1 2 3; do
-  gcloud compute instances create "hd-client-${i}" \
+  gcloud compute instances create "hdclient-${i}" \
     --project="$PROJECT" \
     --zone="$ZONE" \
     --machine-type=c4-highcpu-8 \

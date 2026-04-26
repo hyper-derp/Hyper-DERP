@@ -1,4 +1,11 @@
+---
+title: WireGuard Relay
+description: Run hyper-derp as a transparent UDP relay for stock WireGuard clients.
+sidebar_position: 4
+---
+
 # WireGuard Relay — Homelab Quickstart
+
 
 `hyper-derp` in `mode: wireguard` is a UDP relay for stock WireGuard. Your peers point `Endpoint =` at the relay box; the relay forwards their packets to each other. Useful when two peers are both behind NAT and can't see each other directly.
 

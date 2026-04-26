@@ -21,7 +21,7 @@ endif()
 project(hyper-derp
   LANGUAGES C CXX
   DESCRIPTION "High-performance DERP relay server"
-  VERSION 0.1.5
+  VERSION 0.2.0
 )
 
 set(CMAKE_CXX_STANDARD 23)
@@ -145,10 +145,17 @@ endif()
 # ============================================================================
 # Install rules
 # ============================================================================
-install(TARGETS hyper-derp hd-wg hdctl derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test hd-scale-test-uring
+install(TARGETS hyper-derp hdwg hdctl derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test hd-scale-test-uring
   RUNTIME DESTINATION bin)
+# Substitute @PROJECT_VERSION@ into hdcli so the wrapper exports
+# HD_RELAY_VERSION (read by the hd-relay einheit adapter for the
+# banner) without us having to keep two version strings in sync.
+configure_file(
+  ${CMAKE_SOURCE_DIR}/dist/hdcli.in
+  ${CMAKE_BINARY_DIR}/hdcli
+  @ONLY)
 install(PROGRAMS
-  ${CMAKE_SOURCE_DIR}/dist/hd-cli
+  ${CMAKE_BINARY_DIR}/hdcli
   DESTINATION bin)
 install(FILES
   ${CMAKE_BINARY_DIR}/bpf/wg_relay.bpf.o
@@ -171,11 +178,11 @@ install(FILES
   DESTINATION /etc/hyper-derp
   RENAME hyper-derp.yaml.example)
 install(FILES
-  ${CMAKE_SOURCE_DIR}/dist/hd-wg.service
+  ${CMAKE_SOURCE_DIR}/dist/hdwg.service
   DESTINATION lib/systemd/system)
 install(FILES
-  ${CMAKE_SOURCE_DIR}/dist/hd-wg.yaml
-  DESTINATION /etc/hd-wg
+  ${CMAKE_SOURCE_DIR}/dist/hdwg.yaml
+  DESTINATION /etc/hdwg
   RENAME config.yaml.example)
 
 # ============================================================================

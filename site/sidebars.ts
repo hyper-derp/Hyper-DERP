@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
         'install',
         'configuration',
         'operations',
+        'wireguard-relay',
       ],
     },
     {

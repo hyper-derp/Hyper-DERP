@@ -29,7 +29,7 @@ for i in 0 1 2 3; do
   $SCP \
     build/tools/bench/hd-scale-test \
     build/tools/bench/derp-scale-test \
-    "hd-client-${i}":~/ &
+    "hdclient-${i}":~/ &
 done
 wait
 

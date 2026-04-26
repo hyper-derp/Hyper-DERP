@@ -2,11 +2,11 @@
 Description=HD WireGuard Tunnel Daemon
 After=network-online.target
 Wants=network-online.target
-Documentation=https://hyper-derp.dev/docs/hd-wg
+Documentation=https://hyper-derp.dev/docs/hdwg
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hd-wg --config /etc/hd-wg/config.yaml
+ExecStart=/usr/bin/hdwg --config /etc/hdwg/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5

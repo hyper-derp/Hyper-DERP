@@ -124,8 +124,11 @@ bool ExtractString(const std::string& json,
   ++p;
   const char* start = p;
   while (p < e && *p != '"') {
-    if (*p == '\\' && p + 1 < e) p += 2;
-    else ++p;
+    if (*p == '\\' && p + 1 < e) {
+      p += 2;
+    } else {
+      ++p;
+    }
   }
   if (p >= e) return false;
   out->assign(start, p - start);

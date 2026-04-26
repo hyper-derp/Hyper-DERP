@@ -1,5 +1,5 @@
 /// @file wg_config.h
-/// @brief hd-wg daemon configuration.
+/// @brief hdwg daemon configuration.
 
 #ifndef CLIENT_WG_CONFIG_H_
 #define CLIENT_WG_CONFIG_H_

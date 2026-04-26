@@ -9,7 +9,7 @@
 #     systemd; the test does not redeploy)
 #   - stock wg-quick on each client, Endpoint = relay
 #   - drive `wg peer add`, `wg peer pubkey`, `wg link add`
-#     via `hd-cli` on the relay
+#     via `hdcli` on the relay
 #   - assert ping across the tunnel (4/4)
 #   - assert relay-side counters move (userspace + XDP)
 #
@@ -54,8 +54,8 @@ TUN_B=10.99.0.2
 NAME_A=alice
 NAME_B=bob
 
-# Where the relay's hd-cli lives on hd-r2.
-HD_CLI=/home/worker/bin/hd-cli
+# Where the relay's hdcli lives on hd-r2 (deb-shipped path).
+HD_CLI=/usr/bin/hdcli
 
 ssh_cmd() {
   local host=$1; shift
@@ -79,10 +79,10 @@ done
 show=$(ssh_cmd "$RELAY" "$HD_CLI wg show 2>&1" || true)
 if ! echo "$show" | grep -q 'port'; then
   skip "relay daemon is not running in mode: wireguard "\
-       "(or hd-cli unreachable on $RELAY)"
+       "(or hdcli unreachable on $RELAY)"
 fi
 
-# The hd-cli table renderer wraps each row in ANSI bold escapes
+# The hdcli table renderer wraps each row in ANSI bold escapes
 # and a box-drawing column separator; pull the last token of the
 # row by stripping non-printables and grabbing the trailing word.
 extract_field() {

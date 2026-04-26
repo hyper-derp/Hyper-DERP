@@ -1,8 +1,8 @@
 #!/bin/bash
 # @file hd_wg_e2e.sh
-# @brief End-to-end hd-wg test using two network namespaces.
+# @brief End-to-end hdwg test using two network namespaces.
 #
-# Brings up an HD relay + two hd-wg daemons in separate
+# Brings up an HD relay + two hdwg daemons in separate
 # netns connected by a veth pair. Verifies:
 #   - direct-path tunnel establishes
 #   - ping 10.99.0.2 succeeds at LAN latency
@@ -24,7 +24,7 @@ fi
 
 BUILD="$1"
 HYPER_DERP="$BUILD/hyper-derp"
-HD_WG="$BUILD/client/hd-wg"
+HD_WG="$BUILD/client/hdwg"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "SKIP: root required for netns + WG iface"
@@ -39,7 +39,7 @@ if [ ! -x "$HYPER_DERP" ] || [ ! -x "$HD_WG" ]; then
   exit 77
 fi
 
-TMP=$(mktemp -d -t hd-wg-e2e.XXXXXX)
+TMP=$(mktemp -d -t hdwg-e2e.XXXXXX)
 NS_A=hdwg-a-$$
 NS_B=hdwg-b-$$
 VETH_A=hdwg-v-a-$$
@@ -74,7 +74,7 @@ ip netns exec "$NS_B" ip link set "$VETH_B" up
 # TLS cert for the relay.
 openssl req -x509 -newkey rsa:2048 \
   -keyout "$TMP/relay.key" -out "$TMP/relay.crt" \
-  -days 1 -nodes -subj '/CN=hd-wg-e2e' \
+  -days 1 -nodes -subj '/CN=hdwg-e2e' \
   2>/dev/null
 
 # Keys.
@@ -104,7 +104,7 @@ done
 
 # -- Run a tunnel test -------------------------------------------------------
 
-# Brings up both hd-wg daemons with the given flags and
+# Brings up both hdwg daemons with the given flags and
 # pings. Returns 0 on success, non-zero on failure.
 # $1: extra args for peer A
 # $2: extra args for peer B
@@ -207,5 +207,5 @@ ip netns exec "$NS_B" iptables -A OUTPUT -p udp \
 run_tunnel_test "" "" "relay" || exit 1
 echo "  PASS"
 
-echo "all hd-wg e2e scenarios passed"
+echo "all hdwg e2e scenarios passed"
 exit 0

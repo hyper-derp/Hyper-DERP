@@ -13,7 +13,7 @@ RestartSec=5
 # still on disk from a hard crash, ZeroMQ binds fail with EADDRINUSE.
 ExecStartPre=/bin/rm -f /tmp/einheit/hd-relay.ctl /tmp/einheit/hd-relay.pub
 
-# Bind-mount the host /tmp/einheit dir into PrivateTmp so hd-cli
+# Bind-mount the host /tmp/einheit dir into PrivateTmp so hdcli
 # (running as the operator user) can reach the daemon's IPC sockets.
 BindPaths=/tmp/einheit
 

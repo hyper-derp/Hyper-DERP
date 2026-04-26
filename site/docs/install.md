@@ -107,4 +107,5 @@ A healthy relay responds with `ok`.
 
 - [Configuration reference](/docs/configuration/) -- all CLI flags, config file options, worker tuning
 - [Operations](/docs/operations/) -- systemd service, monitoring, kernel tuning
+- [WireGuard relay quickstart](/docs/wireguard-relay/) -- run hyper-derp as a UDP relay for stock `wg-quick` clients (no Tailscale required)
 - [Troubleshooting](/docs/troubleshooting/) -- common issues and fixes

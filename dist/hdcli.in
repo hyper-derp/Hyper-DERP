@@ -1,5 +1,5 @@
 #!/bin/sh
-# hd-cli — operator wrapper for hyper-derp.
+# hdcli — operator wrapper for hyper-derp.
 #
 # Calls `einheit` with the right adapter + IPC endpoints
 # so operators can drive the daemon without typing the
@@ -33,7 +33,7 @@ else
 fi
 if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
   cat >&2 <<'EOF'
-hd-cli: 'einheit' binary not found.
+hdcli: 'einheit' binary not found.
 
 The einheit binary is normally bundled in the hyper-derp deb at
 /usr/bin/einheit. If you're running from a build tree or installed
@@ -53,6 +53,13 @@ if [ -z "${EINHEIT_LOGO_PATH:-}" ] && [ -r /usr/share/hyper-derp/hd_chafa ]; the
 fi
 export EINHEIT_BRAND
 [ -n "${EINHEIT_LOGO_PATH:-}" ] && export EINHEIT_LOGO_PATH
+
+# Expose the hyper-derp version to the hd-relay adapter so the
+# banner reads "hyper-derp 0.x.y" instead of the placeholder baked
+# into the adapter source. CMake substitutes @PROJECT_VERSION@ at
+# install time.
+: "${HD_RELAY_VERSION:=@PROJECT_VERSION@}"
+export HD_RELAY_VERSION
 
 exec env "EINHEIT_ROLE=${EINHEIT_ROLE:-admin}" "$BIN" \
     --adapter hd-relay \

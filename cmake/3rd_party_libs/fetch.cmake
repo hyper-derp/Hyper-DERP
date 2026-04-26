@@ -32,6 +32,10 @@ FetchContent_Declare(msgpack-cxx
   GIT_SHALLOW TRUE
 )
 set(MSGPACK_CXX20 OFF CACHE BOOL "" FORCE)
+# We don't use any Boost-specific msgpack adapters; turning this off
+# drops the FindBoost requirement, which the arm64 cross-compile
+# runner doesn't satisfy without an explicit libboost-dev:arm64.
+set(MSGPACK_USE_BOOST OFF CACHE BOOL "" FORCE)
 set(MSGPACK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MSGPACK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(msgpack-cxx)
@@ -68,7 +72,7 @@ endif()
 # einheit-cli — operator CLI shipped inside the hyper-derp deb so
 # `apt install hyper-derp` is fully functional out of the box. The
 # einheit sub-build emits a `/usr/bin/einheit` install target; hyper-
-# derp's `hd-cli` wrapper resolves it via $PATH.
+# derp's `hdcli` wrapper resolves it via $PATH.
 #
 # Source resolution priority:
 #   1. EINHEIT_SOURCE_DIR cmake var or env (sibling source tree)
@@ -106,7 +110,7 @@ if(_einheit_local)
 else()
   message(STATUS "einheit: fetching via FetchContent")
   FetchContent_Declare(einheit-cli
-    GIT_REPOSITORY git@github.com:einheitdev/cli.git
+    GIT_REPOSITORY https://github.com/einheitdev/cli.git
     GIT_TAG main
     GIT_SHALLOW TRUE
   )

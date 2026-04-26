@@ -2,7 +2,7 @@ name: ARM64 Cross-Compile
 
 on:
   push:
-    branches: ["v0.1.x"]
+    branches: ["v0.1.x", "v0.2.x"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +41,14 @@ jobs:
             libasio-dev
 
       - name: Configure (arm64)
+        env:
+          # Belt-and-braces: the toolchain file already sets these,
+          # but exporting at workflow level keeps anything that
+          # reads pkg-config outside cmake (e.g. einheit's
+          # pkg_check_modules) honest.
+          PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          PKG_CONFIG_PATH: ""
+          PKG_CONFIG_SYSROOT_DIR: /
         run: |
           cmake \
             -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-toolchain.cmake \
@@ -50,4 +58,6 @@ jobs:
             -B build-arm64
 
       - name: Build (arm64)
+        env:
+          PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         run: cmake --build build-arm64 -j$(nproc)

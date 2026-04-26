@@ -1,14 +1,14 @@
-# hd-wg — WireGuard tunnels via HD Protocol
+# hdwg — WireGuard tunnels via HD Protocol
 
 > Not to be confused with [WireGuard relay mode](wireguard_relay_quickstart.md), a
 > separate *relay-side* design where the Hyper-DERP server speaks WG
-> directly. `hd-wg` is a *client-side* daemon that uses the existing HD
+> directly. `hdwg` is a *client-side* daemon that uses the existing HD
 > relay as a signaling channel (and optional fallback transport) for
 > otherwise-vanilla `wireguard.ko` tunnels.
 
 ## What it does
 
-`hd-wg` sits next to `wireguard.ko` and:
+`hdwg` sits next to `wireguard.ko` and:
 
 1. Connects to an HD relay (TLS, HMAC-authenticated).
 2. Discovers other enrolled peers via `PeerInfo`.
@@ -21,13 +21,13 @@
    fails or isn't possible.
 
 The WG protocol itself is untouched: the kernel module
-does all crypto. `hd-wg` only controls *who the peer is*
+does all crypto. `hdwg` only controls *who the peer is*
 (netlink `SET_PEER`) and *where its UDP goes*.
 
 ## Quick start
 
 ```sh
-sudo hd-wg \
+sudo hdwg \
   --relay-host relay.example.com \
   --relay-port 3341 \
   --relay-key $(cat relay.hmac.hex) \
@@ -38,7 +38,7 @@ sudo hd-wg \
 Or with a YAML config:
 
 ```yaml
-# /etc/hd-wg.yaml
+# /etc/hdwg.yaml
 relay:
   host: relay.example.com
   port: 3341
@@ -56,7 +56,7 @@ force_relay: false          # skip ICE, always use relay
 ```
 
 ```sh
-sudo hd-wg --config /etc/hd-wg.yaml
+sudo hdwg --config /etc/hdwg.yaml
 ```
 
 ## Data flow
@@ -66,9 +66,9 @@ Direct path (happy case):
   wg0 (kernel) -- UDP --> peer_ip:51820
 
 Relay path (force_relay, sym-NAT, or direct dies):
-  wg0 -- UDP --> 127.0.0.1:51821 (hd-wg proxy)
+  wg0 -- UDP --> 127.0.0.1:51821 (hdwg proxy)
       -- MeshData over TLS --> HD relay
-      -- MeshData over TLS --> peer's hd-wg proxy
+      -- MeshData over TLS --> peer's hdwg proxy
       -- UDP --> peer's wg0
 ```
 
@@ -140,7 +140,7 @@ forwarded between the proxy socket and wg.ko.
 ## CLI
 
 ```
-hd-wg [options]
+hdwg [options]
   --config PATH        YAML config file
   --relay-host HOST    Relay IP
   --relay-port PORT    Relay port (3341)
