@@ -185,6 +185,81 @@ DEFAULT: 100 candidate registrations / minute / source-IP
 Beyond that: `drop_relearn_source_rate` ticks, candidates from
 that source are refused for 60 s.
 
+### Dynamic blocklist on repeated failed confirms
+
+A `drop_relearn_unconfirmed` is unambiguous: the source produced
+a valid-MAC1 handshake init but couldn't progress the protocol.
+That's not a flaky network — it's someone who has the public key
+but not the private key. The relay tracks failed confirms per
+source IP and escalates:
+
+```
+DEFAULT POLICY (configurable):
+  2 failed confirms within 60 s    → block source-IP for 60 s
+  5 failed confirms within 1 h     → block source-IP for 1 h
+  10 failed confirms within 24 h   → block source-IP for 24 h
+```
+
+While a source is blocklisted, the BPF program drops **all**
+its packets at the very top of the XDP path — not just
+handshakes. The block is per-IP, not per-(IP,port), so a port
+shuffle doesn't escape it. New counter:
+`drop_blocklisted` (every dropped packet), `blocklist_added`
+(every escalation event).
+
+```
+struct blocklist_entry {
+  __u64 expiry_ns;
+  __u32 strikes;       // failed-confirm count
+  __u32 first_strike_ns;
+};
+
+BPF_MAP_TYPE_HASH wg_blocklist
+  key: u32 (src IPv4)  // separate map for v6
+  value: blocklist_entry
+```
+
+Map is sized for ~10k active blocks (640 KB). Stale entries
+sweep on access.
+
+### What blocklisting can't do
+
+A determined attacker rotates source IPs faster than the strike
+threshold, so the blocklist alone doesn't stop a sustained
+distributed attack. It does:
+
+- shut down the obvious case (single attacker pounding from one
+  IP);
+- give a second tier of operator visibility — anything in
+  `wg blocklist list` is *known* abuse;
+- buy time. The candidate-confirm gate is the actual protection;
+  the blocklist is housekeeping.
+
+False-positive risk:
+
+- A real peer behind a flaky network that completes handshake
+  but loses transport-data could in theory trip a strike. The
+  threshold (2 failures within 60 s) and the fact that strikes
+  only count for *unknown-source* candidates (a peer
+  registered with a stable endpoint never goes through this
+  path) make this rare.
+- If it happens, an operator override clears it: `wg blocklist
+  remove <ip>`.
+
+### Operator surface
+
+```
+hyper-derp> wg blocklist list             # current blocks + expiry
+hyper-derp> wg blocklist remove <ip>      # manual unblock
+hyper-derp> wg blocklist add <ip> 1h      # manual block, ad-hoc
+hyper-derp> wg blocklist policy 2 60 60   # tighten threshold
+                              ↑   ↑   ↑
+                        strikes  win  block (all in seconds)
+```
+
+Defaults are conservative; most operators won't need to touch
+the policy.
+
 ## Use 2: Handshake validation
 
 The same MAC1 computation gives us a misconfiguration filter for
@@ -305,6 +380,8 @@ After this lands, `wg show` exposes:
 | `drop_relearn_cooldown` | type 1/2 from unknown source, MAC1 matched, but per-peer cooldown is in effect |
 | `drop_relearn_source_rate` | per-source-IP rate cap exceeded (≥100 / min) |
 | `drop_relearn_unconfirmed` | candidate endpoint expired without transport-data confirming the relearn — strong signal of a forged-handshake attempt |
+| `drop_blocklisted` | packet from a source IP currently on the dynamic blocklist |
+| `blocklist_added` | source IP escalated onto the blocklist (event) |
 | `endpoint_relearn[peer]` (per-peer counter) | times this peer's endpoint was successfully relearned (after confirm) |
 | `endpoint_candidate[peer]` (per-peer counter) | times a candidate endpoint was registered (whether or not it confirmed) |
 
