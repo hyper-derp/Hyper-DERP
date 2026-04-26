@@ -22,3 +22,14 @@ set(CMAKE_FIND_ROOT_PATH
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+
+# Point pkg-config at the arm64 .pc files so dependencies resolved
+# via pkg_check_modules (libzmq, libsodium, …) report arm64 include
+# paths instead of the host x86_64 ones. Without this, the host
+# libzmq3-dev's .pc file wins and the cross-compile pulls
+# /usr/include/x86_64-linux-gnu/* into the arm64 build, which then
+# fails on missing 32-bit glibc stubs.
+set(ENV{PKG_CONFIG_LIBDIR}
+  "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig")
+set(ENV{PKG_CONFIG_PATH} "")
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "/")
