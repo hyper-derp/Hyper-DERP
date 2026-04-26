@@ -21,7 +21,7 @@ endif()
 project(hyper-derp
   LANGUAGES C CXX
   DESCRIPTION "High-performance DERP relay server"
-  VERSION 0.1.5
+  VERSION 0.2.0
 )
 
 set(CMAKE_CXX_STANDARD 23)
@@ -147,8 +147,15 @@ endif()
 # ============================================================================
 install(TARGETS hyper-derp hd-wg hdctl derp-test-client derp-scale-test derp-tun-proxy hd-test-client hd-scale-test hd-scale-test-uring
   RUNTIME DESTINATION bin)
+# Substitute @PROJECT_VERSION@ into hd-cli so the wrapper exports
+# HD_RELAY_VERSION (read by the hd-relay einheit adapter for the
+# banner) without us having to keep two version strings in sync.
+configure_file(
+  ${CMAKE_SOURCE_DIR}/dist/hd-cli.in
+  ${CMAKE_BINARY_DIR}/hd-cli
+  @ONLY)
 install(PROGRAMS
-  ${CMAKE_SOURCE_DIR}/dist/hd-cli
+  ${CMAKE_BINARY_DIR}/hd-cli
   DESTINATION bin)
 install(FILES
   ${CMAKE_BINARY_DIR}/bpf/wg_relay.bpf.o

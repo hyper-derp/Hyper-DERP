@@ -54,6 +54,13 @@ fi
 export EINHEIT_BRAND
 [ -n "${EINHEIT_LOGO_PATH:-}" ] && export EINHEIT_LOGO_PATH
 
+# Expose the hyper-derp version to the hd-relay adapter so the
+# banner reads "hyper-derp 0.x.y" instead of the placeholder baked
+# into the adapter source. CMake substitutes @PROJECT_VERSION@ at
+# install time.
+: "${HD_RELAY_VERSION:=@PROJECT_VERSION@}"
+export HD_RELAY_VERSION
+
 exec env "EINHEIT_ROLE=${EINHEIT_ROLE:-admin}" "$BIN" \
     --adapter hd-relay \
     --endpoint "${HD_RELAY_ENDPOINT:-ipc:///tmp/einheit/hd-relay.ctl}" \

@@ -3,9 +3,35 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased] -- HD Protocol
+## [0.2.0] - 2026-04-26
 
-### Added
+### Added — WireGuard Relay Mode
+- **`mode: wireguard`**: transparent UDP relay for stock
+  WireGuard clients. Two NAT'd peers point `Endpoint =`
+  at hyper-derp; the relay forwards based on an
+  operator-managed peer + link table. No WG semantics in
+  the relay — works with `wg`, `wg-quick`, pfSense, the
+  mobile WireGuard apps, with no client-side changes.
+- **XDP fast path**: optional kernel-level forwarding via
+  attached BPF program. Single-NIC `XDP_TX` for one-link
+  topologies, dual-NIC `XDP_REDIRECT` for separated
+  ingress/egress. Bare-metal 25 GbE: 10.4 Gbit/s
+  single-peer TCP. GCP n2-standard-4 with gVNIC GQI:
+  3.72 Gbit/s.
+- **`hd-cli` operator CLI** (bundled in the deb): driven
+  via einheit's REPL with branded chafa banner. Add /
+  remove peers and links, inspect counters, render
+  ready-to-paste `[Peer]` blocks for new clients.
+
+### Added — Packaging
+- **einheit operator CLI baked into the deb** via CMake
+  FetchContent. `apt install hyper-derp` is now fully
+  functional out of the box: einheit binary, `hd-cli`
+  wrapper, chafa-branded REPL, vendored systemd drop-in
+  with the WG/XDP capability bits, `/tmp/einheit/` IPC
+  dir, kernel modules autoloaded by postinst.
+
+### Added — HD Protocol
 - HD Protocol: native relay with connection-time auth,
   zero per-packet header rewrite
 - MeshData: 1:N selective routing with 2-byte peer IDs
@@ -44,6 +70,14 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 - UDP blaster for AF_XDP benchmarking
 
 ### Changed
+- **Docs reorganised**: `docs/` is operator-facing only
+  (quickstart, CLI handbook, configuration, packaging,
+  building, hd-wg). Internal design write-ups moved to
+  `docs/design/`. Benchmark reports relocated to the
+  separate `hyper-derp/HD.Benchmark` repo.
+- **WG-relay quickstart slimmed** to a copy-paste
+  homelab walkthrough — XDP / cloud / performance
+  material moved out to the bench repo.
 - `hd-wg` flow: configure wg.ko with the direct endpoint
   *first* (never the proxy), so WG's roaming doesn't
   latch onto `127.0.0.1:<proxy>` before ICE can run.

@@ -36,6 +36,21 @@ Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark)
 | TCP relay (8w, 25GbE) | 19,880 Mbps | 7,800 Mbps | **2.55x** |
 | AF_XDP relay (25GbE) | 24,600 Mbps | 7,800 Mbps | **3.15x** |
 
+## WireGuard Relay Mode
+
+Beyond the DERP path, `hyper-derp` can run as a transparent UDP relay
+for stock WireGuard clients (`mode: wireguard`). Two peers behind NAT
+point their `Endpoint =` at the relay; the relay forwards UDP based
+on a peer + link table you set up via `hd-cli`. No WG semantics in
+the relay, no signalling, no managed keys — works with `wg-quick`,
+pfSense, the mobile WireGuard apps. XDP fast-path optional.
+
+<p align="center">
+  <img src="graphics/wg-relay-cli.png" alt="hd-cli setting up a wireguard relay" width="640" />
+</p>
+
+Full walkthrough: [docs/wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md).
+
 ## Quick Start
 
 ```sh
