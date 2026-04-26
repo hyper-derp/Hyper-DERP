@@ -2,7 +2,7 @@ name: ARM64 Cross-Compile
 
 on:
   push:
-    branches: ["v0.1.x"]
+    branches: ["v0.1.x", "v0.2.x"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
