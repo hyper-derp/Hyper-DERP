@@ -86,7 +86,7 @@ operator REPL. The deb drops:
 ### Run it
 
 ```sh
-sudo vi /etc/hyper-derp/hyper-derp.yaml      # tweak the example
+sudo vim /etc/hyper-derp/hyper-derp.yaml     # tweak the example
 sudo systemctl start hyper-derp              # start the daemon
 journalctl -u hyper-derp -f                  # tail the logs
 hdcli                                        # drop into the operator REPL
