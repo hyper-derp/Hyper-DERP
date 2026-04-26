@@ -1,5 +1,5 @@
 /// @file hd_wg.cc
-/// @brief hd-wg daemon: WireGuard tunnels via HD Protocol.
+/// @brief hdwg daemon: WireGuard tunnels via HD Protocol.
 ///
 /// Connects to an HD relay, discovers peers via PeerInfo,
 /// exchanges WireGuard keys via MeshData (WGEX), attempts
@@ -594,7 +594,7 @@ static void CheckDirectPromotion(WgPeer* peer,
 
 static void PrintUsage() {
   fprintf(stderr,
-      "Usage: hd-wg [options]\n"
+      "Usage: hdwg [options]\n"
       "  --config PATH        YAML config file\n"
       "  --relay-host HOST    Relay IP\n"
       "  --relay-port PORT    Relay port (3341)\n"
@@ -709,7 +709,7 @@ int main(int argc, char** argv) {
   signal(SIGTERM, SigHandler);
   signal(SIGPIPE, SIG_IGN);
 
-  spdlog::info("hd-wg starting{}",
+  spdlog::info("hdwg starting{}",
                cfg.force_relay ? " (force-relay)" : "");
 
   // -------------------------------------------------------
@@ -878,7 +878,7 @@ int main(int argc, char** argv) {
   int reconnect_backoff = 1;
   uint64_t last_ping = NowMs();
 
-  spdlog::info("hd-wg running (tunnel {}, proxy "
+  spdlog::info("hdwg running (tunnel {}, proxy "
                "127.0.0.1:{}, mtu {})",
                cfg.tunnel_cidr, cfg.proxy_port,
                kWgTunnelMtu);

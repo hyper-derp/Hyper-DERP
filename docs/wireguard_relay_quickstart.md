@@ -51,7 +51,7 @@ sudo journalctl -u hyper-derp -n 10 --no-pager
 You should see `wg-relay listening on UDP :51820 (0 peers, 0 links, xdp=off)`. Now drop into the operator CLI (no sudo — IPC is set up so any user can talk to the daemon):
 
 ```bash
-hd-cli
+hdcli
 ```
 
 You'll get a `hyper-derp>` prompt with a small chafa banner. From here:
@@ -123,7 +123,7 @@ Ping won't work yet — the relay doesn't know about these peers.
 
 ## 6. Register peers + link on the relay
 
-Back in the `hd-cli` REPL on the relay:
+Back in the `hdcli` REPL on the relay:
 
 ```
 hyper-derp> wg peer add alice <ALICE-IP>:51820 alice-laptop
@@ -177,8 +177,8 @@ hyper-derp> wg show config <name> <RELAY-IP>:51820
 | --- | --- | --- |
 | ping silent, `drop_unknown_src` ticks in `wg show` | client's source IP:port doesn't match what you registered | `tcpdump -i any -nn udp port 51820` on the relay; register what you see |
 | ping silent, `drop_no_link` ticks | peer registered, link not added | `wg link add <a> <b>` |
-| `hd-cli`: `Connection refused` | daemon not running | `sudo systemctl status hyper-derp`, then `journalctl -u hyper-derp -n 30` |
-| `hd-cli`: `command not found` | deb not installed | reinstall — `hd-cli` and `einheit` ship together |
+| `hdcli`: `Connection refused` | daemon not running | `sudo systemctl status hyper-derp`, then `journalctl -u hyper-derp -n 30` |
+| `hdcli`: `command not found` | deb not installed | reinstall — `hdcli` and `einheit` ship together |
 
 If you change a peer's source endpoint (new public IP, NAT rebind), update it:
 

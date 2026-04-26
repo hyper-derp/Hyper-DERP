@@ -72,7 +72,7 @@ endif()
 # einheit-cli — operator CLI shipped inside the hyper-derp deb so
 # `apt install hyper-derp` is fully functional out of the box. The
 # einheit sub-build emits a `/usr/bin/einheit` install target; hyper-
-# derp's `hd-cli` wrapper resolves it via $PATH.
+# derp's `hdcli` wrapper resolves it via $PATH.
 #
 # Source resolution priority:
 #   1. EINHEIT_SOURCE_DIR cmake var or env (sibling source tree)

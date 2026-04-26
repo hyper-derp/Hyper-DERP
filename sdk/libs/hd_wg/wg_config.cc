@@ -1,5 +1,5 @@
 /// @file wg_config.cc
-/// @brief YAML config loader for hd-wg daemon.
+/// @brief YAML config loader for hdwg daemon.
 
 #include "hd/wg/wg_config.h"
 

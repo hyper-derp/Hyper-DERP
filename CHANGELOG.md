@@ -18,7 +18,7 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
   ingress/egress. Bare-metal 25 GbE: 10.4 Gbit/s
   single-peer TCP. GCP n2-standard-4 with gVNIC GQI:
   3.72 Gbit/s.
-- **`hd-cli` operator CLI** (bundled in the deb): driven
+- **`hdcli` operator CLI** (bundled in the deb): driven
   via einheit's REPL with branded chafa banner. Add /
   remove peers and links, inspect counters, render
   ready-to-paste `[Peer]` blocks for new clients.
@@ -26,7 +26,7 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added — Packaging
 - **einheit operator CLI baked into the deb** via CMake
   FetchContent. `apt install hyper-derp` is now fully
-  functional out of the box: einheit binary, `hd-cli`
+  functional out of the box: einheit binary, `hdcli`
   wrapper, chafa-branded REPL, vendored systemd drop-in
   with the WG/XDP capability bits, `/tmp/einheit/` IPC
   dir, kernel modules autoloaded by postinst.
@@ -50,7 +50,7 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
   netlink, proxy, state machine), `hd_ice` (NAT traversal),
   `hd_bridge` (TCP/unix ↔ tunnel), `hd_policy`
   (header-only routing intent), `hd_fleet` (topology view)
-- **`hd-wg` daemon**: client-side WireGuard driver.
+- **`hdwg` daemon**: client-side WireGuard driver.
   Signals via HD MeshData (WGEX / CAND / FALL), tries
   direct UDP first, falls back to a local `wg.ko ↔ HD`
   proxy when direct fails. `--force-relay` for
@@ -72,13 +72,13 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - **Docs reorganised**: `docs/` is operator-facing only
   (quickstart, CLI handbook, configuration, packaging,
-  building, hd-wg). Internal design write-ups moved to
+  building, hdwg). Internal design write-ups moved to
   `docs/design/`. Benchmark reports relocated to the
   separate `hyper-derp/HD.Benchmark` repo.
 - **WG-relay quickstart slimmed** to a copy-paste
   homelab walkthrough — XDP / cloud / performance
   material moved out to the bench repo.
-- `hd-wg` flow: configure wg.ko with the direct endpoint
+- `hdwg` flow: configure wg.ko with the direct endpoint
   *first* (never the proxy), so WG's roaming doesn't
   latch onto `127.0.0.1:<proxy>` before ICE can run.
   Fall back to proxy only on 5s ICE timeout or 500ms
@@ -91,7 +91,7 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - HD relay-path RTT from ~100ms to ~1.5ms (65×
-  improvement): `hd-wg` no longer blocks on
+  improvement): `hdwg` no longer blocks on
   `SO_RCVTIMEO` after draining the client receive
   buffer; poll wakes it on new TCP data instead.
 - `WgNlGetPeerHandshake` parsed netlink attributes
@@ -107,8 +107,8 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 - AF_XDP relay: 24,600 Mbps (3.15x Go derper, zero loss)
 - HD beats DERP by 6.5% with 37% less loss at saturation
 - Relay at 3% CPU forwarding 6 Gbps (client-bottlenecked)
-- `hd-wg` direct: 0.6 ms LAN RTT
-- `hd-wg` relayed: 1.5 ms RTT (same-host VMs, TLS)
+- `hdwg` direct: 0.6 ms LAN RTT
+- `hdwg` relayed: 1.5 ms RTT (same-host VMs, TLS)
 
 ## [0.1.5] - 2026-04-13
 

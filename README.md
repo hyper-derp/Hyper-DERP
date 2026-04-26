@@ -41,12 +41,12 @@ Full results: [HD.Benchmark](https://github.com/hyper-derp/HD.Benchmark)
 Beyond the DERP path, `hyper-derp` can run as a transparent UDP relay
 for stock WireGuard clients (`mode: wireguard`). Two peers behind NAT
 point their `Endpoint =` at the relay; the relay forwards UDP based
-on a peer + link table you set up via `hd-cli`. No WG semantics in
+on a peer + link table you set up via `hdcli`. No WG semantics in
 the relay, no signalling, no managed keys — works with `wg-quick`,
 pfSense, the mobile WireGuard apps. XDP fast-path optional.
 
 <p align="center">
-  <img src="graphics/wg-relay-cli.png" alt="hd-cli setting up a wireguard relay" width="640" />
+  <img src="graphics/wg-relay-cli.png" alt="hdcli setting up a wireguard relay" width="640" />
 </p>
 
 Full walkthrough: [docs/wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md).
@@ -83,7 +83,7 @@ sudo apt install ./build/hyper-derp_*.deb
 ```
 
 Either path installs the binary to `/usr/bin/`, the bundled
-operator CLI (`einheit` + `hd-cli`), an example config at
+operator CLI (`einheit` + `hdcli`), an example config at
 `/etc/hyper-derp/hyper-derp.yaml`, and the systemd unit.
 The postinst enables the service, loads the `tls` and
 `wireguard` kernel modules, and creates `/tmp/einheit`
@@ -191,10 +191,10 @@ FleetData frames) and a set of client tools built on it.
 |-----------|---------|------|
 | `hyper-derp` --hd-relay-key | Native HD relay; adds `--hd-relay-id` / `--hd-seed-relay` for fleet routing | [architecture.md](docs/design/architecture.md) |
 | HD SDK (`sdk/`) | C++23 client library — `hd::sdk::Client` / `Tunnel` with pluggable extensions (`hd_wg`, `hd_ice`, `hd_bridge`, `hd_policy`, `hd_fleet`) plus a C ABI wrapper | [sdk.md](docs/design/sdk.md) |
-| `hd-wg` | WireGuard tunnel daemon. Uses HD as signaling; tries direct UDP first, falls back (and auto-recovers) through the relay when direct paths die | [hd_wg.md](docs/hd_wg.md) |
+| `hdwg` | WireGuard tunnel daemon. Uses HD as signaling; tries direct UDP first, falls back (and auto-recovers) through the relay when direct paths die | [hdwg.md](docs/hdwg.md) |
 | `hdcat` | netcat/socat over HD tunnels. TCP / UDP / unix-socket / stdin-stdout, YAML config, wildcard peers | — |
 | `hdctl` | ZMQ IPC control CLI for the relay (list peers, drive a config-driven bridge) | — |
-| `hd-cli` | Operator REPL for `mode: wireguard` — peer / link table, XDP counters, `wg show config` to render `[Peer]` blocks. Wraps the bundled `einheit` framework with hyper-derp's adapter + IPC endpoints pre-wired | [wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md) |
+| `hdcli` | Operator REPL for `mode: wireguard` — peer / link table, XDP counters, `wg show config` to render `[Peer]` blocks. Wraps the bundled `einheit` framework with hyper-derp's adapter + IPC endpoints pre-wired | [wireguard_relay_quickstart.md](docs/wireguard_relay_quickstart.md) |
 
 ## Building
 

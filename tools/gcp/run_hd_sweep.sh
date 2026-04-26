@@ -106,7 +106,7 @@ run_test() {
 
   for i in 0 1 2 3; do
     if [ "$mode" = "hd" ]; then
-      $SSH "hd-client-${i}" --command "
+      $SSH "hdclient-${i}" --command "
         ./hd-scale-test --host $RELAY_IP --port $RELAY_PORT \
           --relay-key $RELAY_KEY \
           --metrics-host $RELAY_IP \
@@ -119,7 +119,7 @@ run_test() {
       " > "$outdir/${prefix}_${rate}_r$(printf '%02d' "$run")_c${i}.json" \
         2>/dev/null &
     else
-      $SSH "hd-client-${i}" --command "
+      $SSH "hdclient-${i}" --command "
         ./derp-scale-test --host $RELAY_IP --port $RELAY_PORT \
           --peers $PEERS_PER_CLIENT \
           --active-pairs $PAIRS_PER_CLIENT \

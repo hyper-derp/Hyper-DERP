@@ -1,5 +1,5 @@
-# hd-wg daemon configuration.
-# Copy to /etc/hd-wg/config.yaml and edit.
+# hdwg daemon configuration.
+# Copy to /etc/hdwg/config.yaml and edit.
 
 relay:
   host: "RELAY_IP"

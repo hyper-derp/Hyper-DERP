@@ -1,5 +1,5 @@
-add_executable(hd-wg hd_wg.cc)
-target_link_libraries(hd-wg PRIVATE hd_wg spdlog::spdlog)
+add_executable(hdwg hd_wg.cc)
+target_link_libraries(hdwg PRIVATE hd_wg spdlog::spdlog)
 
 add_executable(hdctl hdctl.cc)
 target_link_libraries(hdctl PRIVATE libderp ${ZMQ_LIB})

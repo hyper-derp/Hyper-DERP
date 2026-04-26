@@ -33,9 +33,9 @@ EINHEIT_ROLE=admin einheit \
 The test fleet ships a wrapper that bakes those flags in:
 
 ```bash
-hd-cli                 # interactive shell, admin role
-hd-cli show status     # one-shot
-hd-cli show fleet
+hdcli                 # interactive shell, admin role
+hdcli show status     # one-shot
+hdcli show fleet
 ```
 
 ### Over SSH
@@ -48,14 +48,14 @@ Host hd-r1-cli
   User worker
   IdentityFile ~/.ssh/id_ed25519_targets
   RequestTTY yes
-  RemoteCommand ~/bin/hd-cli
+  RemoteCommand ~/bin/hdcli
 ```
 
 Then:
 
 ```bash
 ssh hd-r1-cli                    # drops into the einheit shell
-ssh hd-r1 hd-cli show status     # oneshot via plain ssh
+ssh hd-r1 hdcli show status     # oneshot via plain ssh
 ```
 
 ### Roles

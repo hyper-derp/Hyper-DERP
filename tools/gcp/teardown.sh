@@ -10,7 +10,7 @@ ZONE="europe-west4-a"
 
 echo "Deleting benchmark VMs..."
 gcloud compute instances delete \
-  hd-relay hd-client-0 hd-client-1 hd-client-2 hd-client-3 \
+  hd-relay hdclient-0 hdclient-1 hdclient-2 hdclient-3 \
   --project="$PROJECT" --zone="$ZONE" --quiet
 
 echo "Teardown complete."
