@@ -104,21 +104,86 @@ Worst case: the gap between alice's IP change and her next
 handshake (default 120 s for active sessions, immediate for
 new ones with `PersistentKeepalive`).
 
-### Cooldown
+### Tentative-then-confirm: the safety gate
 
-To avoid rapid flapping if two actors compete for an endpoint
-slot (which only matters under attack — see security note
-below), the relay enforces a minimum interval between endpoint
-relearns per peer:
+A handshake init with valid MAC1 is necessary but not sufficient
+to commit the relearn. Anyone with knowledge of bob's pubkey
+can produce one. What an attacker **can't** produce is a
+follow-up packet that's actually part of a live WG session — the
+session keys are derived during the handshake from a Curve25519
+DH that requires alice's private key.
+
+So the relay does the relearn in two phases:
+
+1. **Tentative** — on a valid-MAC1 handshake init from an
+   unknown source, mark the new source as a `candidate` endpoint
+   for the peer. The committed endpoint stays unchanged. The
+   handshake response from the partner is mirrored to **both**
+   the candidate and the committed endpoints, so a real-alice
+   roam still completes (her wg.ko gets the response), and a
+   stale-alice (still at the old IP) keeps her existing session.
+2. **Confirm** — only commit the new endpoint once transport-data
+   (type 0x04) actually flows from the candidate. That packet
+   carries a receiver-index that wg.ko on the responder side
+   accepted; the relay doesn't need to verify it cryptographically,
+   it just needs to observe that the candidate is sending the
+   shape of traffic that follows a *successful* handshake. An
+   attacker without alice's private key never gets here — they
+   can't produce valid post-handshake messages.
 
 ```
-DEFAULT: 5 s minimum between relearns for the same peer
+T+0:    candidate handshake init (valid MAC1 against bob.pub)
+        from src=NEW_IP — committed endpoint untouched, candidate
+        recorded with 30 s timeout.
+T+0:    relay forwards init to bob.
+T+0:    bob's response → relay → forwarded to BOTH committed and
+        candidate endpoints.
+T+1:    real alice (at NEW_IP) decrypts response, sends transport
+        data from NEW_IP. Relay sees type 0x04 from NEW_IP →
+        commit: alice.endpoint = NEW_IP, candidate cleared.
+        endpoint_relearn[alice]++.
+T+30:   no transport-data ever arrived from NEW_IP →
+        candidate expires, alice.endpoint stays at OLD_IP.
+        drop_relearn_unconfirmed++.
+```
+
+Cost during the candidate window: one extra forward of the
+handshake response (16 + 92 = 108 bytes one time per relearn
+attempt). No effect on transport-data forwarding rate.
+
+### What this closes off
+
+The "attacker who knows bob's pubkey hijacks alice's endpoint
+slot" attack from the previous draft: now closed. The attacker
+can trigger a candidate state but can never confirm it, so the
+committed endpoint never moves. The only observable effect of
+the attack is `drop_relearn_unconfirmed` ticking up — a clean
+operator signal.
+
+### Cooldown
+
+To prevent attackers from churning the candidate slot (each
+candidate keeps state for 30 s), the relay enforces a minimum
+interval between *new* candidate registrations per peer:
+
+```
+DEFAULT: 5 s minimum between relearn attempts for the same peer
 ```
 
 Configurable via `hdcli wg peer relearn-cooldown alice <secs>`.
 Set to `0` to disable the cooldown, or `off` to disable
 relearning entirely for that peer (back to today's static
 behaviour).
+
+A second per-source-IP cap prevents one attacker from chewing
+through every peer's candidate slot in a scan:
+
+```
+DEFAULT: 100 candidate registrations / minute / source-IP
+```
+
+Beyond that: `drop_relearn_source_rate` ticks, candidates from
+that source are refused for 60 s.
 
 ## Use 2: Handshake validation
 
@@ -141,24 +206,24 @@ behaviour exactly. Engaging it is just `wg peer pubkey alice
 
 ## Security tradeoff
 
-WireGuard public keys are public. Anyone who knows bob's pubkey
-can forge a MAC1 for a handshake init "destined for" bob. So
-the attack surface introduced by automatic roaming is:
-
-> An attacker who knows bob's pubkey can send a forged
-> handshake init from any source IP, and the relay will update
-> alice's endpoint to point at the attacker.
-
-Concrete consequences and limits:
+With the tentative-then-confirm gate above, the attack surface
+collapses to:
 
 | | |
 |---|---|
-| Attacker can establish a WG tunnel to bob? | **No.** They don't have alice's static private key. The handshake fails on bob's side, no session is established. |
-| Attacker can read alice's traffic? | **No.** Same reason. They never see plaintext, never establish a session. |
-| Attacker can disrupt alice's tunnel? | **Yes, temporarily.** Alice's traffic gets misrouted to the attacker until alice's next legitimate handshake re-stamps the endpoint. |
-| How long is the disruption window? | Bounded by alice's keepalive / handshake cadence. With `PersistentKeepalive = 25`, ≤25 s. With kernel WG's 120 s rekey, ≤120 s. The relearn cooldown is a per-peer floor on this. |
-| Is this worse than today? | Marginally. Today an attacker who can spoof UDP source from `<alice-ip>:51820` (BCP-38-bypass capable) can already disrupt. The new attack widens the window from "attackers who can spoof alice's IP" to "attackers who know bob's pubkey". |
-| Can the operator detect it? | Yes. `endpoint_relearn` ticking on a peer that hasn't actually moved is a clean signal. `wg peer list` shows the count. |
+| Attacker can establish a WG tunnel to bob? | **No.** They don't have alice's static private key. |
+| Attacker can read alice's traffic? | **No.** Same reason. |
+| Attacker can hijack alice's endpoint slot? | **No.** Only a candidate slot — the committed endpoint never moves until transport-data confirms, and the attacker can't produce post-handshake transport-data. |
+| Attacker can disrupt alice's tunnel? | **No.** Old endpoint keeps forwarding throughout the candidate window. Real alice sees no interruption. |
+| Attacker can chew CPU / memory at the relay? | **Marginally.** Each candidate registration is one map entry + one extra response forward, gated by per-peer cooldown (5 s) and per-source rate cap (100 / min). |
+| Can the operator detect attempts? | Yes. `drop_relearn_unconfirmed` ticking is the canonical signal that someone tried and failed. `drop_relearn_source_rate` flags scanners. |
+| Is this worse than today? | No, on every axis above. The relay gains automatic roaming without losing any of today's properties. |
+
+The earlier draft's hijack window is closed: an attacker who
+forges a handshake init drives `drop_relearn_unconfirmed`,
+nothing else. Real alice's existing flow continues uninterrupted
+from her old endpoint until her own next handshake — at which
+point the candidate-confirm path commits the new endpoint.
 
 The mitigation if you want to keep automatic roaming off for a
 specific peer (datacentre / static-IP peers especially):
@@ -237,8 +302,11 @@ After this lands, `wg show` exposes:
 | `drop_no_link` | source matched, but peer has no link |
 | `drop_handshake_pubkey_mismatch` | type 1/2 from a registered source, but MAC1 didn't match the link partner's pubkey |
 | `drop_handshake_no_pubkey_match` | type 1/2 from an unknown source, MAC1 didn't match any partner's pubkey |
-| `drop_relearn_cooldown` | type 1/2 from unknown source, MAC1 matched, but cooldown is in effect |
-| `endpoint_relearn[peer]` (per-peer counter) | times this peer's endpoint was relearned via MAC1 |
+| `drop_relearn_cooldown` | type 1/2 from unknown source, MAC1 matched, but per-peer cooldown is in effect |
+| `drop_relearn_source_rate` | per-source-IP rate cap exceeded (≥100 / min) |
+| `drop_relearn_unconfirmed` | candidate endpoint expired without transport-data confirming the relearn — strong signal of a forged-handshake attempt |
+| `endpoint_relearn[peer]` (per-peer counter) | times this peer's endpoint was successfully relearned (after confirm) |
+| `endpoint_candidate[peer]` (per-peer counter) | times a candidate endpoint was registered (whether or not it confirmed) |
 
 Per-peer view in `wg peer list`:
 
