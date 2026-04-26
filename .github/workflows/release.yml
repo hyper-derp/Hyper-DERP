@@ -194,6 +194,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --notes-file "$notes_file" \
+              --discussion-category Announcements \
               hyper-derp_*.deb
           else
             # Fallback: auto-generate from commit history when
@@ -201,6 +202,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --generate-notes \
+              --discussion-category Announcements \
               hyper-derp_*.deb
           fi
         env:
