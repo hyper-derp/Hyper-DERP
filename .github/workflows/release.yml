@@ -175,6 +175,12 @@ jobs:
     needs: [build-amd64, build-arm64]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need the working tree so we can read
+          # dist/release-notes/<tag>.md.
+          fetch-depth: 1
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -183,9 +189,19 @@ jobs:
 
       - name: Create GitHub release
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --generate-notes \
-            hyper-derp_*.deb
+          notes_file="dist/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes_file" ]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes-file "$notes_file" \
+              hyper-derp_*.deb
+          else
+            # Fallback: auto-generate from commit history when
+            # we forgot to add a curated notes file.
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --generate-notes \
+              hyper-derp_*.deb
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
