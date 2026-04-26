@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  # Needed by `gh release create --discussion-category`.
+  discussions: write
 
 concurrency:
   group: release
@@ -29,51 +31,16 @@ jobs:
           fi
           echo "Tag on: $branches"
 
-  test:
-    name: Test
-    needs: [verify-branch]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-14 g++-14 \
-            cmake ninja-build \
-            liburing-dev libsodium-dev \
-            libgtest-dev libgmock-dev libcli11-dev \
-            libssl-dev libasio-dev libboost-dev \
-            libbpf-dev libmnl-dev libzmq3-dev cppzmq-dev
-      - name: Set GCC 14
-        run: |
-          sudo update-alternatives \
-            --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
-            --slave /usr/bin/g++ g++ /usr/bin/g++-14
-
-      - name: Configure
-        run: >
-          cmake --preset debug
-          -DCMAKE_C_COMPILER=gcc-14
-          -DCMAKE_CXX_COMPILER=g++-14
-
-      - name: Build
-        run: cmake --build build-debug -j$(nproc)
-
-      - name: Unit tests
-        # Excludes anything that forks an HD relay — the GHA
-        # sandbox blocks setsockopt(TCP_ULP, "tls") so the
-        # in-test relay can't finish coming up. Same exclusion
-        # list as build.yml.
-        run: >
-          ctest --test-dir build-debug
-          --output-on-failure
-          -E "E2E|Ktls|ProductionTest|SdkTest|HdPeerInfoTest|HdReconnectTest|EinheitChannelTest|FleetTransitTest|OpenConnTest"
+  # Test job removed: build.yml runs the same suite on every PR
+  # to master / v*.x, so by the time a tag points at v*.x the
+  # tests already passed. verify-branch above ensures the tag
+  # really is on a release branch. Re-running the full debug
+  # build + ctest from a cold runner cache costs ~4 min for no
+  # additional safety.
 
   build-amd64:
     name: Build (amd64)
-    needs: [test]
+    needs: [verify-branch]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,7 +81,7 @@ jobs:
 
   build-arm64:
     name: Build (arm64)
-    needs: [test]
+    needs: [verify-branch]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
