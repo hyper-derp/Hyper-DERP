@@ -713,11 +713,19 @@ void HandleUnknownSrcHandshakeLocked(
     // the candidate's set_ns and the slot would never expire,
     // letting an attacker pin the slot indefinitely. Treat
     // that as a no-op forward — the existing candidate is
-    // still valid.
+    // still valid. We DO refresh candidate_init_sender_index
+    // (each retry from wg.ko picks a fresh sender_index, and
+    // we want the partner-response match to track the latest
+    // init since that's the one bob's wg.ko responds to).
     if (sender->candidate_endpoint_len > 0 &&
         SockaddrEqual(sender->candidate_endpoint,
                        sender->candidate_endpoint_len, src,
                        src_len)) {
+      if (pkt[0] == 1 && len >= 8) {
+        uint32_t idx;
+        std::memcpy(&idx, pkt + 4, 4);
+        sender->candidate_init_sender_index = idx;
+      }
       ssize_t sent = sendto(
           r->sock_fd, pkt, len, 0,
           reinterpret_cast<const sockaddr*>(&p.endpoint),
