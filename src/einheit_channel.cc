@@ -1949,6 +1949,8 @@ void WgShow(Server* s, const Request& /*req*/,
     shape_total += stats.xdp.drop_not_wg_shaped;
   }
   b += std::format("drop_not_wg_shaped={}\n", shape_total);
+  b += std::format("drop_handshake_pubkey_mismatch={}\n",
+                   stats.drop_handshake_pubkey_mismatch);
   b += std::format("xdp_attached={}\n",
                    stats.xdp_attached ? "true" : "false");
   if (stats.xdp_attached) {

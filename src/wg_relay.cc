@@ -3,6 +3,8 @@
 
 #include "hyper_derp/wg_relay.h"
 
+#include "crypto/blake2s.h"
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
@@ -355,6 +357,81 @@ void PersistRosterLocked(WgRelay* r) {
 
 // -- Forward path --------------------------------------
 
+// WireGuard MAC1 derivation. The MAC1 key for a peer is
+// Blake2s(LABEL_MAC1 || peer_static_pubkey) — independent of
+// the message, derived once per peer pubkey. The MAC1 itself
+// is Blake2s_keyed(mac1_key, msg[0..len-32], outlen=16) and
+// occupies bytes [len-32 .. len-16] of an init/response.
+constexpr char kLabelMac1[] = "mac1----";
+
+// Decode a 32-byte WireGuard pubkey from its base64 form.
+// Returns false on malformed input.
+bool DecodeWgPubkey(const std::string& b64,
+                    std::array<uint8_t, 32>* out) {
+  if (b64.size() < 43) return false;  // 32 bytes → 44 chars
+  auto val = [](char c) -> int {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+  };
+  int held = 0;
+  int bits = 0;
+  size_t outc = 0;
+  for (char c : b64) {
+    if (c == '=') break;
+    if (c == '\n' || c == '\r' || c == ' ') continue;
+    int v = val(c);
+    if (v < 0) return false;
+    held = (held << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      if (outc >= 32) return false;
+      (*out)[outc++] =
+          static_cast<uint8_t>((held >> bits) & 0xFF);
+    }
+  }
+  return outc == 32;
+}
+
+// Compute the 32-byte MAC1 key from the peer's static pubkey.
+// Cheap (one Blake2s of 40 bytes); we recompute per packet
+// rather than caching — handshakes are rare.
+void DeriveMac1Key(const uint8_t pubkey[32],
+                   uint8_t mac1_key[32]) {
+  uint8_t input[8 + 32];
+  std::memcpy(input, kLabelMac1, 8);
+  std::memcpy(input + 8, pubkey, 32);
+  hyper_derp::crypto::Blake2s(mac1_key, 32, nullptr, 0, input,
+                              sizeof(input));
+}
+
+// Verify the MAC1 field on a WG handshake init/response.
+// Returns true if MAC1 matches the expected value derived
+// from `partner_pubkey` (the responder's static key, which is
+// what the *destination* of the forwarded packet is).
+bool VerifyMac1(const uint8_t* pkt, size_t len,
+                const uint8_t partner_pubkey[32]) {
+  // MAC1 lives 32 bytes from the end (mac1 16 + mac2 16),
+  // computed over msg[0..len-32].
+  if (len < 32) return false;
+  uint8_t mac1_key[32];
+  DeriveMac1Key(partner_pubkey, mac1_key);
+  uint8_t got[16];
+  hyper_derp::crypto::Blake2s(got, 16, mac1_key, 32, pkt,
+                              len - 32);
+  // Constant-time compare. 16 bytes — small enough for a
+  // straight loop.
+  uint8_t diff = 0;
+  for (size_t i = 0; i < 16; ++i) {
+    diff |= got[i] ^ pkt[len - 32 + i];
+  }
+  return diff == 0;
+}
+
 // Return true if `pkt` looks like a valid WireGuard
 // message: first byte is one of the four message types
 // (1 init, 2 response, 3 cookie, 4 transport) and the
@@ -433,6 +510,28 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     r->stats.drop_no_link.fetch_add(
         1, std::memory_order_relaxed);
     return;
+  }
+
+  // Optional MAC1 verification on handshake init/response.
+  // Engages only when the link partner has a stamped pubkey;
+  // the operator opts in by running `wg peer pubkey <name>
+  // <key>` on both ends of a link. Catches packets from a
+  // registered source that aren't actually WG handshakes
+  // for the configured partner — e.g. NAT collisions, stale
+  // endpoint reuse, or someone pointed at the wrong relay.
+  if ((pkt[0] == 1 || pkt[0] == 2) && !dst->pubkey_b64.empty()) {
+    std::array<uint8_t, 32> partner_pub;
+    if (DecodeWgPubkey(dst->pubkey_b64, &partner_pub)) {
+      if (!VerifyMac1(pkt, len, partner_pub.data())) {
+        r->stats.drop_handshake_pubkey_mismatch.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+      }
+    }
+    // If pubkey_b64 is set but doesn't decode, fall through —
+    // we'd rather forward a packet than drop one because of a
+    // bad operator-stamped key. The decode failure shows up at
+    // pubkey-set time anyway.
   }
 
   ssize_t sent = sendto(
@@ -1238,6 +1337,9 @@ WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r) {
       std::memory_order_relaxed);
   s.drop_not_wg_shaped = r->stats.drop_not_wg_shaped.load(
       std::memory_order_relaxed);
+  s.drop_handshake_pubkey_mismatch =
+      r->stats.drop_handshake_pubkey_mismatch.load(
+          std::memory_order_relaxed);
   s.xdp_attached = r->xdp.attached;
   XdpReadStats(r, &s.xdp);
   std::lock_guard lk(r->peers_mu);

@@ -88,6 +88,13 @@ struct WgRelayStats {
   /// XDP STAT_DROP_NOT_WG_SHAPED counter for the userspace
   /// fallback path.
   std::atomic<uint64_t> drop_not_wg_shaped{0};
+  /// Handshake init/response from a registered source whose
+  /// MAC1 field doesn't verify against the link partner's
+  /// stamped pubkey. Engages only when the operator has
+  /// stamped pubkeys on both ends of a link. A non-zero count
+  /// usually means a misconfigured client, a NAT collision,
+  /// or someone pointed at the wrong relay.
+  std::atomic<uint64_t> drop_handshake_pubkey_mismatch{0};
 };
 
 /// One attached NIC. The same BPF program is attached to
@@ -232,6 +239,7 @@ struct WgRelayStatsSnapshot {
   uint64_t drop_unknown_src;
   uint64_t drop_no_link;
   uint64_t drop_not_wg_shaped;
+  uint64_t drop_handshake_pubkey_mismatch;
   size_t peer_count;
   size_t link_count;
   /// XDP-path counters, zero when xdp.attached is false.

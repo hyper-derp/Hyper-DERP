@@ -250,6 +250,17 @@ int wg_relay_xdp(struct xdp_md *ctx)
 		return XDP_DROP;
 	}
 
+	// Hand handshake init (1) and response (2) packets up
+	// to userspace: it owns the MAC1 verification + the
+	// candidate-then-confirm roaming flow, neither of which
+	// fits the XDP verifier comfortably and both of which
+	// are rare enough (one handshake per session per ~25 s)
+	// that the userspace round trip is free.  Cookie reply
+	// (3) and transport data (4) keep the XDP fast path.
+	if (wg_type == 1 || wg_type == 2) {
+		return XDP_PASS;
+	}
+
 	// Look up the source endpoint in the peer map. Miss
 	// means either an unregistered peer or one whose
 	// source IP/port doesn't match the operator's pin —
