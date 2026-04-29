@@ -1074,7 +1074,10 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
       std::memcpy(&recv_idx, pkt + 8, 4);
       WgRelayPeer* mut_dst = nullptr;
       for (auto& p : r->peers) {
-        if (p.name == dst->name) { mut_dst = &p; break; }
+        if (p.name == dst->name) {
+          mut_dst = &p;
+          break;
+        }
       }
       if (mut_dst &&
           mut_dst->candidate_init_sender_index != 0 &&
