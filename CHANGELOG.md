@@ -3,6 +3,53 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] - unreleased
+
+### Added — wg-relay hardening
+
+- **WG-shape filter at XDP**: drops packets whose first byte
+  isn't a WireGuard message type (1/2/3/4) or whose length
+  doesn't match the type. Fires before the source-IP lookup,
+  so non-WG noise on the relay's port stops at the NIC and
+  doesn't pollute `drop_unknown_src`. New counter
+  `drop_not_wg_shaped`.
+- **MAC1 verification for handshakes**: when both ends of a
+  link have `wg peer pubkey` stamped, every handshake init
+  / response from a registered peer is verified against the
+  partner's pubkey via Blake2s-keyed MAC1. Mismatch drops
+  with `drop_handshake_pubkey_mismatch`. Catches misconfigured
+  clients (wrong relay, NAT collisions, stale endpoint reuse).
+  Engages only when the partner pubkey is set, so existing
+  operators keep today's behaviour exactly.
+- **Automatic peer roaming** (`mode: wireguard`): a peer's
+  endpoint auto-updates when their IP changes. Handshake from
+  an unknown source is matched against every partner's pubkey
+  via MAC1 to identify which peer it's from; a candidate
+  endpoint is registered. The committed endpoint stays put
+  until transport-data from the candidate confirms the roam,
+  at which point the new endpoint is committed, the BPF map
+  is refreshed (XDP fast path picks up the new endpoint), and
+  the roster is persisted. New per-peer counter
+  `endpoint_relearn`. Forged handshakes (attacker who knows
+  the pubkey but lacks the private key) tick
+  `drop_relearn_unconfirmed` and never commit.
+- **Dynamic source-IP blocklist**: source IPs that produce
+  repeated failed-confirm strikes (forged handshakes that
+  never progressed to transport data) escalate onto a BPF
+  blocklist. Defaults: 2 strikes / 60 s → 60 s block;
+  5 / 1 h → 1 h block; 10 / 24 h → 24 h block. Blocked
+  sources drop at the top of XDP. Closes the relay-as-
+  anonymizer attack against the partner. New verb
+  `wg blocklist list`. New counters `drop_blocklisted` (XDP)
+  and per-IP strike records.
+
+### Added — Crypto
+
+- **Standalone Blake2s** in `src/crypto/`. RFC 7693 reference
+  port; libsodium ships Blake2b only and WireGuard's MAC1
+  uses Blake2s specifically. Verified against the published
+  "abc" / empty-input vectors.
+
 ## [0.2.0] - 2026-04-26
 
 ### Added — WireGuard Relay Mode
