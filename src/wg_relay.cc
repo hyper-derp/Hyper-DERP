@@ -405,6 +405,11 @@ void PersistRosterLocked(WgRelay* r) {
 //     registrations for the same peer (rate-limits flap).
 constexpr uint64_t kCandidateTimeoutNs = 30ULL * 1'000'000'000ULL;
 constexpr uint64_t kRelearnCooldownNs = 5ULL * 1'000'000'000ULL;
+// Rate-limit retry-init forwards from a not-yet-confirmed
+// candidate. wg.ko's retry cadence is 5 s; legit clients only
+// trip this when their network is genuinely flaky, while a
+// forger spamming at line rate gets clamped to ~1 pps.
+constexpr uint64_t kRetryForwardGapNs = 1ULL * 1'000'000'000ULL;
 
 // Blocklist escalation policy. Each strike records a failed
 // candidate confirmation from this source IP; once the count
@@ -634,6 +639,7 @@ void ExpireCandidatesLocked(WgRelay* r) {
                           p.candidate_endpoint_len);
       p.candidate_endpoint_len = 0;
       p.candidate_set_ns = 0;
+      p.candidate_last_forward_ns = 0;
       p.candidate_init_sender_index = 0;
       p.candidate_partner_responded = false;
       r->stats.drop_relearn_unconfirmed.fetch_add(
@@ -687,6 +693,18 @@ WgRelayPeer* FindLinkPartnerLocked(WgRelay* r,
 void HandleUnknownSrcHandshakeLocked(
     WgRelay* r, const uint8_t* pkt, size_t len,
     const sockaddr_storage& src, socklen_t src_len) {
+  // Type 2 (response) from an unknown source has no place in
+  // the protocol: legitimate responses come from the
+  // committed responder endpoint and hit the regular forward
+  // path. Accepting them here would give a forger a free
+  // unauthenticated amplifier — register once, then bounce
+  // any number of WG-shaped packets at the partner via the
+  // same-source no-op-forward branch. Drop outright.
+  if (pkt[0] != 1) {
+    r->stats.drop_unknown_src.fetch_add(
+        1, std::memory_order_relaxed);
+    return;
+  }
   uint64_t now = NowNs();
   for (auto& p : r->peers) {
     if (p.pubkey_b64.empty()) continue;
@@ -726,6 +744,19 @@ void HandleUnknownSrcHandshakeLocked(
         std::memcpy(&idx, pkt + 4, 4);
         sender->candidate_init_sender_index = idx;
       }
+      // Rate-limit retry forwards. Legit wg.ko retries every
+      // 5 s; a forger spamming retries to abuse the relay as
+      // an amplifier gets clamped to ~1 pps. Drops above the
+      // gap count as drop_unknown_src so the forger can't
+      // distinguish "you're rate-limited" from "your packet
+      // was malformed."
+      if (now - sender->candidate_last_forward_ns
+          < kRetryForwardGapNs) {
+        r->stats.drop_unknown_src.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+      }
+      sender->candidate_last_forward_ns = now;
       ssize_t sent = sendto(
           r->sock_fd, pkt, len, 0,
           reinterpret_cast<const sockaddr*>(&p.endpoint),
@@ -751,21 +782,15 @@ void HandleUnknownSrcHandshakeLocked(
     std::memcpy(&sender->candidate_endpoint, &src, src_len);
     sender->candidate_endpoint_len = src_len;
     sender->candidate_set_ns = now;
+    sender->candidate_last_forward_ns = now;
     sender->candidate_partner_responded = false;
     // Init sender_index lives at bytes 4..8 of the type-1
     // packet (little-endian per the WG spec).  We use it to
     // match against the partner's response receiver_index
     // before letting transport-data confirm the candidate.
-    if (pkt[0] == 1 && len >= 8) {
-      uint32_t idx;
-      std::memcpy(&idx, pkt + 4, 4);
-      sender->candidate_init_sender_index = idx;
-    } else {
-      // Type 2 (response): we can't tie this to an init
-      // we forwarded.  Disallow confirmation entirely; the
-      // candidate will expire naturally.
-      sender->candidate_init_sender_index = 0;
-    }
+    uint32_t idx;
+    std::memcpy(&idx, pkt + 4, 4);
+    sender->candidate_init_sender_index = idx;
 
     // Forward the handshake to the destination.
     ssize_t sent = sendto(
@@ -851,6 +876,7 @@ WgRelayPeer* ConfirmCandidateLocked(
                                      p.candidate_endpoint_len);
     p.candidate_endpoint_len = 0;
     p.candidate_set_ns = 0;
+    p.candidate_last_forward_ns = 0;
     p.candidate_init_sender_index = 0;
     p.candidate_partner_responded = false;
     p.last_relearn_ns = now;

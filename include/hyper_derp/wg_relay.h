@@ -95,6 +95,16 @@ struct WgRelayPeer {
   /// is garbage), so no matching response ever flows, so
   /// the candidate never gains the right to confirm.
   bool candidate_partner_responded = false;
+  /// Steady-clock ns of the most recent retry-init forward
+  /// from the same source. Used to rate-limit retry forwards
+  /// while the candidate is unconfirmed: a forger with the
+  /// public mac1 key can craft unlimited valid type-1 inits,
+  /// so the no-op-forward branch would otherwise let them
+  /// bounce arbitrary packets at the partner via the relay.
+  /// wg.ko's normal retry cadence is 5 s, so capping at one
+  /// forward per second is conservative for legit clients
+  /// while sharply limiting amplifier abuse.
+  uint64_t candidate_last_forward_ns = 0;
   /// Steady-clock ns of the last completed relearn — gates
   /// new candidate registrations against rapid flapping.
   uint64_t last_relearn_ns = 0;
