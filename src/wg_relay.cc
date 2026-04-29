@@ -706,6 +706,37 @@ void HandleUnknownSrcHandshakeLocked(
       return;
     }
 
+    // Already-pending candidate gates: a back-to-back
+    // handshake from the SAME source would otherwise refresh
+    // the candidate's set_ns and the slot would never expire,
+    // letting an attacker pin the slot indefinitely. Treat
+    // that as a no-op forward — the existing candidate is
+    // still valid.
+    if (sender->candidate_endpoint_len > 0 &&
+        SockaddrEqual(sender->candidate_endpoint,
+                       sender->candidate_endpoint_len, src,
+                       src_len)) {
+      ssize_t sent = sendto(
+          r->sock_fd, pkt, len, 0,
+          reinterpret_cast<const sockaddr*>(&p.endpoint),
+          p.endpoint_len);
+      if (sent > 0) {
+        r->stats.fwd_packets.fetch_add(
+            1, std::memory_order_relaxed);
+      }
+      return;
+    }
+
+    // A different source is contesting an existing candidate
+    // — drop it. The current candidate keeps its expiry
+    // timer; if it doesn't confirm, the strike + blocklist
+    // path will catch the attacker.
+    if (sender->candidate_endpoint_len > 0) {
+      r->stats.drop_unknown_src.fetch_add(
+          1, std::memory_order_relaxed);
+      return;
+    }
+
     // Register the candidate. Committed endpoint stays put.
     std::memcpy(&sender->candidate_endpoint, &src, src_len);
     sender->candidate_endpoint_len = src_len;
@@ -959,9 +990,21 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
 
 void RecvLoop(WgRelay* r) {
   std::vector<uint8_t> buf(2048);
+  uint64_t last_sweep_ns = 0;
+  constexpr uint64_t kSweepIntervalNs =
+      1ULL * 1'000'000'000ULL;  // 1 s
   while (r->running.load(std::memory_order_acquire)) {
     pollfd pfd{r->sock_fd, POLLIN, 0};
     int rc = poll(&pfd, 1, 200);
+    // Periodic sweep — runs whether or not a packet
+    // arrived, so candidate timeouts and expired blocklist
+    // entries fire on idle relays too.
+    uint64_t now = NowNs();
+    if (now - last_sweep_ns >= kSweepIntervalNs) {
+      std::lock_guard lk(r->peers_mu);
+      ExpireCandidatesLocked(r);
+      last_sweep_ns = now;
+    }
     if (rc <= 0) continue;
     sockaddr_storage src{};
     socklen_t src_len = sizeof(src);
