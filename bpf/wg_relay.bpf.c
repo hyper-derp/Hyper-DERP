@@ -34,6 +34,7 @@
 #define STAT_PASS_NO_PEER		2
 #define STAT_PASS_NO_MAC		3
 #define STAT_DROP_NOT_WG_SHAPED		4
+#define STAT_DROP_BLOCKLISTED		5
 
 // -- Map types --------------------------------------------
 
@@ -142,6 +143,26 @@ struct {
 	__type(value, __u32);	// ipv4 in network byte order
 } wg_nic_ips SEC(".maps");
 
+// Blocklist for source IPs that produced repeated failed
+// candidate confirmations (i.e. forged handshakes — they had
+// the partner's pubkey but couldn't progress to transport
+// data because they don't have the static private key).
+// Userspace populates expiry_ns from CLOCK_MONOTONIC; the
+// BPF program compares against bpf_ktime_get_ns().  An
+// entry whose expiry has passed is treated as not present —
+// userspace sweeps the map periodically but a stale-but-
+// expired entry is harmless either way.
+struct blocklist_entry {
+	__u64 expiry_ns;	// monotonic ns; 0 = no longer active
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 8192);
+	__type(key, __u32);	// IPv4 src in network byte order
+	__type(value, struct blocklist_entry);
+} wg_blocklist SEC(".maps");
+
 // -- Helpers ----------------------------------------------
 
 static __always_inline void
@@ -206,6 +227,19 @@ int wg_relay_xdp(struct xdp_md *ctx)
 		return XDP_PASS;
 
 	inc_stat(STAT_RX);
+
+	// Dynamic blocklist — drop sources that produced
+	// repeated failed candidate confirmations.  Stale
+	// entries (expiry in the past) fall through.
+	{
+		__u32 src_ip = ip->saddr;
+		struct blocklist_entry *bl =
+			bpf_map_lookup_elem(&wg_blocklist, &src_ip);
+		if (bl && bl->expiry_ns > bpf_ktime_get_ns()) {
+			inc_stat(STAT_DROP_BLOCKLISTED);
+			return XDP_DROP;
+		}
+	}
 
 	// WG-shape filter — peek at the first byte of the UDP
 	// payload and verify it's a WireGuard message type

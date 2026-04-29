@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <string>
 #include <thread>
+#include <map>
 #include <vector>
 
 #include "hyper_derp/server.h"
@@ -152,6 +153,10 @@ struct WgXdpCtx {
   /// into per-peer rx_bytes/fwd_bytes in `wg peer list` so
   /// the operator sees XDP-path traffic alongside userspace.
   int peer_bytes_map_fd = -1;
+  /// Source-IP blocklist (HASH key=u32 IPv4 NBO, value=
+  /// blocklist_entry). Userspace writes; BPF reads + drops
+  /// on every packet from a live blocklisted source.
+  int blocklist_map_fd = -1;
   /// Devmap (key = ifindex, value = ifindex) used for
   /// cross-NIC redirect. Populated at attach with one
   /// entry per attachment's ifindex.
@@ -178,6 +183,17 @@ struct WgXdpStats {
   uint64_t pass_no_peer = 0;
   uint64_t pass_no_mac = 0;
   uint64_t drop_not_wg_shaped = 0;
+  uint64_t drop_blocklisted = 0;
+};
+
+/// Strike record per source IP — incremented when a candidate
+/// endpoint that source registered fails to confirm via
+/// transport-data. Escalates the source onto the blocklist
+/// after a threshold is crossed.
+struct WgRelayStrike {
+  uint32_t count = 0;
+  uint64_t first_strike_ns = 0;
+  uint64_t total_strikes = 0;
 };
 
 struct WgRelay {
@@ -185,11 +201,19 @@ struct WgRelay {
   uint16_t port = 0;
   std::vector<WgRelayPeer> peers;
   std::vector<WgRelayLink> links;
-  /// peers_mu guards peers + links + roster_path writes.
-  /// All operator-side mutations and the recv loop's
-  /// per-packet lookups serialize on it; the lookup is
-  /// O(N) but N is small (operator-supplied peer roster).
+  /// peers_mu guards peers + links + roster_path writes
+  /// AND the strike + blocklist tables below.
   mutable std::mutex peers_mu;
+  /// Failed-confirm strikes by source IP (host-byte-order
+  /// uint32_t). Cleared from a peer's record once a confirm
+  /// succeeds; escalated to wg_blocklist once the threshold
+  /// is crossed.
+  std::map<uint32_t, WgRelayStrike> strikes;
+  /// Blocked source IPs (host-byte-order uint32_t) → expiry
+  /// timestamp (steady_clock ns). Mirrors the BPF
+  /// wg_blocklist map for `wg blocklist list` / userspace
+  /// drop in case XDP isn't attached.
+  std::map<uint32_t, uint64_t> blocklist;
   WgRelayStats stats;
   std::atomic<bool> running{false};
   std::thread loop_thread;
@@ -274,6 +298,14 @@ struct WgRelayStatsSnapshot {
   bool xdp_attached;
 };
 WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r);
+
+struct WgBlocklistView {
+  std::string ip;            // dotted-quad IPv4
+  uint64_t seconds_left;     // until expiry
+  uint64_t total_strikes;    // cumulative for this IP
+};
+std::vector<WgBlocklistView> WgRelayListBlocklist(
+    const WgRelay* r);
 
 }  // namespace hyper_derp
 

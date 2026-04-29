@@ -1928,6 +1928,26 @@ void WgShowConfig(Server* s, const Request& req,
   SetBody(r, body);
 }
 
+void WgBlocklistList(Server* s, const Request& /*req*/,
+                      Response* r) {
+  if (!WgGate(s, r)) return;
+  auto entries = WgRelayListBlocklist(s->wg_relay);
+  if (entries.empty()) {
+    SetBody(r, "blocklist=empty\n");
+    return;
+  }
+  std::string b;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    b += std::format("entry.{}.ip={}\n", i, entries[i].ip);
+    b += std::format("entry.{}.seconds_left={}\n", i,
+                     entries[i].seconds_left);
+    b += std::format("entry.{}.total_strikes={}\n", i,
+                     entries[i].total_strikes);
+  }
+  b += std::format("count={}\n", entries.size());
+  SetBody(r, b);
+}
+
 void WgShow(Server* s, const Request& /*req*/,
             Response* r) {
   if (!WgGate(s, r)) return;
@@ -1966,6 +1986,8 @@ void WgShow(Server* s, const Request& /*req*/,
                      stats.xdp.pass_no_peer);
     b += std::format("xdp_pass_no_mac={}\n",
                      stats.xdp.pass_no_mac);
+    b += std::format("xdp_drop_blocklisted={}\n",
+                     stats.xdp.drop_blocklisted);
   }
   SetBody(r, b);
 }
@@ -2193,6 +2215,11 @@ Registry MakeRegistry() {
   m["wg_show"] = {WgShow, Role::kAny, "wg show",
                    "Aggregate counters + roster summary",
                    false, {}};
+  m["wg_blocklist_list"] = {
+      WgBlocklistList, Role::kAny, "wg blocklist list",
+      "Source IPs auto-blocked after repeated failed-confirm "
+      "strikes (forged-handshake protection)",
+      false, {}};
   return m;
 }
 

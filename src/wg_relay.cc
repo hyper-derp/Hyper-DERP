@@ -406,6 +406,25 @@ void PersistRosterLocked(WgRelay* r) {
 constexpr uint64_t kCandidateTimeoutNs = 30ULL * 1'000'000'000ULL;
 constexpr uint64_t kRelearnCooldownNs = 5ULL * 1'000'000'000ULL;
 
+// Blocklist escalation policy. Each strike records a failed
+// candidate confirmation from this source IP; once the count
+// crosses a threshold within the matching window, the source
+// gets blocklisted for the listed duration. See
+// docs/design/wg_relay_pubkey_filter.md for the rationale.
+struct StrikePolicy {
+  uint32_t strikes;
+  uint64_t window_ns;
+  uint64_t block_ns;
+};
+constexpr StrikePolicy kStrikePolicy[] = {
+    {2, 60ULL * 1'000'000'000ULL,
+     60ULL * 1'000'000'000ULL},
+    {5, 3600ULL * 1'000'000'000ULL,
+     3600ULL * 1'000'000'000ULL},
+    {10, 86400ULL * 1'000'000'000ULL,
+     86400ULL * 1'000'000'000ULL},
+};
+
 // WireGuard MAC1 derivation. The MAC1 key for a peer is
 // Blake2s(LABEL_MAC1 || peer_static_pubkey) — independent of
 // the message, derived once per peer pubkey. The MAC1 itself
@@ -498,6 +517,104 @@ bool IsWgShaped(const uint8_t* pkt, size_t len) {
   }
 }
 
+// Pull the IPv4 source out of an arbitrary sockaddr_storage
+// into host byte order. Returns 0 on non-v4 / unmappable.
+uint32_t ExtractV4SrcHostOrder(const sockaddr_storage& ss,
+                                socklen_t len) {
+  if (ss.ss_family == AF_INET &&
+      len >= static_cast<socklen_t>(sizeof(sockaddr_in))) {
+    const auto* sin =
+        reinterpret_cast<const sockaddr_in*>(&ss);
+    return ntohl(sin->sin_addr.s_addr);
+  }
+  if (ss.ss_family == AF_INET6 &&
+      len >= static_cast<socklen_t>(sizeof(sockaddr_in6))) {
+    const auto* sin6 =
+        reinterpret_cast<const sockaddr_in6*>(&ss);
+    static const uint8_t kV4Prefix[12] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+    if (std::memcmp(sin6->sin6_addr.s6_addr, kV4Prefix, 12)
+        == 0) {
+      uint32_t a = 0;
+      std::memcpy(&a, sin6->sin6_addr.s6_addr + 12, 4);
+      return ntohl(a);
+    }
+  }
+  return 0;
+}
+
+// Push the host-order IP + expiry into the BPF blocklist
+// map. Best-effort — XDP not attached or bpf write failure
+// just leaves userspace as the only enforcer.
+void XdpBlocklistInsert(WgRelay* r, uint32_t host_ip,
+                         uint64_t expiry_ns) {
+  if (!r->xdp.attached || r->xdp.blocklist_map_fd < 0) return;
+  uint32_t key = htonl(host_ip);
+  struct {
+    uint64_t expiry_ns;
+  } val{expiry_ns};
+  bpf_map_update_elem(r->xdp.blocklist_map_fd, &key, &val,
+                       BPF_ANY);
+}
+
+void XdpBlocklistDelete(WgRelay* r, uint32_t host_ip) {
+  if (!r->xdp.attached || r->xdp.blocklist_map_fd < 0) return;
+  uint32_t key = htonl(host_ip);
+  bpf_map_delete_elem(r->xdp.blocklist_map_fd, &key);
+}
+
+// Record a failed-confirm strike for `src` and escalate to
+// the blocklist if the threshold is crossed. Caller holds
+// peers_mu.
+void RecordStrikeLocked(WgRelay* r,
+                         const sockaddr_storage& src,
+                         socklen_t src_len) {
+  uint32_t ip_h = ExtractV4SrcHostOrder(src, src_len);
+  if (ip_h == 0) return;  // not v4-representable
+  uint64_t now = NowNs();
+  WgRelayStrike& s = r->strikes[ip_h];
+  s.total_strikes += 1;
+
+  // Find the policy whose window starts past the first
+  // strike — i.e. the recent-most window that's still open.
+  // Reset the per-window count if we're outside the most
+  // generous window.
+  const StrikePolicy* widest = &kStrikePolicy[std::size(kStrikePolicy) - 1];
+  if (s.first_strike_ns == 0 ||
+      now - s.first_strike_ns > widest->window_ns) {
+    s.count = 0;
+    s.first_strike_ns = now;
+  }
+  s.count += 1;
+
+  // Walk policies from strictest to most generous; the
+  // first one whose window contains all strikes AND whose
+  // strike count is met escalates.
+  for (const auto& pol : kStrikePolicy) {
+    if (s.count >= pol.strikes &&
+        now - s.first_strike_ns <= pol.window_ns) {
+      uint64_t expiry = now + pol.block_ns;
+      auto [it, inserted] =
+          r->blocklist.insert_or_assign(ip_h, expiry);
+      XdpBlocklistInsert(r, ip_h, expiry);
+      if (inserted) {
+        char buf[INET_ADDRSTRLEN];
+        uint32_t nbo = htonl(ip_h);
+        inet_ntop(AF_INET, &nbo, buf, sizeof(buf));
+        spdlog::warn(
+            "wg-relay blocklist {}: {} strikes in window "
+            "→ blocked for {}s",
+            buf, s.count, pol.block_ns / 1'000'000'000ULL);
+      }
+      // Reset per-window counter so the next round starts
+      // fresh after this block expires.
+      s.count = 0;
+      s.first_strike_ns = 0;
+      return;
+    }
+  }
+}
+
 // Sweep peers and clear any candidate slot that's been open
 // longer than kCandidateTimeoutNs. drop_relearn_unconfirmed
 // ticks once per expiry — strong signal that a forged
@@ -508,10 +625,30 @@ void ExpireCandidatesLocked(WgRelay* r) {
   for (auto& p : r->peers) {
     if (p.candidate_endpoint_len == 0) continue;
     if (now - p.candidate_set_ns > kCandidateTimeoutNs) {
+      // Record a strike on the source IP before dropping
+      // the candidate state; if this source has been
+      // wasting candidate slots repeatedly it'll escalate
+      // onto the blocklist and stop reaching the relay
+      // entirely.
+      RecordStrikeLocked(r, p.candidate_endpoint,
+                          p.candidate_endpoint_len);
       p.candidate_endpoint_len = 0;
       p.candidate_set_ns = 0;
       r->stats.drop_relearn_unconfirmed.fetch_add(
           1, std::memory_order_relaxed);
+    }
+  }
+  // Sweep expired blocklist entries — stale-but-expired
+  // entries are harmless (BPF compares against current
+  // monotonic time) but cleaning them keeps `wg blocklist
+  // list` honest and bounds the BPF map size.
+  for (auto it = r->blocklist.begin();
+       it != r->blocklist.end();) {
+    if (it->second <= now) {
+      XdpBlocklistDelete(r, it->first);
+      it = r->blocklist.erase(it);
+    } else {
+      ++it;
     }
   }
 }
@@ -655,6 +792,13 @@ WgRelayPeer* ConfirmCandidateLocked(
     }
 
     PersistRosterLocked(r);
+    // Clear any prior failed-confirm strikes for this
+    // source IP — the source has now demonstrated it
+    // controls a real WG session and is therefore a
+    // legitimate roamer, not a forger.
+    uint32_t ip_h = ExtractV4SrcHostOrder(src, src_len);
+    if (ip_h != 0) r->strikes.erase(ip_h);
+
     spdlog::info("wg-relay relearn {}: endpoint -> {}",
                  p.name, p.endpoint_str);
     return &p;
@@ -668,6 +812,19 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
                    socklen_t src_len) {
   r->stats.rx_packets.fetch_add(1,
                                  std::memory_order_relaxed);
+  // Userspace-side blocklist check. XDP drops at the top
+  // of the program, so this only kicks in on the cold
+  // boot before XDP attaches or when XDP's missing.
+  {
+    uint32_t ip_h = ExtractV4SrcHostOrder(src, src_len);
+    if (ip_h != 0) {
+      std::lock_guard lk(r->peers_mu);
+      auto it = r->blocklist.find(ip_h);
+      if (it != r->blocklist.end() && it->second > NowNs()) {
+        return;
+      }
+    }
+  }
   // Shape filter — drop anything that isn't a WireGuard
   // message (types 1..4) with the right length. Keeps
   // operator counters honest about non-WG noise hitting
@@ -983,9 +1140,10 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
   auto* devmap = get_map("wg_devmap");
   auto* nic_macs_map = get_map("wg_nic_macs");
   auto* nic_ips_map = get_map("wg_nic_ips");
+  auto* blocklist_map = get_map("wg_blocklist");
   if (!prog || !peers_map || !macs_map || !stats_map ||
       !port_map || !peer_bytes_map || !devmap ||
-      !nic_macs_map || !nic_ips_map) {
+      !nic_macs_map || !nic_ips_map || !blocklist_map) {
     spdlog::error("wg-relay xdp: program/maps not found "
                   "in {}", bpf_obj_path);
     bpf_object__close(obj);
@@ -1000,6 +1158,7 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
   int devmap_fd = bpf_map__fd(devmap);
   int nic_macs_fd = bpf_map__fd(nic_macs_map);
   int nic_ips_fd = bpf_map__fd(nic_ips_map);
+  int blocklist_fd = bpf_map__fd(blocklist_map);
 
   uint32_t key0 = 0;
   if (bpf_map_update_elem(port_fd, &key0, &port, BPF_ANY) <
@@ -1087,6 +1246,7 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
   r->xdp.devmap_fd = devmap_fd;
   r->xdp.nic_macs_map_fd = nic_macs_fd;
   r->xdp.nic_ips_map_fd = nic_ips_fd;
+  r->xdp.blocklist_map_fd = blocklist_fd;
   r->xdp.attached = true;
   for (size_t i = 0; i < r->xdp.attachments.size(); ++i) {
     spdlog::info(
@@ -1227,8 +1387,9 @@ void XdpReadStats(const WgRelay* r, WgXdpStats* out) {
       static_cast<size_t>(ncpus));
   uint64_t* sums[] = {&out->rx_xdp, &out->fwd_xdp,
                        &out->pass_no_peer, &out->pass_no_mac,
-                       &out->drop_not_wg_shaped};
-  for (uint32_t k = 0; k < 5; ++k) {
+                       &out->drop_not_wg_shaped,
+                       &out->drop_blocklisted};
+  for (uint32_t k = 0; k < 6; ++k) {
     if (bpf_map_lookup_elem(r->xdp.stats_map_fd, &k,
                              vals.get()) < 0) {
       continue;
@@ -1604,6 +1765,27 @@ WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r) {
   s.peer_count = r->peers.size();
   s.link_count = r->links.size();
   return s;
+}
+
+std::vector<WgBlocklistView> WgRelayListBlocklist(
+    const WgRelay* r) {
+  std::vector<WgBlocklistView> out;
+  std::lock_guard lk(r->peers_mu);
+  uint64_t now = NowNs();
+  for (const auto& [ip_h, expiry] : r->blocklist) {
+    if (expiry <= now) continue;
+    char buf[INET_ADDRSTRLEN];
+    uint32_t nbo = htonl(ip_h);
+    inet_ntop(AF_INET, &nbo, buf, sizeof(buf));
+    WgBlocklistView v;
+    v.ip = buf;
+    v.seconds_left = (expiry - now) / 1'000'000'000ULL;
+    auto it = r->strikes.find(ip_h);
+    v.total_strikes =
+        (it != r->strikes.end()) ? it->second.total_strikes : 0;
+    out.push_back(std::move(v));
+  }
+  return out;
 }
 
 }  // namespace hyper_derp
