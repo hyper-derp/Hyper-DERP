@@ -42,6 +42,26 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
   anonymizer attack against the partner. New verb
   `wg blocklist list`. New counters `drop_blocklisted` (XDP)
   and per-IP strike records.
+- **Endpoint-hijack defense**: a forged handshake init must
+  receive a partner-attributable response (the partner's
+  type-2 receiver_index matches the init's sender_index)
+  before the candidate slot is allowed to confirm — a forger
+  who can pass MAC1 but lacks the static-key handshake can
+  no longer bounce the candidate to confirm by sending a
+  matching-shaped transport-data packet of their own.
+- **Type-2 from unknown source dropped outright**: legitimate
+  handshake responses come from the committed responder
+  endpoint, so an unknown-source type-2 has no place in the
+  protocol and was an unauthenticated amplifier surface.
+- **Retry-init forward rate-limit**: while a candidate is
+  unconfirmed, the no-op-forward branch caps retry forwards
+  at one per second per source. Legitimate wg.ko retries
+  every 5 s; a flood of forged retries is clamped and then
+  strikes into the blocklist.
+- **Strike-table sweep**: stale strike entries (older than
+  the widest policy window) are pruned during candidate
+  expiry so spoofed-source one-shot strikes can't grow the
+  table without bound.
 
 ### Added — Crypto
 
