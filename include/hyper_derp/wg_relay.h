@@ -77,6 +77,24 @@ struct WgRelayPeer {
   struct sockaddr_storage candidate_endpoint{};
   socklen_t candidate_endpoint_len = 0;
   uint64_t candidate_set_ns = 0;
+  /// `sender_index` from the candidate's handshake init (the
+  /// initiator-side session id, bytes 4..8 of the type-1
+  /// packet). The matching handshake response from the
+  /// partner echoes this in its `receiver_index` field.
+  /// We only set candidate_partner_responded when we see
+  /// a response whose receiver_index matches — that proves
+  /// the response was for THIS candidate's init, not for an
+  /// unrelated concurrent handshake from the legitimate
+  /// peer at the committed endpoint.
+  uint32_t candidate_init_sender_index = 0;
+  /// True once we've forwarded a partner response whose
+  /// receiver_index matches candidate_init_sender_index.
+  /// ConfirmCandidateLocked refuses to commit until this is
+  /// set, which closes the "forger sends type-1 + type-4"
+  /// hijack: bob silently drops a forged init (sender static
+  /// is garbage), so no matching response ever flows, so
+  /// the candidate never gains the right to confirm.
+  bool candidate_partner_responded = false;
   /// Steady-clock ns of the last completed relearn — gates
   /// new candidate registrations against rapid flapping.
   uint64_t last_relearn_ns = 0;

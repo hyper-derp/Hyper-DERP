@@ -634,6 +634,8 @@ void ExpireCandidatesLocked(WgRelay* r) {
                           p.candidate_endpoint_len);
       p.candidate_endpoint_len = 0;
       p.candidate_set_ns = 0;
+      p.candidate_init_sender_index = 0;
+      p.candidate_partner_responded = false;
       r->stats.drop_relearn_unconfirmed.fetch_add(
           1, std::memory_order_relaxed);
     }
@@ -741,6 +743,21 @@ void HandleUnknownSrcHandshakeLocked(
     std::memcpy(&sender->candidate_endpoint, &src, src_len);
     sender->candidate_endpoint_len = src_len;
     sender->candidate_set_ns = now;
+    sender->candidate_partner_responded = false;
+    // Init sender_index lives at bytes 4..8 of the type-1
+    // packet (little-endian per the WG spec).  We use it to
+    // match against the partner's response receiver_index
+    // before letting transport-data confirm the candidate.
+    if (pkt[0] == 1 && len >= 8) {
+      uint32_t idx;
+      std::memcpy(&idx, pkt + 4, 4);
+      sender->candidate_init_sender_index = idx;
+    } else {
+      // Type 2 (response): we can't tie this to an init
+      // we forwarded.  Disallow confirmation entirely; the
+      // candidate will expire naturally.
+      sender->candidate_init_sender_index = 0;
+    }
 
     // Forward the handshake to the destination.
     ssize_t sent = sendto(
@@ -794,6 +811,19 @@ WgRelayPeer* ConfirmCandidateLocked(
                         src_len)) {
       continue;
     }
+    // Refuse to confirm until we've forwarded a partner
+    // response whose receiver_index matched the candidate's
+    // init sender_index.  Without this, an attacker who
+    // knows the partner's pubkey could send a forged type-1
+    // followed by any 32-byte UDP starting with 0x04 and
+    // hijack the slot — bob never responded, but transport-
+    // shape was enough.
+    if (!p.candidate_partner_responded) {
+      // Don't confirm; let the candidate expire normally.
+      // Keep iterating in case a different peer's candidate
+      // matches this src.
+      continue;
+    }
     // Find p's link partner so we can rewrite both
     // directions of the BPF link in one shot.
     WgRelayPeer* partner = FindLinkPartnerLocked(r, p.name);
@@ -813,6 +843,8 @@ WgRelayPeer* ConfirmCandidateLocked(
                                      p.candidate_endpoint_len);
     p.candidate_endpoint_len = 0;
     p.candidate_set_ns = 0;
+    p.candidate_init_sender_index = 0;
+    p.candidate_partner_responded = false;
     p.last_relearn_ns = now;
     p.endpoint_relearn += 1;
 
@@ -970,18 +1002,38 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
                  std::strerror(errno));
     return;
   }
-  // Mirror handshake response to dst's pending candidate
-  // endpoint, if any. Lets a real peer that just came up at
-  // a new IP receive the response and complete its
-  // handshake. The committed endpoint also gets a copy so a
-  // legitimate-but-stale alice (still at the old IP) keeps
-  // working until her own next handshake decides which
-  // endpoint actually has the keys.
+  // Handshake response → mirror to dst's pending candidate
+  // endpoint (so a real roamer at the new IP completes their
+  // handshake) and, if the response's receiver_index matches
+  // the candidate's stored init sender_index, mark the
+  // candidate as eligible to confirm via transport-data.
+  // The receiver_index check is the load-bearing one: it
+  // proves this response is FOR the candidate's init rather
+  // than for some concurrent legitimate handshake from the
+  // peer at the committed endpoint.  Bytes 8..12 of the
+  // type-2 packet hold the response's receiver_index.
+  // Editing dst here is fine — caller holds peers_mu.
   if (pkt[0] == 2 && dst->candidate_endpoint_len > 0) {
     sendto(r->sock_fd, pkt, len, 0,
            reinterpret_cast<const sockaddr*>(
                &dst->candidate_endpoint),
            dst->candidate_endpoint_len);
+    if (len >= 12) {
+      uint32_t recv_idx;
+      std::memcpy(&recv_idx, pkt + 8, 4);
+      WgRelayPeer* mut_dst = nullptr;
+      for (auto& p : r->peers) {
+        if (p.name == dst->name) { mut_dst = &p; break; }
+      }
+      if (mut_dst &&
+          mut_dst->candidate_init_sender_index != 0 &&
+          recv_idx == mut_dst->candidate_init_sender_index) {
+        mut_dst->candidate_partner_responded = true;
+        spdlog::info(
+            "wg-relay candidate {}: partner responded, "
+            "eligible to confirm", mut_dst->name);
+      }
+    }
   }
   r->stats.fwd_packets.fetch_add(
       1, std::memory_order_relaxed);
