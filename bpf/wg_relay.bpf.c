@@ -27,11 +27,13 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-// Stats indices.
-#define STAT_RX			0
-#define STAT_FWD		1
-#define STAT_PASS_NO_PEER	2
-#define STAT_PASS_NO_MAC	3
+// Stats indices. Keep in sync with WgXdpStats in
+// include/hyper_derp/wg_relay.h.
+#define STAT_RX				0
+#define STAT_FWD			1
+#define STAT_PASS_NO_PEER		2
+#define STAT_PASS_NO_MAC		3
+#define STAT_DROP_NOT_WG_SHAPED		4
 
 // -- Map types --------------------------------------------
 
@@ -91,7 +93,7 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, 4);
+	__uint(max_entries, 8);
 	__type(key, __u32);
 	__type(value, __u64);
 } wg_xdp_stats SEC(".maps");
@@ -204,6 +206,49 @@ int wg_relay_xdp(struct xdp_md *ctx)
 		return XDP_PASS;
 
 	inc_stat(STAT_RX);
+
+	// WG-shape filter — peek at the first byte of the UDP
+	// payload and verify it's a WireGuard message type
+	// (1 init, 2 response, 3 cookie, 4 transport).  Anything
+	// else is either malformed or a non-WG client that ended
+	// up at the relay's port; dropping at XDP keeps it off
+	// the forward path entirely so the partner never has to
+	// process it.  Length sanity covers the fixed-size types;
+	// transport-data has variable length capped by MTU.
+	__u8 *wg = (void *)(udp + 1);
+	if ((void *)(wg + 1) > data_end) {
+		inc_stat(STAT_DROP_NOT_WG_SHAPED);
+		return XDP_DROP;
+	}
+	__u16 udp_payload_len =
+		bpf_ntohs(udp->len) - sizeof(struct udphdr);
+	__u8 wg_type = wg[0];
+	if (wg_type == 1) {
+		if (udp_payload_len != 148) {
+			inc_stat(STAT_DROP_NOT_WG_SHAPED);
+			return XDP_DROP;
+		}
+	} else if (wg_type == 2) {
+		if (udp_payload_len != 92) {
+			inc_stat(STAT_DROP_NOT_WG_SHAPED);
+			return XDP_DROP;
+		}
+	} else if (wg_type == 3) {
+		if (udp_payload_len != 64) {
+			inc_stat(STAT_DROP_NOT_WG_SHAPED);
+			return XDP_DROP;
+		}
+	} else if (wg_type == 4) {
+		// Transport data: header (16 B) + counter (8 B) +
+		// at least the AEAD tag (16 B).
+		if (udp_payload_len < 32) {
+			inc_stat(STAT_DROP_NOT_WG_SHAPED);
+			return XDP_DROP;
+		}
+	} else {
+		inc_stat(STAT_DROP_NOT_WG_SHAPED);
+		return XDP_DROP;
+	}
 
 	// Look up the source endpoint in the peer map. Miss
 	// means either an unregistered peer or one whose

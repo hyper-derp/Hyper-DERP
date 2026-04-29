@@ -1941,6 +1941,14 @@ void WgShow(Server* s, const Request& /*req*/,
   b += std::format("drop_unknown_src={}\n",
                    stats.drop_unknown_src);
   b += std::format("drop_no_link={}\n", stats.drop_no_link);
+  // Aggregate non-WG-shaped drops across userspace + XDP so
+  // the operator sees one number regardless of which path
+  // the bytes took.
+  uint64_t shape_total = stats.drop_not_wg_shaped;
+  if (stats.xdp_attached) {
+    shape_total += stats.xdp.drop_not_wg_shaped;
+  }
+  b += std::format("drop_not_wg_shaped={}\n", shape_total);
   b += std::format("xdp_attached={}\n",
                    stats.xdp_attached ? "true" : "false");
   if (stats.xdp_attached) {

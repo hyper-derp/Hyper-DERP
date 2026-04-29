@@ -83,6 +83,11 @@ struct WgRelayStats {
   std::atomic<uint64_t> fwd_packets{0};
   std::atomic<uint64_t> drop_unknown_src{0};
   std::atomic<uint64_t> drop_no_link{0};
+  /// First-byte / length sanity check — drops packets whose
+  /// shape doesn't match a WireGuard message type. Mirrors the
+  /// XDP STAT_DROP_NOT_WG_SHAPED counter for the userspace
+  /// fallback path.
+  std::atomic<uint64_t> drop_not_wg_shaped{0};
 };
 
 /// One attached NIC. The same BPF program is attached to
@@ -140,6 +145,7 @@ struct WgXdpStats {
   uint64_t fwd_xdp = 0;
   uint64_t pass_no_peer = 0;
   uint64_t pass_no_mac = 0;
+  uint64_t drop_not_wg_shaped = 0;
 };
 
 struct WgRelay {
@@ -225,6 +231,7 @@ struct WgRelayStatsSnapshot {
   uint64_t fwd_packets;
   uint64_t drop_unknown_src;
   uint64_t drop_no_link;
+  uint64_t drop_not_wg_shaped;
   size_t peer_count;
   size_t link_count;
   /// XDP-path counters, zero when xdp.attached is false.

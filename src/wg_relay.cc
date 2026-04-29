@@ -355,12 +355,40 @@ void PersistRosterLocked(WgRelay* r) {
 
 // -- Forward path --------------------------------------
 
+// Return true if `pkt` looks like a valid WireGuard
+// message: first byte is one of the four message types
+// (1 init, 2 response, 3 cookie, 4 transport) and the
+// length matches the type's expected size. Transport
+// data has variable length; we only enforce a minimum.
+// Mirrors the BPF-side check in bpf/wg_relay.bpf.c.
+bool IsWgShaped(const uint8_t* pkt, size_t len) {
+  if (len < 1) return false;
+  switch (pkt[0]) {
+    case 1:  return len == 148;  // handshake init
+    case 2:  return len == 92;   // handshake response
+    case 3:  return len == 64;   // cookie reply
+    case 4:  return len >= 32;   // transport data
+    default: return false;
+  }
+}
+
 void HandlePacket(WgRelay* r, const uint8_t* pkt,
                    size_t len,
                    const sockaddr_storage& src,
                    socklen_t src_len) {
   r->stats.rx_packets.fetch_add(1,
                                  std::memory_order_relaxed);
+  // Shape filter — drop anything that isn't a WireGuard
+  // message (types 1..4) with the right length. Keeps
+  // operator counters honest about non-WG noise hitting
+  // the relay's port and stops us forwarding garbage to
+  // the partner. Mirrors the BPF STAT_DROP_NOT_WG_SHAPED
+  // path so userspace and XDP agree on what gets dropped.
+  if (!IsWgShaped(pkt, len)) {
+    r->stats.drop_not_wg_shaped.fetch_add(
+        1, std::memory_order_relaxed);
+    return;
+  }
   // Lookup is O(N) over the peer table; N is operator-
   // small (dozens), and the lock window covers the
   // sendto so the table can't change underfoot.
@@ -847,8 +875,9 @@ void XdpReadStats(const WgRelay* r, WgXdpStats* out) {
   auto vals = std::make_unique<uint64_t[]>(
       static_cast<size_t>(ncpus));
   uint64_t* sums[] = {&out->rx_xdp, &out->fwd_xdp,
-                       &out->pass_no_peer, &out->pass_no_mac};
-  for (uint32_t k = 0; k < 4; ++k) {
+                       &out->pass_no_peer, &out->pass_no_mac,
+                       &out->drop_not_wg_shaped};
+  for (uint32_t k = 0; k < 5; ++k) {
     if (bpf_map_lookup_elem(r->xdp.stats_map_fd, &k,
                              vals.get()) < 0) {
       continue;
@@ -1206,6 +1235,8 @@ WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r) {
   s.drop_unknown_src = r->stats.drop_unknown_src.load(
       std::memory_order_relaxed);
   s.drop_no_link = r->stats.drop_no_link.load(
+      std::memory_order_relaxed);
+  s.drop_not_wg_shaped = r->stats.drop_not_wg_shaped.load(
       std::memory_order_relaxed);
   s.xdp_attached = r->xdp.attached;
   XdpReadStats(r, &s.xdp);
