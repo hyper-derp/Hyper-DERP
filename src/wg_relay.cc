@@ -646,6 +646,23 @@ void ExpireCandidatesLocked(WgRelay* r) {
           1, std::memory_order_relaxed);
     }
   }
+  // Sweep stale strike entries — a strike whose first strike
+  // is older than the widest policy window can no longer fire
+  // anything, so keeping it in the map is pure memory growth.
+  // Without this sweep, a forger spraying from spoofed source
+  // IPs (each striking once and never returning) would grow
+  // the strike map unbounded.
+  uint64_t widest_window =
+      kStrikePolicy[std::size(kStrikePolicy) - 1].window_ns;
+  for (auto it = r->strikes.begin();
+       it != r->strikes.end();) {
+    if (it->second.first_strike_ns != 0 &&
+        now - it->second.first_strike_ns > widest_window) {
+      it = r->strikes.erase(it);
+    } else {
+      ++it;
+    }
+  }
   // Sweep expired blocklist entries — stale-but-expired
   // entries are harmless (BPF compares against current
   // monotonic time) but cleaning them keeps `wg blocklist
