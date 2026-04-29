@@ -1928,6 +1928,26 @@ void WgShowConfig(Server* s, const Request& req,
   SetBody(r, body);
 }
 
+void WgBlocklistList(Server* s, const Request& /*req*/,
+                      Response* r) {
+  if (!WgGate(s, r)) return;
+  auto entries = WgRelayListBlocklist(s->wg_relay);
+  if (entries.empty()) {
+    SetBody(r, "blocklist=empty\n");
+    return;
+  }
+  std::string b;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    b += std::format("entry.{}.ip={}\n", i, entries[i].ip);
+    b += std::format("entry.{}.seconds_left={}\n", i,
+                     entries[i].seconds_left);
+    b += std::format("entry.{}.total_strikes={}\n", i,
+                     entries[i].total_strikes);
+  }
+  b += std::format("count={}\n", entries.size());
+  SetBody(r, b);
+}
+
 void WgShow(Server* s, const Request& /*req*/,
             Response* r) {
   if (!WgGate(s, r)) return;
@@ -1941,6 +1961,20 @@ void WgShow(Server* s, const Request& /*req*/,
   b += std::format("drop_unknown_src={}\n",
                    stats.drop_unknown_src);
   b += std::format("drop_no_link={}\n", stats.drop_no_link);
+  // Aggregate non-WG-shaped drops across userspace + XDP so
+  // the operator sees one number regardless of which path
+  // the bytes took.
+  uint64_t shape_total = stats.drop_not_wg_shaped;
+  if (stats.xdp_attached) {
+    shape_total += stats.xdp.drop_not_wg_shaped;
+  }
+  b += std::format("drop_not_wg_shaped={}\n", shape_total);
+  b += std::format("drop_handshake_pubkey_mismatch={}\n",
+                   stats.drop_handshake_pubkey_mismatch);
+  b += std::format("drop_handshake_no_pubkey_match={}\n",
+                   stats.drop_handshake_no_pubkey_match);
+  b += std::format("drop_relearn_unconfirmed={}\n",
+                   stats.drop_relearn_unconfirmed);
   b += std::format("xdp_attached={}\n",
                    stats.xdp_attached ? "true" : "false");
   if (stats.xdp_attached) {
@@ -1952,6 +1986,8 @@ void WgShow(Server* s, const Request& /*req*/,
                      stats.xdp.pass_no_peer);
     b += std::format("xdp_pass_no_mac={}\n",
                      stats.xdp.pass_no_mac);
+    b += std::format("xdp_drop_blocklisted={}\n",
+                     stats.xdp.drop_blocklisted);
   }
   SetBody(r, b);
 }
@@ -2179,6 +2215,11 @@ Registry MakeRegistry() {
   m["wg_show"] = {WgShow, Role::kAny, "wg show",
                    "Aggregate counters + roster summary",
                    false, {}};
+  m["wg_blocklist_list"] = {
+      WgBlocklistList, Role::kAny, "wg blocklist list",
+      "Source IPs auto-blocked after repeated failed-confirm "
+      "strikes (forged-handshake protection)",
+      false, {}};
   return m;
 }
 

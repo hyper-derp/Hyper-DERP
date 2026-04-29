@@ -45,6 +45,7 @@ add_library(libderp_obj OBJECT
   src/einheit_protocol.cc
   src/einheit_channel.cc
   src/wg_relay.cc
+  src/crypto/blake2s.cc
 )
 target_include_directories(libderp_obj PUBLIC
   ${PROJECT_SOURCE_DIR}/include
@@ -52,6 +53,11 @@ target_include_directories(libderp_obj PUBLIC
   ${SODIUM_INCLUDE_DIR}
   ${BPF_INCLUDE_DIR}
   ${ZMQ_INCLUDE_DIR}
+)
+target_include_directories(libderp_obj PRIVATE
+  # Internal-only headers (not part of the public include/
+  # tree) — e.g. src/crypto/blake2s.h.
+  ${PROJECT_SOURCE_DIR}/src
 )
 target_link_libraries(libderp_obj PUBLIC
   ${URING_LIB}

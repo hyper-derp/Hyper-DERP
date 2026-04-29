@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <string>
 #include <thread>
+#include <map>
 #include <vector>
 
 #include "hyper_derp/server.h"
@@ -64,6 +65,49 @@ struct WgRelayPeer {
   /// Populates the BPF peer entry's ifindex so
   /// XDP_REDIRECT can pick the right egress NIC.
   std::string nic;
+  /// Times this peer's `endpoint` was relearned via the
+  /// MAC1-driven roaming flow. Persisted to the roster.
+  uint64_t endpoint_relearn = 0;
+  /// Pending relearn-candidate, populated when an unknown
+  /// source presents a handshake with valid MAC1 against
+  /// this peer's link partner. Cleared on confirm (transport
+  /// data flowed from the candidate) or expiry (no transport
+  /// data within 30 s). The committed `endpoint` above stays
+  /// untouched until confirm.
+  struct sockaddr_storage candidate_endpoint{};
+  socklen_t candidate_endpoint_len = 0;
+  uint64_t candidate_set_ns = 0;
+  /// `sender_index` from the candidate's handshake init (the
+  /// initiator-side session id, bytes 4..8 of the type-1
+  /// packet). The matching handshake response from the
+  /// partner echoes this in its `receiver_index` field.
+  /// We only set candidate_partner_responded when we see
+  /// a response whose receiver_index matches — that proves
+  /// the response was for THIS candidate's init, not for an
+  /// unrelated concurrent handshake from the legitimate
+  /// peer at the committed endpoint.
+  uint32_t candidate_init_sender_index = 0;
+  /// True once we've forwarded a partner response whose
+  /// receiver_index matches candidate_init_sender_index.
+  /// ConfirmCandidateLocked refuses to commit until this is
+  /// set, which closes the "forger sends type-1 + type-4"
+  /// hijack: bob silently drops a forged init (sender static
+  /// is garbage), so no matching response ever flows, so
+  /// the candidate never gains the right to confirm.
+  bool candidate_partner_responded = false;
+  /// Steady-clock ns of the most recent retry-init forward
+  /// from the same source. Used to rate-limit retry forwards
+  /// while the candidate is unconfirmed: a forger with the
+  /// public mac1 key can craft unlimited valid type-1 inits,
+  /// so the no-op-forward branch would otherwise let them
+  /// bounce arbitrary packets at the partner via the relay.
+  /// wg.ko's normal retry cadence is 5 s, so capping at one
+  /// forward per second is conservative for legit clients
+  /// while sharply limiting amplifier abuse.
+  uint64_t candidate_last_forward_ns = 0;
+  /// Steady-clock ns of the last completed relearn — gates
+  /// new candidate registrations against rapid flapping.
+  uint64_t last_relearn_ns = 0;
 };
 
 /// One operator-declared forwarding link between two
@@ -83,6 +127,28 @@ struct WgRelayStats {
   std::atomic<uint64_t> fwd_packets{0};
   std::atomic<uint64_t> drop_unknown_src{0};
   std::atomic<uint64_t> drop_no_link{0};
+  /// First-byte / length sanity check — drops packets whose
+  /// shape doesn't match a WireGuard message type. Mirrors the
+  /// XDP STAT_DROP_NOT_WG_SHAPED counter for the userspace
+  /// fallback path.
+  std::atomic<uint64_t> drop_not_wg_shaped{0};
+  /// Handshake init/response from a registered source whose
+  /// MAC1 field doesn't verify against the link partner's
+  /// stamped pubkey. Engages only when the operator has
+  /// stamped pubkeys on both ends of a link. A non-zero count
+  /// usually means a misconfigured client, a NAT collision,
+  /// or someone pointed at the wrong relay.
+  std::atomic<uint64_t> drop_handshake_pubkey_mismatch{0};
+  /// Handshake init/response from an unknown source whose
+  /// MAC1 didn't verify against any registered partner's
+  /// pubkey — i.e. wasn't a roam attempt for any known peer.
+  std::atomic<uint64_t> drop_handshake_no_pubkey_match{0};
+  /// Candidate slot expired without transport data confirming
+  /// it. Strong signal of a forged handshake — the source
+  /// could produce a valid MAC1 but couldn't progress to
+  /// transport data because they don't have the static
+  /// private key.
+  std::atomic<uint64_t> drop_relearn_unconfirmed{0};
 };
 
 /// One attached NIC. The same BPF program is attached to
@@ -115,6 +181,10 @@ struct WgXdpCtx {
   /// into per-peer rx_bytes/fwd_bytes in `wg peer list` so
   /// the operator sees XDP-path traffic alongside userspace.
   int peer_bytes_map_fd = -1;
+  /// Source-IP blocklist (HASH key=u32 IPv4 NBO, value=
+  /// blocklist_entry). Userspace writes; BPF reads + drops
+  /// on every packet from a live blocklisted source.
+  int blocklist_map_fd = -1;
   /// Devmap (key = ifindex, value = ifindex) used for
   /// cross-NIC redirect. Populated at attach with one
   /// entry per attachment's ifindex.
@@ -140,6 +210,18 @@ struct WgXdpStats {
   uint64_t fwd_xdp = 0;
   uint64_t pass_no_peer = 0;
   uint64_t pass_no_mac = 0;
+  uint64_t drop_not_wg_shaped = 0;
+  uint64_t drop_blocklisted = 0;
+};
+
+/// Strike record per source IP — incremented when a candidate
+/// endpoint that source registered fails to confirm via
+/// transport-data. Escalates the source onto the blocklist
+/// after a threshold is crossed.
+struct WgRelayStrike {
+  uint32_t count = 0;
+  uint64_t first_strike_ns = 0;
+  uint64_t total_strikes = 0;
 };
 
 struct WgRelay {
@@ -147,11 +229,19 @@ struct WgRelay {
   uint16_t port = 0;
   std::vector<WgRelayPeer> peers;
   std::vector<WgRelayLink> links;
-  /// peers_mu guards peers + links + roster_path writes.
-  /// All operator-side mutations and the recv loop's
-  /// per-packet lookups serialize on it; the lookup is
-  /// O(N) but N is small (operator-supplied peer roster).
+  /// peers_mu guards peers + links + roster_path writes
+  /// AND the strike + blocklist tables below.
   mutable std::mutex peers_mu;
+  /// Failed-confirm strikes by source IP (host-byte-order
+  /// uint32_t). Cleared from a peer's record once a confirm
+  /// succeeds; escalated to wg_blocklist once the threshold
+  /// is crossed.
+  std::map<uint32_t, WgRelayStrike> strikes;
+  /// Blocked source IPs (host-byte-order uint32_t) → expiry
+  /// timestamp (steady_clock ns). Mirrors the BPF
+  /// wg_blocklist map for `wg blocklist list` / userspace
+  /// drop in case XDP isn't attached.
+  std::map<uint32_t, uint64_t> blocklist;
   WgRelayStats stats;
   std::atomic<bool> running{false};
   std::thread loop_thread;
@@ -225,6 +315,10 @@ struct WgRelayStatsSnapshot {
   uint64_t fwd_packets;
   uint64_t drop_unknown_src;
   uint64_t drop_no_link;
+  uint64_t drop_not_wg_shaped;
+  uint64_t drop_handshake_pubkey_mismatch;
+  uint64_t drop_handshake_no_pubkey_match;
+  uint64_t drop_relearn_unconfirmed;
   size_t peer_count;
   size_t link_count;
   /// XDP-path counters, zero when xdp.attached is false.
@@ -232,6 +326,14 @@ struct WgRelayStatsSnapshot {
   bool xdp_attached;
 };
 WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r);
+
+struct WgBlocklistView {
+  std::string ip;            // dotted-quad IPv4
+  uint64_t seconds_left;     // until expiry
+  uint64_t total_strikes;    // cumulative for this IP
+};
+std::vector<WgBlocklistView> WgRelayListBlocklist(
+    const WgRelay* r);
 
 }  // namespace hyper_derp
 

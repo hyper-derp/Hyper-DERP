@@ -27,6 +27,10 @@ list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_open_conn\\.cc")
 list(FILTER UNIT_TEST_SOURCES
   EXCLUDE REGEX "test_einheit_channel\\.cc")
+# test_hd_blake2s links its own copy of src/crypto/blake2s.cc
+# instead of libderp; keep it out of the auto-glob.
+list(FILTER UNIT_TEST_SOURCES
+  EXCLUDE REGEX "test_hd_blake2s\\.cc")
 
 foreach(test_source ${UNIT_TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
@@ -115,6 +119,18 @@ target_link_libraries(test_wg_config PRIVATE
   hd_wg GTest::gtest_main)
 gtest_discover_tests(test_wg_config
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
+
+# Standalone Blake2s used for wg-relay MAC1.  Compiles its
+# own object so we don't drag libderp's full link surface in.
+add_executable(test_hd_blake2s
+  test_hd_blake2s.cc
+  ${PROJECT_SOURCE_DIR}/src/crypto/blake2s.cc)
+target_include_directories(test_hd_blake2s PRIVATE
+  ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(test_hd_blake2s PRIVATE
+  GTest::gtest_main)
+gtest_discover_tests(test_hd_blake2s
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 10)
 
 # ZMQ control channel tests.
 add_executable(test_ctl_channel test_ctl_channel.cc)
