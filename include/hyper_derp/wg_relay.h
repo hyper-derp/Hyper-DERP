@@ -64,6 +64,21 @@ struct WgRelayPeer {
   /// Populates the BPF peer entry's ifindex so
   /// XDP_REDIRECT can pick the right egress NIC.
   std::string nic;
+  /// Times this peer's `endpoint` was relearned via the
+  /// MAC1-driven roaming flow. Persisted to the roster.
+  uint64_t endpoint_relearn = 0;
+  /// Pending relearn-candidate, populated when an unknown
+  /// source presents a handshake with valid MAC1 against
+  /// this peer's link partner. Cleared on confirm (transport
+  /// data flowed from the candidate) or expiry (no transport
+  /// data within 30 s). The committed `endpoint` above stays
+  /// untouched until confirm.
+  struct sockaddr_storage candidate_endpoint{};
+  socklen_t candidate_endpoint_len = 0;
+  uint64_t candidate_set_ns = 0;
+  /// Steady-clock ns of the last completed relearn — gates
+  /// new candidate registrations against rapid flapping.
+  uint64_t last_relearn_ns = 0;
 };
 
 /// One operator-declared forwarding link between two
@@ -95,6 +110,16 @@ struct WgRelayStats {
   /// usually means a misconfigured client, a NAT collision,
   /// or someone pointed at the wrong relay.
   std::atomic<uint64_t> drop_handshake_pubkey_mismatch{0};
+  /// Handshake init/response from an unknown source whose
+  /// MAC1 didn't verify against any registered partner's
+  /// pubkey — i.e. wasn't a roam attempt for any known peer.
+  std::atomic<uint64_t> drop_handshake_no_pubkey_match{0};
+  /// Candidate slot expired without transport data confirming
+  /// it. Strong signal of a forged handshake — the source
+  /// could produce a valid MAC1 but couldn't progress to
+  /// transport data because they don't have the static
+  /// private key.
+  std::atomic<uint64_t> drop_relearn_unconfirmed{0};
 };
 
 /// One attached NIC. The same BPF program is attached to
@@ -240,6 +265,8 @@ struct WgRelayStatsSnapshot {
   uint64_t drop_no_link;
   uint64_t drop_not_wg_shaped;
   uint64_t drop_handshake_pubkey_mismatch;
+  uint64_t drop_handshake_no_pubkey_match;
+  uint64_t drop_relearn_unconfirmed;
   size_t peer_count;
   size_t link_count;
   /// XDP-path counters, zero when xdp.attached is false.

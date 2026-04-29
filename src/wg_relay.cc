@@ -68,6 +68,46 @@ bool SockaddrEqual(const sockaddr_storage& a, socklen_t la,
   return std::memcmp(&a, &b, la) == 0;
 }
 
+// Render an IPv4 sockaddr_storage as "host:port" for human-
+// facing output (operator logs, roster file). Falls back to
+// "?" if the family or length is something we can't render.
+std::string FormatEndpoint(const sockaddr_storage& ss,
+                            socklen_t len) {
+  if (ss.ss_family == AF_INET &&
+      len >= static_cast<socklen_t>(sizeof(sockaddr_in))) {
+    const auto* sin =
+        reinterpret_cast<const sockaddr_in*>(&ss);
+    char buf[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) {
+      return std::string(buf) + ":" +
+             std::to_string(ntohs(sin->sin_port));
+    }
+  }
+  if (ss.ss_family == AF_INET6 &&
+      len >= static_cast<socklen_t>(sizeof(sockaddr_in6))) {
+    const auto* sin6 =
+        reinterpret_cast<const sockaddr_in6*>(&ss);
+    // V4-mapped → render as plain v4 for operator clarity.
+    static const uint8_t kV4Prefix[12] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+    if (std::memcmp(sin6->sin6_addr.s6_addr, kV4Prefix, 12) ==
+        0) {
+      char buf[INET_ADDRSTRLEN];
+      if (inet_ntop(AF_INET, sin6->sin6_addr.s6_addr + 12, buf,
+                     sizeof(buf))) {
+        return std::string(buf) + ":" +
+               std::to_string(ntohs(sin6->sin6_port));
+      }
+    }
+    char buf[INET6_ADDRSTRLEN];
+    if (inet_ntop(AF_INET6, &sin6->sin6_addr, buf, sizeof(buf))) {
+      return std::string("[") + buf + "]:" +
+             std::to_string(ntohs(sin6->sin6_port));
+    }
+  }
+  return "?";
+}
+
 // Compare against an IPv4 endpoint when the incoming
 // packet arrived as v4-mapped over an AF_INET6 socket.
 bool EndpointMatches(const WgRelayPeer& p,
@@ -357,6 +397,15 @@ void PersistRosterLocked(WgRelay* r) {
 
 // -- Forward path --------------------------------------
 
+// Roaming-candidate timing constants. Defaults match the
+// numbers in docs/design/wg_relay_pubkey_filter.md.
+//   * Candidate slot lives 30 s waiting for transport-data
+//     confirmation. Expiry → drop_relearn_unconfirmed.
+//   * Cooldown of 5 s between successive candidate
+//     registrations for the same peer (rate-limits flap).
+constexpr uint64_t kCandidateTimeoutNs = 30ULL * 1'000'000'000ULL;
+constexpr uint64_t kRelearnCooldownNs = 5ULL * 1'000'000'000ULL;
+
 // WireGuard MAC1 derivation. The MAC1 key for a peer is
 // Blake2s(LABEL_MAC1 || peer_static_pubkey) — independent of
 // the message, derived once per peer pubkey. The MAC1 itself
@@ -449,6 +498,170 @@ bool IsWgShaped(const uint8_t* pkt, size_t len) {
   }
 }
 
+// Sweep peers and clear any candidate slot that's been open
+// longer than kCandidateTimeoutNs. drop_relearn_unconfirmed
+// ticks once per expiry — strong signal that a forged
+// handshake came in but the source couldn't progress to
+// transport data. Caller holds peers_mu.
+void ExpireCandidatesLocked(WgRelay* r) {
+  uint64_t now = NowNs();
+  for (auto& p : r->peers) {
+    if (p.candidate_endpoint_len == 0) continue;
+    if (now - p.candidate_set_ns > kCandidateTimeoutNs) {
+      p.candidate_endpoint_len = 0;
+      p.candidate_set_ns = 0;
+      r->stats.drop_relearn_unconfirmed.fetch_add(
+          1, std::memory_order_relaxed);
+    }
+  }
+}
+
+// Find the link partner of the peer named `name`, if any.
+// Caller holds peers_mu.
+WgRelayPeer* FindLinkPartnerLocked(WgRelay* r,
+                                    const std::string& name) {
+  for (const auto& l : r->links) {
+    if (l.a == name) {
+      for (auto& p : r->peers) {
+        if (p.name == l.b) return &p;
+      }
+    } else if (l.b == name) {
+      for (auto& p : r->peers) {
+        if (p.name == l.a) return &p;
+      }
+    }
+  }
+  return nullptr;
+}
+
+// Handle a handshake init/response that arrived from a source
+// with no registered peer match. Try MAC1 against every
+// registered peer's pubkey: the peer whose pubkey matches is
+// the destination, and the actual sender is that peer's link
+// partner. Register a candidate endpoint on the sender (the
+// committed endpoint stays unchanged until transport data
+// confirms) and forward the handshake to the destination.
+//
+// Caller holds peers_mu. Always increments either
+// drop_handshake_no_pubkey_match (no match) or fwd_packets
+// (candidate registered + forwarded).
+void HandleUnknownSrcHandshakeLocked(
+    WgRelay* r, const uint8_t* pkt, size_t len,
+    const sockaddr_storage& src, socklen_t src_len) {
+  uint64_t now = NowNs();
+  for (auto& p : r->peers) {
+    if (p.pubkey_b64.empty()) continue;
+    std::array<uint8_t, 32> p_pub;
+    if (!DecodeWgPubkey(p.pubkey_b64, &p_pub)) continue;
+    if (!VerifyMac1(pkt, len, p_pub.data())) continue;
+
+    // p is the destination. Sender = p's link partner.
+    WgRelayPeer* sender = FindLinkPartnerLocked(r, p.name);
+    if (!sender) continue;
+
+    // Cooldown: refuse if sender's last relearn was very
+    // recent. Treats the request as drop_unknown_src so an
+    // attacker can't infer cooldown from a separate counter.
+    if (sender->last_relearn_ns &&
+        now - sender->last_relearn_ns < kRelearnCooldownNs) {
+      r->stats.drop_unknown_src.fetch_add(
+          1, std::memory_order_relaxed);
+      return;
+    }
+
+    // Register the candidate. Committed endpoint stays put.
+    std::memcpy(&sender->candidate_endpoint, &src, src_len);
+    sender->candidate_endpoint_len = src_len;
+    sender->candidate_set_ns = now;
+
+    // Forward the handshake to the destination.
+    ssize_t sent = sendto(
+        r->sock_fd, pkt, len, 0,
+        reinterpret_cast<const sockaddr*>(&p.endpoint),
+        p.endpoint_len);
+    if (sent < 0) {
+      spdlog::warn("wg-relay candidate sendto: {}",
+                   std::strerror(errno));
+      return;
+    }
+    r->stats.fwd_packets.fetch_add(
+        1, std::memory_order_relaxed);
+    spdlog::info(
+        "wg-relay candidate registered: {} <- {} (relearn "
+        "for partner {})",
+        sender->name, FormatEndpoint(src, src_len), p.name);
+    return;
+  }
+
+  // No partner pubkey verified.
+  r->stats.drop_handshake_no_pubkey_match.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
+// Forward-declare the XDP map updater — implementation lives
+// further down with the rest of the BPF housekeeping.
+void XdpInsertLinkByNameLocked(WgRelay* r,
+                                const std::string& a,
+                                const std::string& b);
+void XdpRemoveLinkByNameLocked(WgRelay* r,
+                                const std::string& a,
+                                const std::string& b);
+
+// Match `src` against any registered peer's candidate slot.
+// On match, commit the candidate as the new endpoint, refresh
+// the BPF map so XDP starts forwarding via the new endpoint,
+// persist the roster, and return the now-registered peer.
+// Caller continues the existing forward path with this peer
+// as the source. Returns nullptr if no candidate matched.
+//
+// Caller holds peers_mu.
+WgRelayPeer* ConfirmCandidateLocked(
+    WgRelay* r, const sockaddr_storage& src,
+    socklen_t src_len) {
+  uint64_t now = NowNs();
+  for (auto& p : r->peers) {
+    if (p.candidate_endpoint_len == 0) continue;
+    if (!SockaddrEqual(p.candidate_endpoint,
+                        p.candidate_endpoint_len, src,
+                        src_len)) {
+      continue;
+    }
+    // Find p's link partner so we can rewrite both
+    // directions of the BPF link in one shot.
+    WgRelayPeer* partner = FindLinkPartnerLocked(r, p.name);
+
+    // Drop the OLD BPF entries first — they were keyed on
+    // p's pre-relearn endpoint.  After the in-memory swap
+    // we re-insert with the new key.
+    if (partner) {
+      XdpRemoveLinkByNameLocked(r, p.name, partner->name);
+    }
+
+    // Confirm: commit the candidate as the live endpoint.
+    std::memcpy(&p.endpoint, &p.candidate_endpoint,
+                p.candidate_endpoint_len);
+    p.endpoint_len = p.candidate_endpoint_len;
+    p.endpoint_str = FormatEndpoint(p.candidate_endpoint,
+                                     p.candidate_endpoint_len);
+    p.candidate_endpoint_len = 0;
+    p.candidate_set_ns = 0;
+    p.last_relearn_ns = now;
+    p.endpoint_relearn += 1;
+
+    // Re-insert with the new endpoint so XDP starts
+    // forwarding via the fast path again.
+    if (partner) {
+      XdpInsertLinkByNameLocked(r, p.name, partner->name);
+    }
+
+    PersistRosterLocked(r);
+    spdlog::info("wg-relay relearn {}: endpoint -> {}",
+                 p.name, p.endpoint_str);
+    return &p;
+  }
+  return nullptr;
+}
+
 void HandlePacket(WgRelay* r, const uint8_t* pkt,
                    size_t len,
                    const sockaddr_storage& src,
@@ -470,6 +683,10 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
   // small (dozens), and the lock window covers the
   // sendto so the table can't change underfoot.
   std::lock_guard lk(r->peers_mu);
+  // Sweep stale candidate slots before deciding what to do
+  // with this packet — keeps drop_relearn_unconfirmed
+  // accurate without a separate timer thread.
+  ExpireCandidatesLocked(r);
   WgRelayPeer* src_peer = nullptr;
   for (auto& p : r->peers) {
     if (EndpointMatches(p, src, src_len)) {
@@ -478,9 +695,31 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     }
   }
   if (!src_peer) {
-    r->stats.drop_unknown_src.fetch_add(
-        1, std::memory_order_relaxed);
-    return;
+    // Source doesn't match any registered peer. There are
+    // three legitimate sub-cases handled here, plus drop:
+    //   * Handshake init/response (1, 2): possibly a roam
+    //     attempt — try MAC1 against every partner's pubkey.
+    //   * Transport data (4): possibly the confirmation step
+    //     for a previously-registered candidate.
+    //   * Anything else (3 or non-WG already filtered): drop.
+    if (pkt[0] == 1 || pkt[0] == 2) {
+      HandleUnknownSrcHandshakeLocked(r, pkt, len, src,
+                                       src_len);
+      return;
+    }
+    if (pkt[0] == 4) {
+      src_peer = ConfirmCandidateLocked(r, src, src_len);
+      if (!src_peer) {
+        r->stats.drop_unknown_src.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+      }
+      // src_peer is now the confirmed peer; fall through.
+    } else {
+      r->stats.drop_unknown_src.fetch_add(
+          1, std::memory_order_relaxed);
+      return;
+    }
   }
   src_peer->rx_bytes += len;
   src_peer->last_seen_ns = NowNs();
@@ -542,6 +781,19 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     spdlog::warn("wg-relay sendto: {}",
                  std::strerror(errno));
     return;
+  }
+  // Mirror handshake response to dst's pending candidate
+  // endpoint, if any. Lets a real peer that just came up at
+  // a new IP receive the response and complete its
+  // handshake. The committed endpoint also gets a copy so a
+  // legitimate-but-stale alice (still at the old IP) keeps
+  // working until her own next handshake decides which
+  // endpoint actually has the keys.
+  if (pkt[0] == 2 && dst->candidate_endpoint_len > 0) {
+    sendto(r->sock_fd, pkt, len, 0,
+           reinterpret_cast<const sockaddr*>(
+               &dst->candidate_endpoint),
+           dst->candidate_endpoint_len);
   }
   r->stats.fwd_packets.fetch_add(
       1, std::memory_order_relaxed);
@@ -1339,6 +1591,12 @@ WgRelayStatsSnapshot WgRelayGetStats(const WgRelay* r) {
       std::memory_order_relaxed);
   s.drop_handshake_pubkey_mismatch =
       r->stats.drop_handshake_pubkey_mismatch.load(
+          std::memory_order_relaxed);
+  s.drop_handshake_no_pubkey_match =
+      r->stats.drop_handshake_no_pubkey_match.load(
+          std::memory_order_relaxed);
+  s.drop_relearn_unconfirmed =
+      r->stats.drop_relearn_unconfirmed.load(
           std::memory_order_relaxed);
   s.xdp_attached = r->xdp.attached;
   XdpReadStats(r, &s.xdp);
