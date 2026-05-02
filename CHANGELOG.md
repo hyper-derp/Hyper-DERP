@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2] - unreleased
+
+### Fixed — wg-relay strike-map sweep
+
+- **Strike-map sweep no longer erases just-recorded entries**.
+  The sweep added in 0.2.1 (`cfecbcd`) used the `now` captured
+  at the top of `ExpireCandidatesLocked`, but
+  `RecordStrikeLocked` (called per-peer between the two)
+  stamps `first_strike_ns` via its own — later — `NowNs()`
+  call. The unsigned subtraction `now - first_strike_ns`
+  underflowed, satisfied `> widest_window` (24 h)
+  unconditionally, and erased the strike that was just
+  recorded. Net effect: `drop_relearn_unconfirmed` advanced
+  per failed-confirm, but the per-source strike count never
+  accumulated past 1 — the 2-strike / 60-s blocklist policy
+  could not fire. Pre-cfecbcd behaviour silently lost.
+  Fix: capture a fresh `sweep_now = NowNs()` after the
+  recording loop and add a `sweep_now > first_strike_ns`
+  guard. Verified by deterministic 2-burst reproducer
+  (single source, 35 s gap): pre-cfecbcd fires blocklist at
+  +31 s, post-cfecbcd doesn't, post-fix matches pre-cfecbcd
+  exactly.
+
 ## [0.2.1] - unreleased
 
 ### Added — wg-relay hardening
