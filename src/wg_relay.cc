@@ -652,12 +652,26 @@ void ExpireCandidatesLocked(WgRelay* r) {
   // Without this sweep, a forger spraying from spoofed source
   // IPs (each striking once and never returning) would grow
   // the strike map unbounded.
+  //
+  // Refresh `now` here: RecordStrikeLocked above stamps
+  // first_strike_ns with its OWN NowNs() call (a few µs newer
+  // than the `now` at the top of this function). With uint64_t
+  // arithmetic, an older `now` minus a newer first_strike_ns
+  // underflows to ~UINT64_MAX, always satisfies
+  // `> widest_window`, and erases the entry we just recorded —
+  // so the count never accumulates and the policy never fires.
+  // The `sweep_now > first_strike_ns` guard is belt-and-
+  // suspenders against any future caller that might invert the
+  // ordering again.
+  uint64_t sweep_now = NowNs();
   uint64_t widest_window =
       kStrikePolicy[std::size(kStrikePolicy) - 1].window_ns;
   for (auto it = r->strikes.begin();
        it != r->strikes.end();) {
     if (it->second.first_strike_ns != 0 &&
-        now - it->second.first_strike_ns > widest_window) {
+        sweep_now > it->second.first_strike_ns &&
+        sweep_now - it->second.first_strike_ns >
+            widest_window) {
       it = r->strikes.erase(it);
     } else {
       ++it;
