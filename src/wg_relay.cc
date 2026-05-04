@@ -1911,13 +1911,20 @@ bool WgRelayPeerRemove(WgRelay* r,
   return true;
 }
 
-bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
-                     const std::string& b) {
+WgRelayLinkAddResult WgRelayLinkAddDetail(
+    WgRelay* r, const std::string& a,
+    const std::string& b) {
   std::lock_guard lk(r->peers_mu);
-  if (LinkAddLocked(r, a, b) != 0) return false;
+  int rc = LinkAddLocked(r, a, b);
+  if (rc != 0) return static_cast<WgRelayLinkAddResult>(rc);
   XdpInsertLinkByNameLocked(r, a, b);
   PersistRosterLocked(r);
-  return true;
+  return kWgLinkOk;
+}
+
+bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
+                     const std::string& b) {
+  return WgRelayLinkAddDetail(r, a, b) == kWgLinkOk;
 }
 
 bool WgRelayLinkRemove(WgRelay* r, const std::string& a,

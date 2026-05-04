@@ -292,6 +292,31 @@ bool WgRelayPeerNic(WgRelay* r, const std::string& name,
                      const std::string& nic);
 bool WgRelayPeerRemove(WgRelay* r,
                         const std::string& name);
+/// Outcome codes for `WgRelayLinkAdd` / `WgRelayLinkAddDetail`.
+/// 0 means success; the non-zero values are surfaced by the
+/// einheit channel as distinct error codes so the runner can
+/// distinguish "you already used your one link slot" from
+/// "you typo'd a peer name."
+enum WgRelayLinkAddResult : int {
+  kWgLinkOk = 0,
+  kWgLinkUnknownPeer = 1,
+  kWgLinkSelfLink = 2,
+  /// Iteration-1 invariant: each peer is in at most one link
+  /// so the destination is unambiguous from the source 4-tuple
+  /// alone. A second link on either side is rejected here
+  /// rather than producing ambiguous forwarding.
+  kWgLinkLimitExceeded = 3,
+  kWgLinkDuplicate = 4,
+};
+
+/// Like WgRelayLinkAdd but returns the reason code. Use this
+/// when the caller needs to differentiate failure modes (e.g.
+/// the einheit channel mapping each onto a distinct error
+/// string). The bool-returning wrapper below is kept for
+/// callers that only need success/failure.
+WgRelayLinkAddResult WgRelayLinkAddDetail(
+    WgRelay* r, const std::string& a, const std::string& b);
+
 bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
                      const std::string& b);
 bool WgRelayLinkRemove(WgRelay* r, const std::string& a,

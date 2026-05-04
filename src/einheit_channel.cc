@@ -1858,13 +1858,39 @@ void WgLinkAdd(Server* s, const Request& req,
   if (!WgGate(s, r)) return;
   if (!RequireArg(req, 0, "a", r)) return;
   if (!RequireArg(req, 1, "b", r)) return;
-  if (!WgRelayLinkAdd(s->wg_relay, req.args[0],
-                       req.args[1])) {
+  auto rc = WgRelayLinkAddDetail(s->wg_relay, req.args[0],
+                                  req.args[1]);
+  if (rc != kWgLinkOk) {
     r->status = ResponseStatus::kError;
-    r->error = ErrorOf(
-        "wg_link_failed",
-        "unknown peer, self-link, duplicate link, or one "
-        "side already has a link (iteration-1 limit)");
+    switch (rc) {
+      case kWgLinkUnknownPeer:
+        r->error = ErrorOf("wg_peer_unknown",
+                            "one or both peers are not "
+                            "registered (use `wg peer add`)");
+        break;
+      case kWgLinkSelfLink:
+        r->error = ErrorOf("wg_link_self",
+                            "a peer cannot link to itself");
+        break;
+      case kWgLinkLimitExceeded:
+        // The iter-1 invariant: each peer is in at most one
+        // link. Distinct from the other failure modes so the
+        // runner can detect a star-topology config that hits
+        // the limit and switch to disjoint pairs.
+        r->error = ErrorOf(
+            "link_limit_exceeded",
+            "iteration-1 limit: each peer may be in at most "
+            "one link (one side of this pair already is)");
+        break;
+      case kWgLinkDuplicate:
+        r->error = ErrorOf("wg_link_duplicate",
+                            "this exact link already exists");
+        break;
+      default:
+        r->error = ErrorOf("wg_link_failed",
+                            "link add failed");
+        break;
+    }
     return;
   }
   SetBody(r, std::format("a={}\nb={}\n", req.args[0],
@@ -2201,7 +2227,9 @@ Registry MakeRegistry() {
   m["wg_link_add"] = {WgLinkAdd, Role::kOperator,
                        "wg link add",
                        "Allow A↔B forwarding between two "
-                       "peers",
+                       "peers. Iteration-1 limit: each peer "
+                       "may appear in at most one link "
+                       "(rejected as link_limit_exceeded)",
                        false, wg_link_args};
   m["wg_link_remove"] = {WgLinkRemove, Role::kOperator,
                           "wg link remove",
