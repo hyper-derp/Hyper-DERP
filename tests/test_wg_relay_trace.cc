@@ -64,19 +64,31 @@ class WgRelayTraceTest : public ::testing::Test {
   void SetUp() override {
     auto [a_fd, a_port] = BindUdpEphemeral();
     auto [b_fd, b_port] = BindUdpEphemeral();
-    auto [r_fd, r_port] = BindUdpEphemeral();
     ASSERT_GE(a_fd, 0);
     ASSERT_GE(b_fd, 0);
-    ASSERT_GE(r_fd, 0);
     alice_fd_ = a_fd;
     alice_port_ = a_port;
     bob_fd_ = b_fd;
     bob_port_ = b_port;
-    // Close r_fd; the relay will rebind r_port itself. There's
-    // a TOCTOU window here but loopback ephemeral collisions
-    // in CI are rare enough that the simpler code wins.
-    close(r_fd);
-    relay_port_ = r_port;
+  }
+
+  // Pick a UDP port for the relay by binding-then-closing.
+  // Tests that need to run WgRelayStart call this each time
+  // so the kernel hands back a fresh ephemeral port — the
+  // historical "pick once at SetUp" pattern has a TOCTOU
+  // window that flakes when another process grabs the port
+  // between the test's close and the relay's bind.
+  void StartRelay(WgRelayConfig cfg) {
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      auto [fd, port] = BindUdpEphemeral();
+      ASSERT_GE(fd, 0);
+      relay_port_ = port;
+      close(fd);
+      cfg.port = port;
+      relay_ = WgRelayStart(cfg);
+      if (relay_) return;
+    }
+    FAIL() << "WgRelayStart failed 5 times in a row";
   }
 
   void TearDown() override {
@@ -87,7 +99,7 @@ class WgRelayTraceTest : public ::testing::Test {
 
   WgRelayConfig MakeCfg() {
     WgRelayConfig cfg;
-    cfg.port = relay_port_;
+    // cfg.port is filled in by StartRelay(); leave 0 here.
     WgRelayConfig::PeerEntry alice;
     alice.name = "alice";
     alice.endpoint =
@@ -130,11 +142,24 @@ class WgRelayTraceTest : public ::testing::Test {
   WgRelay* relay_ = nullptr;
 };
 
+// Wait briefly for fwd_packets to reach `target`. The recv
+// loop bumps the counter just AFTER sendto returns, so a
+// sub-microsecond test that reads stats immediately after
+// recv() returns can race the increment. Poll up to ~500 ms.
+uint64_t WaitFwdPackets(WgRelay* r, uint64_t target) {
+  for (int i = 0; i < 50; ++i) {
+    auto s = WgRelayGetStats(r);
+    if (s.fwd_packets >= target) return s.fwd_packets;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WgRelayGetStats(r).fwd_packets;
+}
+
 // Trace flag off (default) — relay still forwards.
 TEST_F(WgRelayTraceTest, ForwardsWithTraceOff) {
   WgRelayConfig cfg = MakeCfg();
   cfg.trace_forward_hashes = false;
-  relay_ = WgRelayStart(cfg);
+  StartRelay(std::move(cfg));
   ASSERT_NE(relay_, nullptr);
 
   auto pkt = MakeHandshakeInit();
@@ -144,8 +169,7 @@ TEST_F(WgRelayTraceTest, ForwardsWithTraceOff) {
   ssize_t n = RecvOnBob(buf.data(), buf.size());
   ASSERT_EQ(n, 148);
   EXPECT_EQ(buf[0], 1);
-  auto stats = WgRelayGetStats(relay_);
-  EXPECT_EQ(stats.fwd_packets, 1u);
+  EXPECT_EQ(WaitFwdPackets(relay_, 1), 1u);
 }
 
 // Trace flag on — relay forwards and the trace path runs
@@ -155,7 +179,7 @@ TEST_F(WgRelayTraceTest, ForwardsWithTraceOff) {
 TEST_F(WgRelayTraceTest, ForwardsWithTraceOn) {
   WgRelayConfig cfg = MakeCfg();
   cfg.trace_forward_hashes = true;
-  relay_ = WgRelayStart(cfg);
+  StartRelay(std::move(cfg));
   ASSERT_NE(relay_, nullptr);
 
   auto pkt = MakeHandshakeInit();
@@ -164,8 +188,7 @@ TEST_F(WgRelayTraceTest, ForwardsWithTraceOn) {
   std::array<uint8_t, 256> buf{};
   ssize_t n = RecvOnBob(buf.data(), buf.size());
   ASSERT_EQ(n, 148);
-  auto stats = WgRelayGetStats(relay_);
-  EXPECT_EQ(stats.fwd_packets, 1u);
+  EXPECT_EQ(WaitFwdPackets(relay_, 1), 1u);
 }
 
 // P0.2 smoke: invalid --xdp-mode causes WgRelayStart to fail.
@@ -174,6 +197,7 @@ TEST_F(WgRelayTraceTest, ForwardsWithTraceOn) {
 // than silently running with a bogus mode.
 TEST_F(WgRelayTraceTest, RejectsUnknownXdpMode) {
   WgRelayConfig cfg = MakeCfg();
+  cfg.port = 0;  // not exercised; bind never reached.
   cfg.xdp_interface = "lo";
   cfg.xdp_mode = "extreme";
   WgRelay* r = WgRelayStart(cfg);
@@ -189,7 +213,7 @@ TEST_F(WgRelayTraceTest, XdpModeOffSkipsAttach) {
   WgRelayConfig cfg = MakeCfg();
   cfg.xdp_interface = "lo";
   cfg.xdp_mode = "off";
-  relay_ = WgRelayStart(cfg);
+  StartRelay(std::move(cfg));
   ASSERT_NE(relay_, nullptr);
   auto stats = WgRelayGetStats(relay_);
   EXPECT_FALSE(stats.xdp_attached);
@@ -202,7 +226,7 @@ TEST_F(WgRelayTraceTest, PerPeerDropNoLinkCounter) {
   WgRelayConfig cfg = MakeCfg();
   // Drop the link so alice is registered but unlinked.
   cfg.links.clear();
-  relay_ = WgRelayStart(cfg);
+  StartRelay(std::move(cfg));
   ASSERT_NE(relay_, nullptr);
 
   auto pkt = MakeHandshakeInit();
