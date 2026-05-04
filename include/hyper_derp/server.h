@@ -85,6 +85,18 @@ struct WgRelayConfig {
   /// Path to the compiled BPF object. Defaults to a
   /// CMake-installed location; rarely set explicitly.
   std::string xdp_bpf_obj_path;
+  /// XDP attach mode override. "" / "drv" → native only
+  /// (XDP_FLAGS_DRV_MODE); "skb" → generic only; "auto" →
+  /// try drv, fall back to skb on EOPNOTSUPP / EINVAL;
+  /// "off" → skip XDP entirely. Surfaces an explicit
+  /// failure mode rather than silently falling through to
+  /// userspace when the operator expected drv mode.
+  std::string xdp_mode;
+  /// Per-frame trace logging for diagnosing integrity
+  /// failures. See WgRelay::trace_forward_hashes — off by
+  /// default; enabled via the `--trace-forward-hashes`
+  /// daemon flag.
+  bool trace_forward_hashes = false;
 };
 
 /// Connection level for a peer pair. Level 0 (DERP) is

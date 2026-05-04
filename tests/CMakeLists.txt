@@ -132,6 +132,25 @@ target_link_libraries(test_hd_blake2s PRIVATE
 gtest_discover_tests(test_hd_blake2s
   DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 10)
 
+# wg-relay diagnostic-surface smoke test (P0.1 / P0.2 in the
+# 0.2.2 daemon brief). Drives the wg-relay forwarder
+# in-process to confirm the trace path + per-peer counters
+# are reachable.
+add_executable(test_wg_relay_trace test_wg_relay_trace.cc)
+target_link_libraries(test_wg_relay_trace PRIVATE
+  libderp GTest::gtest_main)
+gtest_discover_tests(test_wg_relay_trace
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
+
+# wg-relay link-table regression tests (P0.3). Exercises the
+# iter-1 invariant + the distinct WgRelayLinkAddResult codes
+# the einheit channel maps onto error strings.
+add_executable(test_wg_relay_links test_wg_relay_links.cc)
+target_link_libraries(test_wg_relay_links PRIVATE
+  libderp GTest::gtest_main)
+gtest_discover_tests(test_wg_relay_links
+  DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 30)
+
 # ZMQ control channel tests.
 add_executable(test_ctl_channel test_ctl_channel.cc)
 target_link_libraries(test_ctl_channel PRIVATE

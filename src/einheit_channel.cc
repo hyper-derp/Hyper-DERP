@@ -1843,6 +1843,10 @@ void WgPeerList(Server* s, const Request& /*req*/,
                      p.rx_bytes);
     b += std::format("peer.{}.fwd_bytes={}\n", idx,
                      p.fwd_bytes);
+    b += std::format("peer.{}.drop_no_link={}\n", idx,
+                     p.drop_no_link);
+    b += std::format("peer.{}.drop_pubkey_mismatch={}\n", idx,
+                     p.drop_pubkey_mismatch);
     idx++;
   }
   b += std::format("peer.count={}\n", idx);
@@ -1854,13 +1858,39 @@ void WgLinkAdd(Server* s, const Request& req,
   if (!WgGate(s, r)) return;
   if (!RequireArg(req, 0, "a", r)) return;
   if (!RequireArg(req, 1, "b", r)) return;
-  if (!WgRelayLinkAdd(s->wg_relay, req.args[0],
-                       req.args[1])) {
+  auto rc = WgRelayLinkAddDetail(s->wg_relay, req.args[0],
+                                  req.args[1]);
+  if (rc != kWgLinkOk) {
     r->status = ResponseStatus::kError;
-    r->error = ErrorOf(
-        "wg_link_failed",
-        "unknown peer, self-link, duplicate link, or one "
-        "side already has a link (iteration-1 limit)");
+    switch (rc) {
+      case kWgLinkUnknownPeer:
+        r->error = ErrorOf("wg_peer_unknown",
+                            "one or both peers are not "
+                            "registered (use `wg peer add`)");
+        break;
+      case kWgLinkSelfLink:
+        r->error = ErrorOf("wg_link_self",
+                            "a peer cannot link to itself");
+        break;
+      case kWgLinkLimitExceeded:
+        // The iter-1 invariant: each peer is in at most one
+        // link. Distinct from the other failure modes so the
+        // runner can detect a star-topology config that hits
+        // the limit and switch to disjoint pairs.
+        r->error = ErrorOf(
+            "link_limit_exceeded",
+            "iteration-1 limit: each peer may be in at most "
+            "one link (one side of this pair already is)");
+        break;
+      case kWgLinkDuplicate:
+        r->error = ErrorOf("wg_link_duplicate",
+                            "this exact link already exists");
+        break;
+      default:
+        r->error = ErrorOf("wg_link_failed",
+                            "link add failed");
+        break;
+    }
     return;
   }
   SetBody(r, std::format("a={}\nb={}\n", req.args[0],
@@ -1943,6 +1973,37 @@ void WgBlocklistList(Server* s, const Request& /*req*/,
                      entries[i].seconds_left);
     b += std::format("entry.{}.total_strikes={}\n", i,
                      entries[i].total_strikes);
+  }
+  b += std::format("count={}\n", entries.size());
+  SetBody(r, b);
+}
+
+// Per-source-IP histogram of unattributable drops. The brief
+// asked for per-pair breakdown of drop_unknown_src,
+// drop_not_wg_shaped, and drop_handshake_no_pubkey_match —
+// per-pair is meaningless when the source isn't a registered
+// peer, but per-source-IP is exactly what the runner needs to
+// diagnose internal/external NAT-IP mismatches.
+void WgDropSources(Server* s, const Request& /*req*/,
+                    Response* r) {
+  if (!WgGate(s, r)) return;
+  auto entries = WgRelayListDropSources(s->wg_relay);
+  if (entries.empty()) {
+    SetBody(r, "drop_sources=empty\n");
+    return;
+  }
+  std::string b;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    b += std::format("src.{}.ip={}\n", i, entries[i].ip);
+    b += std::format("src.{}.drop_unknown_src={}\n", i,
+                     entries[i].drop_unknown_src);
+    b += std::format("src.{}.drop_not_wg_shaped={}\n", i,
+                     entries[i].drop_not_wg_shaped);
+    b += std::format(
+        "src.{}.drop_handshake_no_pubkey_match={}\n", i,
+        entries[i].drop_handshake_no_pubkey_match);
+    b += std::format("src.{}.last_seen_ns={}\n", i,
+                     entries[i].last_seen_ns);
   }
   b += std::format("count={}\n", entries.size());
   SetBody(r, b);
@@ -2197,7 +2258,9 @@ Registry MakeRegistry() {
   m["wg_link_add"] = {WgLinkAdd, Role::kOperator,
                        "wg link add",
                        "Allow A↔B forwarding between two "
-                       "peers",
+                       "peers. Iteration-1 limit: each peer "
+                       "may appear in at most one link "
+                       "(rejected as link_limit_exceeded)",
                        false, wg_link_args};
   m["wg_link_remove"] = {WgLinkRemove, Role::kOperator,
                           "wg link remove",
@@ -2219,6 +2282,14 @@ Registry MakeRegistry() {
       WgBlocklistList, Role::kAny, "wg blocklist list",
       "Source IPs auto-blocked after repeated failed-confirm "
       "strikes (forged-handshake protection)",
+      false, {}};
+  m["wg_show_drop_sources"] = {
+      WgDropSources, Role::kAny, "wg show drop_sources",
+      "Per-source-IP histogram for the three drop classes "
+      "that aren't attributable to a registered peer "
+      "(drop_unknown_src, drop_not_wg_shaped, "
+      "drop_handshake_no_pubkey_match). Capped at 256 IPs; "
+      "FIFO eviction on overflow",
       false, {}};
   return m;
 }

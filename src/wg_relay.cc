@@ -18,6 +18,9 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/if_link.h>
+#include <sys/utsname.h>
+
+#include <sodium.h>
 
 #include <chrono>
 #include <cstring>
@@ -38,6 +41,30 @@ uint64_t NowNs() {
              std::chrono::steady_clock::now()
                  .time_since_epoch())
       .count();
+}
+
+// Helpers for the trace-forward-hashes diagnostic path.
+// Both functions are only called when r->trace_forward_hashes
+// is set; the hot path stays untouched when tracing is off.
+std::string Sha256HexPrefix(const uint8_t* data, size_t len) {
+  unsigned char digest[crypto_hash_sha256_BYTES];
+  crypto_hash_sha256(digest, data, len);
+  static constexpr char kHex[] = "0123456789abcdef";
+  // 16 bytes = 32 hex chars; enough to distinguish frames
+  // without spamming the log.
+  std::string out(32, '\0');
+  for (int i = 0; i < 16; ++i) {
+    out[2 * i] = kHex[digest[i] >> 4];
+    out[2 * i + 1] = kHex[digest[i] & 0xF];
+  }
+  return out;
+}
+
+// First 12 chars of a peer's base64 pubkey, "[--]" if unset.
+std::string PubkeyPrefix(const std::string& pubkey_b64) {
+  if (pubkey_b64.empty()) return "[--]";
+  return pubkey_b64.substr(
+      0, std::min<size_t>(12, pubkey_b64.size()));
 }
 
 bool ParseHostPort(const std::string& s,
@@ -405,6 +432,13 @@ void PersistRosterLocked(WgRelay* r) {
 //     registrations for the same peer (rate-limits flap).
 constexpr uint64_t kCandidateTimeoutNs = 30ULL * 1'000'000'000ULL;
 constexpr uint64_t kRelearnCooldownNs = 5ULL * 1'000'000'000ULL;
+
+// Cap on the per-source-IP drop histogram. Spoofed-source
+// floods could otherwise grow the std::map unboundedly. 256
+// rows is enough for the diagnostic intent (the brief's
+// integrity test has a single peer pair) while keeping the
+// memory cost trivial.
+constexpr size_t kDropBySrcMaxEntries = 256;
 // Rate-limit retry-init forwards from a not-yet-confirmed
 // candidate. wg.ko's retry cadence is 5 s; legit clients only
 // trip this when their network is genuinely flaky, while a
@@ -568,6 +602,58 @@ void XdpBlocklistDelete(WgRelay* r, uint32_t host_ip) {
   bpf_map_delete_elem(r->xdp.blocklist_map_fd, &key);
 }
 
+// Bump a counter on the per-source-IP drop histogram. The
+// histogram exists for the three drop classes that aren't
+// attributable to a registered peer (drop_unknown_src,
+// drop_not_wg_shaped, drop_handshake_no_pubkey_match) — the
+// brief's integrity-test diagnostic asks "what source IPs
+// are hitting which drop reason?" rather than per-pair, since
+// these drops fire precisely when no pair owns the source.
+//
+// `which` selects the field to bump (1=unknown_src,
+// 2=not_wg_shaped, 3=no_pubkey_match). v6 sources are skipped
+// — the brief's diagnostic targets are v4 NAT mismatches.
+// Caller holds peers_mu.
+enum class WgDropClass : int {
+  kUnknownSrc = 1,
+  kNotWgShaped = 2,
+  kHandshakeNoPubkeyMatch = 3,
+};
+void RecordDropBySrcLocked(
+    WgRelay* r, const sockaddr_storage& src,
+    socklen_t src_len, WgDropClass which) {
+  uint32_t ip_h = ExtractV4SrcHostOrder(src, src_len);
+  if (ip_h == 0) return;
+  uint64_t now = NowNs();
+  // FIFO eviction on overflow: pick the entry with the oldest
+  // last_seen_ns. Linear scan; map size is bounded.
+  if (r->drop_by_src.find(ip_h) == r->drop_by_src.end() &&
+      r->drop_by_src.size() >= kDropBySrcMaxEntries) {
+    auto oldest = r->drop_by_src.begin();
+    for (auto it = r->drop_by_src.begin();
+         it != r->drop_by_src.end(); ++it) {
+      if (it->second.last_seen_ns <
+          oldest->second.last_seen_ns) {
+        oldest = it;
+      }
+    }
+    r->drop_by_src.erase(oldest);
+  }
+  WgRelayDropBySrc& s = r->drop_by_src[ip_h];
+  s.last_seen_ns = now;
+  switch (which) {
+    case WgDropClass::kUnknownSrc:
+      s.drop_unknown_src += 1;
+      break;
+    case WgDropClass::kNotWgShaped:
+      s.drop_not_wg_shaped += 1;
+      break;
+    case WgDropClass::kHandshakeNoPubkeyMatch:
+      s.drop_handshake_no_pubkey_match += 1;
+      break;
+  }
+}
+
 // Record a failed-confirm strike for `src` and escalate to
 // the blocklist if the threshold is crossed. Caller holds
 // peers_mu.
@@ -720,6 +806,8 @@ void HandleUnknownSrcHandshakeLocked(
   if (pkt[0] != 1) {
     r->stats.drop_unknown_src.fetch_add(
         1, std::memory_order_relaxed);
+    RecordDropBySrcLocked(r, src, src_len,
+                           WgDropClass::kUnknownSrc);
     return;
   }
   uint64_t now = NowNs();
@@ -740,6 +828,8 @@ void HandleUnknownSrcHandshakeLocked(
         now - sender->last_relearn_ns < kRelearnCooldownNs) {
       r->stats.drop_unknown_src.fetch_add(
           1, std::memory_order_relaxed);
+      RecordDropBySrcLocked(r, src, src_len,
+                             WgDropClass::kUnknownSrc);
       return;
     }
 
@@ -771,6 +861,8 @@ void HandleUnknownSrcHandshakeLocked(
           < kRetryForwardGapNs) {
         r->stats.drop_unknown_src.fetch_add(
             1, std::memory_order_relaxed);
+        RecordDropBySrcLocked(r, src, src_len,
+                               WgDropClass::kUnknownSrc);
         return;
       }
       sender->candidate_last_forward_ns = now;
@@ -792,6 +884,8 @@ void HandleUnknownSrcHandshakeLocked(
     if (sender->candidate_endpoint_len > 0) {
       r->stats.drop_unknown_src.fetch_add(
           1, std::memory_order_relaxed);
+      RecordDropBySrcLocked(r, src, src_len,
+                             WgDropClass::kUnknownSrc);
       return;
     }
 
@@ -831,6 +925,13 @@ void HandleUnknownSrcHandshakeLocked(
   // No partner pubkey verified.
   r->stats.drop_handshake_no_pubkey_match.fetch_add(
       1, std::memory_order_relaxed);
+  // Per-source-IP attribution for diagnostic — this drop
+  // class is exactly the failure mode the cloud-gcp-c4
+  // internal/external NAT mismatch produces, where the
+  // runner traffic arrives from an IP not stamped on either
+  // peer.
+  RecordDropBySrcLocked(r, src, src_len,
+                         WgDropClass::kHandshakeNoPubkeyMatch);
 }
 
 // Forward-declare the XDP map updater — implementation lives
@@ -948,6 +1049,12 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
   if (!IsWgShaped(pkt, len)) {
     r->stats.drop_not_wg_shaped.fetch_add(
         1, std::memory_order_relaxed);
+    // Bump the per-source-IP histogram so the operator can
+    // see which IPs are flooding the relay with non-WG noise.
+    // Cold path — taking the lock briefly is fine.
+    std::lock_guard lk(r->peers_mu);
+    RecordDropBySrcLocked(r, src, src_len,
+                           WgDropClass::kNotWgShaped);
     return;
   }
   // Lookup is O(N) over the peer table; N is operator-
@@ -983,12 +1090,16 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
       if (!src_peer) {
         r->stats.drop_unknown_src.fetch_add(
             1, std::memory_order_relaxed);
+        RecordDropBySrcLocked(r, src, src_len,
+                               WgDropClass::kUnknownSrc);
         return;
       }
       // src_peer is now the confirmed peer; fall through.
     } else {
       r->stats.drop_unknown_src.fetch_add(
           1, std::memory_order_relaxed);
+      RecordDropBySrcLocked(r, src, src_len,
+                             WgDropClass::kUnknownSrc);
       return;
     }
   }
@@ -1019,6 +1130,7 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
   if (!dst) {
     r->stats.drop_no_link.fetch_add(
         1, std::memory_order_relaxed);
+    src_peer->drop_no_link_peer += 1;
     return;
   }
 
@@ -1035,6 +1147,7 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
       if (!VerifyMac1(pkt, len, partner_pub.data())) {
         r->stats.drop_handshake_pubkey_mismatch.fetch_add(
             1, std::memory_order_relaxed);
+        src_peer->drop_pubkey_mismatch_peer += 1;
         return;
       }
     }
@@ -1042,6 +1155,21 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     // we'd rather forward a packet than drop one because of a
     // bad operator-stamped key. The decode failure shows up at
     // pubkey-set time anyway.
+  }
+
+  // Trace point: ingress (after src match + MAC1 verify, before
+  // forward). The matching egress trace below pairs with this
+  // by SHA-256 — same hash on both lines means the relay didn't
+  // mutate the frame (which is the integrity invariant we
+  // expect for stock WG relay mode).
+  if (r->trace_forward_hashes) {
+    spdlog::info(
+        "wg-relay trace ingress sha256={} len={} type={} "
+        "src_peer={} src_pubkey={} dst_peer={} dst_pubkey={}",
+        Sha256HexPrefix(pkt, len), len,
+        static_cast<int>(pkt[0]), src_peer->name,
+        PubkeyPrefix(src_peer->pubkey_b64), dst->name,
+        PubkeyPrefix(dst->pubkey_b64));
   }
 
   ssize_t sent = sendto(
@@ -1052,6 +1180,16 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     spdlog::warn("wg-relay sendto: {}",
                  std::strerror(errno));
     return;
+  }
+  // Trace point: egress (sendto succeeded). Same SHA-256 as
+  // the matching ingress line proves we forwarded the frame
+  // byte-for-byte — divergence flags a corrupting code path.
+  if (r->trace_forward_hashes) {
+    spdlog::info(
+        "wg-relay trace egress  sha256={} len={} type={} "
+        "src_peer={} dst_peer={}",
+        Sha256HexPrefix(pkt, len), sent,
+        static_cast<int>(pkt[0]), src_peer->name, dst->name);
   }
   // Handshake response → mirror to dst's pending candidate
   // endpoint (so a real roamer at the new IP completes their
@@ -1190,6 +1328,33 @@ bool ReadNicIpv4(const std::string& iface,
   return found;
 }
 
+// Read the kernel module backing a NIC. Returns the basename
+// of /sys/class/net/<iface>/device/driver, or "?" if the
+// symlink doesn't resolve (loopback, bridges, virtual NICs).
+std::string ReadNicDriver(const std::string& iface) {
+  std::string path =
+      "/sys/class/net/" + iface + "/device/driver";
+  char buf[256];
+  ssize_t n =
+      ::readlink(path.c_str(), buf, sizeof(buf) - 1);
+  if (n <= 0) return "?";
+  buf[n] = '\0';
+  std::string s(buf);
+  auto slash = s.rfind('/');
+  return slash == std::string::npos ? s
+                                     : s.substr(slash + 1);
+}
+
+// Running kernel release ("6.12.73+deb13-amd64" etc).
+// Operator-facing field on the xdp_attached log line so
+// driver/kernel pairs that don't support XDP_DRV are
+// distinguishable in the bench log.
+std::string ReadKernelRelease() {
+  utsname u{};
+  if (::uname(&u) != 0) return "?";
+  return u.release;
+}
+
 // Read a NIC's hardware MAC from sysfs. Cleaner than
 // SIOCGIFHWADDR — no socket needed, no ioctl quirks.
 bool ReadNicMac(const std::string& iface, uint8_t mac[6]) {
@@ -1225,9 +1390,46 @@ std::vector<std::string> SplitIfaceList(const std::string& s) {
   return out;
 }
 
+// Resolve the operator's --xdp-mode string into a flags +
+// fallback policy. Empty / "drv" → DRV-only (fail loudly if
+// the driver doesn't support it); "skb" → SKB-only;
+// "auto" → DRV with SKB fallback (the historical behaviour);
+// "off" → caller should skip XdpAttach entirely. Anything
+// else is an operator typo.
+struct XdpModePolicy {
+  bool valid = false;
+  bool try_drv = false;
+  bool try_skb_fallback = false;
+  std::string label;  // "drv" | "skb" | "auto" | "off"
+};
+XdpModePolicy ParseXdpMode(const std::string& mode) {
+  XdpModePolicy p;
+  if (mode.empty() || mode == "drv") {
+    p.valid = true;
+    p.try_drv = true;
+    p.try_skb_fallback = false;
+    p.label = "drv";
+  } else if (mode == "skb") {
+    p.valid = true;
+    p.try_drv = false;
+    p.try_skb_fallback = true;
+    p.label = "skb";
+  } else if (mode == "auto") {
+    p.valid = true;
+    p.try_drv = true;
+    p.try_skb_fallback = true;
+    p.label = "auto";
+  } else if (mode == "off") {
+    p.valid = true;
+    p.label = "off";
+  }
+  return p;
+}
+
 bool XdpAttach(WgRelay* r, const std::string& iface_list,
                 const std::string& bpf_obj_path,
-                uint16_t port) {
+                uint16_t port,
+                const XdpModePolicy& mode) {
   auto ifaces = SplitIfaceList(iface_list);
   if (ifaces.empty()) return false;
 
@@ -1356,30 +1558,40 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
     }
   }
 
-  // Attach to each NIC. Native first; generic fallback per
-  // NIC, since some drivers in a mixed setup support
-  // native and others don't.
+  // Attach per NIC, honouring the operator's mode policy.
+  // The previous code unconditionally tried DRV then fell
+  // back to SKB; that silent fallback is exactly what the
+  // 0.2.1 cloud-gcp-c4 benchmark caught labelling "xdp"
+  // rows that were really running in userspace mode.
   std::vector<bool> natives;
   natives.reserve(attachments.size());
+  std::string kernel = ReadKernelRelease();
   for (const auto& a : attachments) {
-    int rc = bpf_xdp_attach(a.ifindex, prog_fd,
-                             XDP_FLAGS_DRV_MODE, nullptr);
-    bool native = rc == 0;
-    if (rc < 0) {
+    std::string drv = ReadNicDriver(a.iface);
+    int rc = -EOPNOTSUPP;
+    bool native = false;
+    if (mode.try_drv) {
+      rc = bpf_xdp_attach(a.ifindex, prog_fd,
+                           XDP_FLAGS_DRV_MODE, nullptr);
+      if (rc == 0) native = true;
+    }
+    if (rc != 0 && mode.try_skb_fallback) {
       rc = bpf_xdp_attach(a.ifindex, prog_fd,
                            XDP_FLAGS_SKB_MODE, nullptr);
-      if (rc < 0) {
-        spdlog::error(
-            "wg-relay xdp: attach {} failed: {}", a.iface,
-            std::strerror(-rc));
-        // Roll back any NICs we already attached.
-        for (const auto& done : attachments) {
-          if (done.ifindex == a.ifindex) break;
-          bpf_xdp_detach(done.ifindex, 0, nullptr);
-        }
-        bpf_object__close(obj);
-        return false;
+    }
+    if (rc != 0) {
+      spdlog::error(
+          "xdp_attach_failed iface={} ifindex={} mode={} "
+          "driver={} kernel={} reason={}",
+          a.iface, a.ifindex, mode.label, drv, kernel,
+          std::strerror(-rc));
+      // Roll back any NICs we already attached.
+      for (const auto& done : attachments) {
+        if (done.ifindex == a.ifindex) break;
+        bpf_xdp_detach(done.ifindex, 0, nullptr);
       }
+      bpf_object__close(obj);
+      return false;
     }
     natives.push_back(native);
   }
@@ -1398,12 +1610,13 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
   r->xdp.blocklist_map_fd = blocklist_fd;
   r->xdp.attached = true;
   for (size_t i = 0; i < r->xdp.attachments.size(); ++i) {
+    const auto& a = r->xdp.attachments[i];
     spdlog::info(
-        "wg-relay xdp: attached on {} "
-        "(ifindex={}, mode={})",
-        r->xdp.attachments[i].iface,
-        r->xdp.attachments[i].ifindex,
-        natives[i] ? "native" : "generic");
+        "xdp_attached iface={} ifindex={} mode={} "
+        "driver={} kernel={}",
+        a.iface, a.ifindex,
+        natives[i] ? "drv" : "skb",
+        ReadNicDriver(a.iface), kernel);
   }
   return true;
 }
@@ -1619,6 +1832,13 @@ WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
   r->sock_fd = sock;
   r->port = cfg.port;
   r->roster_path = cfg.roster_path;
+  r->trace_forward_hashes = cfg.trace_forward_hashes;
+  if (r->trace_forward_hashes) {
+    spdlog::warn(
+        "wg-relay trace_forward_hashes=on — per-frame "
+        "logging will dominate throughput; disable for "
+        "production traffic.");
+  }
   if (!r->roster_path.empty()) {
     std::lock_guard lk(r->peers_mu);
     LoadRosterFile(r, r->roster_path);
@@ -1649,20 +1869,40 @@ WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
   r->loop_thread = std::thread(RecvLoop, r);
 
   // Bring up the XDP fast path if the operator asked for
-  // it. Failure here is non-fatal — we log and stay on
-  // the userspace path; correctness is unchanged.
-  if (!cfg.xdp_interface.empty()) {
+  // it. The mode policy decides whether to try drv, skb, both,
+  // or skip entirely. Attach failure (after the policy says
+  // "really try this") is FATAL: silently falling back to
+  // userspace would label benchmark rows "xdp" that are
+  // actually running on the userspace recv loop, which is
+  // exactly what we're trying to avoid.
+  XdpModePolicy xdp_mode = ParseXdpMode(cfg.xdp_mode);
+  if (!xdp_mode.valid) {
+    spdlog::error(
+        "wg-relay invalid --xdp-mode '{}' (drv | skb | "
+        "auto | off)", cfg.xdp_mode);
+    WgRelayStop(r);
+    return nullptr;
+  }
+  bool xdp_requested = !cfg.xdp_interface.empty() &&
+                        xdp_mode.label != "off";
+  if (xdp_requested) {
     std::string obj_path = cfg.xdp_bpf_obj_path.empty()
         ? std::string("/usr/lib/hyper-derp/wg_relay.bpf.o")
         : cfg.xdp_bpf_obj_path;
-    if (XdpAttach(r, cfg.xdp_interface, obj_path,
-                   cfg.port)) {
-      // Replay current links into the BPF map so the fast
-      // path is live for already-loaded roster entries.
-      std::lock_guard lk(r->peers_mu);
-      for (const auto& l : r->links) {
-        XdpInsertLinkByNameLocked(r, l.a, l.b);
-      }
+    if (!XdpAttach(r, cfg.xdp_interface, obj_path,
+                    cfg.port, xdp_mode)) {
+      // XdpAttach already logged xdp_attach_failed with the
+      // structured detail. Tear the relay down so main.cc
+      // exits non-zero — the runner needs a clear signal,
+      // not a silent userspace fallback.
+      WgRelayStop(r);
+      return nullptr;
+    }
+    // Replay current links into the BPF map so the fast path
+    // is live for already-loaded roster entries.
+    std::lock_guard lk(r->peers_mu);
+    for (const auto& l : r->links) {
+      XdpInsertLinkByNameLocked(r, l.a, l.b);
     }
   }
 
@@ -1755,13 +1995,20 @@ bool WgRelayPeerRemove(WgRelay* r,
   return true;
 }
 
-bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
-                     const std::string& b) {
+WgRelayLinkAddResult WgRelayLinkAddDetail(
+    WgRelay* r, const std::string& a,
+    const std::string& b) {
   std::lock_guard lk(r->peers_mu);
-  if (LinkAddLocked(r, a, b) != 0) return false;
+  int rc = LinkAddLocked(r, a, b);
+  if (rc != 0) return static_cast<WgRelayLinkAddResult>(rc);
   XdpInsertLinkByNameLocked(r, a, b);
   PersistRosterLocked(r);
-  return true;
+  return kWgLinkOk;
+}
+
+bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
+                     const std::string& b) {
+  return WgRelayLinkAddDetail(r, a, b) == kWgLinkOk;
 }
 
 bool WgRelayLinkRemove(WgRelay* r, const std::string& a,
@@ -1801,6 +2048,8 @@ std::vector<WgRelayPeerInfo> WgRelayListPeers(
     i.last_seen_ns = p.last_seen_ns;
     i.rx_bytes = p.rx_bytes;
     i.fwd_bytes = p.fwd_bytes;
+    i.drop_no_link = p.drop_no_link_peer;
+    i.drop_pubkey_mismatch = p.drop_pubkey_mismatch_peer;
     // Fold in the XDP per-CPU byte counters when the fast
     // path is attached. Without this the bytes freeze at
     // whatever the cold-start packet was, since every
@@ -1932,6 +2181,27 @@ std::vector<WgBlocklistView> WgRelayListBlocklist(
     auto it = r->strikes.find(ip_h);
     v.total_strikes =
         (it != r->strikes.end()) ? it->second.total_strikes : 0;
+    out.push_back(std::move(v));
+  }
+  return out;
+}
+
+std::vector<WgDropBySrcView> WgRelayListDropSources(
+    const WgRelay* r) {
+  std::vector<WgDropBySrcView> out;
+  std::lock_guard lk(r->peers_mu);
+  out.reserve(r->drop_by_src.size());
+  for (const auto& [ip_h, s] : r->drop_by_src) {
+    char buf[INET_ADDRSTRLEN];
+    uint32_t nbo = htonl(ip_h);
+    inet_ntop(AF_INET, &nbo, buf, sizeof(buf));
+    WgDropBySrcView v;
+    v.ip = buf;
+    v.drop_unknown_src = s.drop_unknown_src;
+    v.drop_not_wg_shaped = s.drop_not_wg_shaped;
+    v.drop_handshake_no_pubkey_match =
+        s.drop_handshake_no_pubkey_match;
+    v.last_seen_ns = s.last_seen_ns;
     out.push_back(std::move(v));
   }
   return out;

@@ -68,6 +68,14 @@ struct WgRelayPeer {
   /// Times this peer's `endpoint` was relearned via the
   /// MAC1-driven roaming flow. Persisted to the roster.
   uint64_t endpoint_relearn = 0;
+  /// Per-peer drop counters — incremented alongside the
+  /// aggregate `WgRelayStats` counters at sites where the
+  /// drop is attributable to a known source peer. The
+  /// other drop classes (drop_unknown_src,
+  /// drop_not_wg_shaped, drop_handshake_no_pubkey_match)
+  /// are by definition unattributable and stay aggregate.
+  uint64_t drop_no_link_peer = 0;
+  uint64_t drop_pubkey_mismatch_peer = 0;
   /// Pending relearn-candidate, populated when an unknown
   /// source presents a handshake with valid MAC1 against
   /// this peer's link partner. Cleared on confirm (transport
@@ -214,6 +222,25 @@ struct WgXdpStats {
   uint64_t drop_blocklisted = 0;
 };
 
+/// Per-source-IP histogram of drops that can't be attributed
+/// to a registered peer (because, by definition, the source
+/// didn't match any peer's endpoint). The brief asked for
+/// per-pair breakdown of these but per-pair is meaningless
+/// when the source is unknown — per-source-IP is the next
+/// best granularity and exactly what's needed to diagnose
+/// "the runner's traffic is arriving from an external NAT IP
+/// that isn't stamped on the peer." Bounded to keep the map
+/// from growing under spoofed source attacks (FIFO eviction
+/// at the cap).
+struct WgRelayDropBySrc {
+  uint64_t drop_unknown_src = 0;
+  uint64_t drop_not_wg_shaped = 0;
+  uint64_t drop_handshake_no_pubkey_match = 0;
+  /// Steady-clock ns of the most recent increment — used as
+  /// the FIFO eviction key when the map is at capacity.
+  uint64_t last_seen_ns = 0;
+};
+
 /// Strike record per source IP — incremented when a candidate
 /// endpoint that source registered fails to confirm via
 /// transport-data. Escalates the source onto the blocklist
@@ -237,6 +264,12 @@ struct WgRelay {
   /// succeeds; escalated to wg_blocklist once the threshold
   /// is crossed.
   std::map<uint32_t, WgRelayStrike> strikes;
+  /// Per-source-IP drop histogram. Keyed by host-byte-order
+  /// uint32 (v4 only — v6 sources are skipped, since the
+  /// brief's diagnostic targets are v4 NAT bugs). Capped at
+  /// kDropBySrcMaxEntries; oldest `last_seen_ns` is evicted
+  /// when full so spoofed-source storms can't blow up RSS.
+  std::map<uint32_t, WgRelayDropBySrc> drop_by_src;
   /// Blocked source IPs (host-byte-order uint32_t) → expiry
   /// timestamp (steady_clock ns). Mirrors the BPF
   /// wg_blocklist map for `wg blocklist list` / userspace
@@ -246,6 +279,14 @@ struct WgRelay {
   std::atomic<bool> running{false};
   std::thread loop_thread;
   std::string roster_path;
+  /// When true, every forwarded frame is logged with
+  /// SHA-256(payload), length, and the source/destination
+  /// peer pubkey prefixes at both ingress and egress.
+  /// Off by default — this is per-frame logging on the hot
+  /// path and will tank throughput. Drive it from the
+  /// `--trace-forward-hashes` daemon flag for debugging
+  /// integrity-mismatch failures.
+  bool trace_forward_hashes = false;
   /// XDP fast path. attached == true iff the BPF program
   /// is live on a NIC. Map updates from `wg link add`
   /// land here; the userspace recv loop still runs as the
@@ -276,6 +317,31 @@ bool WgRelayPeerNic(WgRelay* r, const std::string& name,
                      const std::string& nic);
 bool WgRelayPeerRemove(WgRelay* r,
                         const std::string& name);
+/// Outcome codes for `WgRelayLinkAdd` / `WgRelayLinkAddDetail`.
+/// 0 means success; the non-zero values are surfaced by the
+/// einheit channel as distinct error codes so the runner can
+/// distinguish "you already used your one link slot" from
+/// "you typo'd a peer name."
+enum WgRelayLinkAddResult : int {
+  kWgLinkOk = 0,
+  kWgLinkUnknownPeer = 1,
+  kWgLinkSelfLink = 2,
+  /// Iteration-1 invariant: each peer is in at most one link
+  /// so the destination is unambiguous from the source 4-tuple
+  /// alone. A second link on either side is rejected here
+  /// rather than producing ambiguous forwarding.
+  kWgLinkLimitExceeded = 3,
+  kWgLinkDuplicate = 4,
+};
+
+/// Like WgRelayLinkAdd but returns the reason code. Use this
+/// when the caller needs to differentiate failure modes (e.g.
+/// the einheit channel mapping each onto a distinct error
+/// string). The bool-returning wrapper below is kept for
+/// callers that only need success/failure.
+WgRelayLinkAddResult WgRelayLinkAddDetail(
+    WgRelay* r, const std::string& a, const std::string& b);
+
 bool WgRelayLinkAdd(WgRelay* r, const std::string& a,
                      const std::string& b);
 bool WgRelayLinkRemove(WgRelay* r, const std::string& a,
@@ -291,6 +357,12 @@ struct WgRelayPeerInfo {
   uint64_t last_seen_ns;
   uint64_t rx_bytes;
   uint64_t fwd_bytes;
+  /// Per-peer drop counters. Aggregate counterparts in
+  /// WgRelayStatsSnapshot stay populated; these are the
+  /// pair-attributable subset for diagnosing which peer's
+  /// traffic is hitting which drop reason.
+  uint64_t drop_no_link;
+  uint64_t drop_pubkey_mismatch;
   std::string linked_to;  // name of peer this is linked to, or empty
 };
 std::vector<WgRelayPeerInfo> WgRelayListPeers(
@@ -333,6 +405,20 @@ struct WgBlocklistView {
   uint64_t total_strikes;    // cumulative for this IP
 };
 std::vector<WgBlocklistView> WgRelayListBlocklist(
+    const WgRelay* r);
+
+/// One row of `wg show drop_sources`. Provides the same three
+/// drop counters the brief flagged as needing more granularity
+/// than aggregate, attributed to the source IP (since they're
+/// definitionally not attributable to a registered peer).
+struct WgDropBySrcView {
+  std::string ip;
+  uint64_t drop_unknown_src;
+  uint64_t drop_not_wg_shaped;
+  uint64_t drop_handshake_no_pubkey_match;
+  uint64_t last_seen_ns;
+};
+std::vector<WgDropBySrcView> WgRelayListDropSources(
     const WgRelay* r);
 
 }  // namespace hyper_derp
