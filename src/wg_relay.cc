@@ -432,6 +432,13 @@ void PersistRosterLocked(WgRelay* r) {
 //     registrations for the same peer (rate-limits flap).
 constexpr uint64_t kCandidateTimeoutNs = 30ULL * 1'000'000'000ULL;
 constexpr uint64_t kRelearnCooldownNs = 5ULL * 1'000'000'000ULL;
+
+// Cap on the per-source-IP drop histogram. Spoofed-source
+// floods could otherwise grow the std::map unboundedly. 256
+// rows is enough for the diagnostic intent (the brief's
+// integrity test has a single peer pair) while keeping the
+// memory cost trivial.
+constexpr size_t kDropBySrcMaxEntries = 256;
 // Rate-limit retry-init forwards from a not-yet-confirmed
 // candidate. wg.ko's retry cadence is 5 s; legit clients only
 // trip this when their network is genuinely flaky, while a
@@ -595,6 +602,58 @@ void XdpBlocklistDelete(WgRelay* r, uint32_t host_ip) {
   bpf_map_delete_elem(r->xdp.blocklist_map_fd, &key);
 }
 
+// Bump a counter on the per-source-IP drop histogram. The
+// histogram exists for the three drop classes that aren't
+// attributable to a registered peer (drop_unknown_src,
+// drop_not_wg_shaped, drop_handshake_no_pubkey_match) — the
+// brief's integrity-test diagnostic asks "what source IPs
+// are hitting which drop reason?" rather than per-pair, since
+// these drops fire precisely when no pair owns the source.
+//
+// `which` selects the field to bump (1=unknown_src,
+// 2=not_wg_shaped, 3=no_pubkey_match). v6 sources are skipped
+// — the brief's diagnostic targets are v4 NAT mismatches.
+// Caller holds peers_mu.
+enum class WgDropClass : int {
+  kUnknownSrc = 1,
+  kNotWgShaped = 2,
+  kHandshakeNoPubkeyMatch = 3,
+};
+void RecordDropBySrcLocked(
+    WgRelay* r, const sockaddr_storage& src,
+    socklen_t src_len, WgDropClass which) {
+  uint32_t ip_h = ExtractV4SrcHostOrder(src, src_len);
+  if (ip_h == 0) return;
+  uint64_t now = NowNs();
+  // FIFO eviction on overflow: pick the entry with the oldest
+  // last_seen_ns. Linear scan; map size is bounded.
+  if (r->drop_by_src.find(ip_h) == r->drop_by_src.end() &&
+      r->drop_by_src.size() >= kDropBySrcMaxEntries) {
+    auto oldest = r->drop_by_src.begin();
+    for (auto it = r->drop_by_src.begin();
+         it != r->drop_by_src.end(); ++it) {
+      if (it->second.last_seen_ns <
+          oldest->second.last_seen_ns) {
+        oldest = it;
+      }
+    }
+    r->drop_by_src.erase(oldest);
+  }
+  WgRelayDropBySrc& s = r->drop_by_src[ip_h];
+  s.last_seen_ns = now;
+  switch (which) {
+    case WgDropClass::kUnknownSrc:
+      s.drop_unknown_src += 1;
+      break;
+    case WgDropClass::kNotWgShaped:
+      s.drop_not_wg_shaped += 1;
+      break;
+    case WgDropClass::kHandshakeNoPubkeyMatch:
+      s.drop_handshake_no_pubkey_match += 1;
+      break;
+  }
+}
+
 // Record a failed-confirm strike for `src` and escalate to
 // the blocklist if the threshold is crossed. Caller holds
 // peers_mu.
@@ -747,6 +806,8 @@ void HandleUnknownSrcHandshakeLocked(
   if (pkt[0] != 1) {
     r->stats.drop_unknown_src.fetch_add(
         1, std::memory_order_relaxed);
+    RecordDropBySrcLocked(r, src, src_len,
+                           WgDropClass::kUnknownSrc);
     return;
   }
   uint64_t now = NowNs();
@@ -767,6 +828,8 @@ void HandleUnknownSrcHandshakeLocked(
         now - sender->last_relearn_ns < kRelearnCooldownNs) {
       r->stats.drop_unknown_src.fetch_add(
           1, std::memory_order_relaxed);
+      RecordDropBySrcLocked(r, src, src_len,
+                             WgDropClass::kUnknownSrc);
       return;
     }
 
@@ -798,6 +861,8 @@ void HandleUnknownSrcHandshakeLocked(
           < kRetryForwardGapNs) {
         r->stats.drop_unknown_src.fetch_add(
             1, std::memory_order_relaxed);
+        RecordDropBySrcLocked(r, src, src_len,
+                               WgDropClass::kUnknownSrc);
         return;
       }
       sender->candidate_last_forward_ns = now;
@@ -819,6 +884,8 @@ void HandleUnknownSrcHandshakeLocked(
     if (sender->candidate_endpoint_len > 0) {
       r->stats.drop_unknown_src.fetch_add(
           1, std::memory_order_relaxed);
+      RecordDropBySrcLocked(r, src, src_len,
+                             WgDropClass::kUnknownSrc);
       return;
     }
 
@@ -858,6 +925,13 @@ void HandleUnknownSrcHandshakeLocked(
   // No partner pubkey verified.
   r->stats.drop_handshake_no_pubkey_match.fetch_add(
       1, std::memory_order_relaxed);
+  // Per-source-IP attribution for diagnostic — this drop
+  // class is exactly the failure mode the cloud-gcp-c4
+  // internal/external NAT mismatch produces, where the
+  // runner traffic arrives from an IP not stamped on either
+  // peer.
+  RecordDropBySrcLocked(r, src, src_len,
+                         WgDropClass::kHandshakeNoPubkeyMatch);
 }
 
 // Forward-declare the XDP map updater — implementation lives
@@ -975,6 +1049,12 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
   if (!IsWgShaped(pkt, len)) {
     r->stats.drop_not_wg_shaped.fetch_add(
         1, std::memory_order_relaxed);
+    // Bump the per-source-IP histogram so the operator can
+    // see which IPs are flooding the relay with non-WG noise.
+    // Cold path — taking the lock briefly is fine.
+    std::lock_guard lk(r->peers_mu);
+    RecordDropBySrcLocked(r, src, src_len,
+                           WgDropClass::kNotWgShaped);
     return;
   }
   // Lookup is O(N) over the peer table; N is operator-
@@ -1010,12 +1090,16 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
       if (!src_peer) {
         r->stats.drop_unknown_src.fetch_add(
             1, std::memory_order_relaxed);
+        RecordDropBySrcLocked(r, src, src_len,
+                               WgDropClass::kUnknownSrc);
         return;
       }
       // src_peer is now the confirmed peer; fall through.
     } else {
       r->stats.drop_unknown_src.fetch_add(
           1, std::memory_order_relaxed);
+      RecordDropBySrcLocked(r, src, src_len,
+                             WgDropClass::kUnknownSrc);
       return;
     }
   }
@@ -2097,6 +2181,27 @@ std::vector<WgBlocklistView> WgRelayListBlocklist(
     auto it = r->strikes.find(ip_h);
     v.total_strikes =
         (it != r->strikes.end()) ? it->second.total_strikes : 0;
+    out.push_back(std::move(v));
+  }
+  return out;
+}
+
+std::vector<WgDropBySrcView> WgRelayListDropSources(
+    const WgRelay* r) {
+  std::vector<WgDropBySrcView> out;
+  std::lock_guard lk(r->peers_mu);
+  out.reserve(r->drop_by_src.size());
+  for (const auto& [ip_h, s] : r->drop_by_src) {
+    char buf[INET_ADDRSTRLEN];
+    uint32_t nbo = htonl(ip_h);
+    inet_ntop(AF_INET, &nbo, buf, sizeof(buf));
+    WgDropBySrcView v;
+    v.ip = buf;
+    v.drop_unknown_src = s.drop_unknown_src;
+    v.drop_not_wg_shaped = s.drop_not_wg_shaped;
+    v.drop_handshake_no_pubkey_match =
+        s.drop_handshake_no_pubkey_match;
+    v.last_seen_ns = s.last_seen_ns;
     out.push_back(std::move(v));
   }
   return out;

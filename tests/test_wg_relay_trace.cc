@@ -219,6 +219,39 @@ TEST_F(WgRelayTraceTest, XdpModeOffSkipsAttach) {
   EXPECT_FALSE(stats.xdp_attached);
 }
 
+// Per-source-IP histogram bumps drop_not_wg_shaped when an
+// unrecognised packet hits the relay's port. The brief
+// flagged this counter as needing more granularity than
+// aggregate; surface it via WgRelayListDropSources.
+TEST_F(WgRelayTraceTest, PerSrcIpDropHistogram) {
+  WgRelayConfig cfg = MakeCfg();
+  StartRelay(std::move(cfg));
+  ASSERT_NE(relay_, nullptr);
+
+  // Send a single byte 0x05 (not a valid WG type) — fails the
+  // shape filter, increments drop_not_wg_shaped per-source.
+  uint8_t junk = 0x05;
+  sockaddr_in to{};
+  to.sin_family = AF_INET;
+  to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  to.sin_port = htons(relay_port_);
+  ASSERT_EQ(sendto(alice_fd_, &junk, 1, 0,
+                    reinterpret_cast<sockaddr*>(&to),
+                    sizeof(to)),
+            1);
+  // Recv loop runs; let it process.
+  for (int i = 0; i < 50; ++i) {
+    auto rows = WgRelayListDropSources(relay_);
+    if (!rows.empty()) {
+      EXPECT_GE(rows[0].drop_not_wg_shaped, 1u);
+      EXPECT_EQ(rows[0].ip, "127.0.0.1");
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  FAIL() << "drop_by_src histogram never populated";
+}
+
 // Per-peer drop_no_link counter increments when a registered
 // peer sends with no link configured for it. Counter is
 // surfaced via WgRelayListPeers.

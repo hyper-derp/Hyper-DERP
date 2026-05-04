@@ -222,6 +222,25 @@ struct WgXdpStats {
   uint64_t drop_blocklisted = 0;
 };
 
+/// Per-source-IP histogram of drops that can't be attributed
+/// to a registered peer (because, by definition, the source
+/// didn't match any peer's endpoint). The brief asked for
+/// per-pair breakdown of these but per-pair is meaningless
+/// when the source is unknown — per-source-IP is the next
+/// best granularity and exactly what's needed to diagnose
+/// "the runner's traffic is arriving from an external NAT IP
+/// that isn't stamped on the peer." Bounded to keep the map
+/// from growing under spoofed source attacks (FIFO eviction
+/// at the cap).
+struct WgRelayDropBySrc {
+  uint64_t drop_unknown_src = 0;
+  uint64_t drop_not_wg_shaped = 0;
+  uint64_t drop_handshake_no_pubkey_match = 0;
+  /// Steady-clock ns of the most recent increment — used as
+  /// the FIFO eviction key when the map is at capacity.
+  uint64_t last_seen_ns = 0;
+};
+
 /// Strike record per source IP — incremented when a candidate
 /// endpoint that source registered fails to confirm via
 /// transport-data. Escalates the source onto the blocklist
@@ -245,6 +264,12 @@ struct WgRelay {
   /// succeeds; escalated to wg_blocklist once the threshold
   /// is crossed.
   std::map<uint32_t, WgRelayStrike> strikes;
+  /// Per-source-IP drop histogram. Keyed by host-byte-order
+  /// uint32 (v4 only — v6 sources are skipped, since the
+  /// brief's diagnostic targets are v4 NAT bugs). Capped at
+  /// kDropBySrcMaxEntries; oldest `last_seen_ns` is evicted
+  /// when full so spoofed-source storms can't blow up RSS.
+  std::map<uint32_t, WgRelayDropBySrc> drop_by_src;
   /// Blocked source IPs (host-byte-order uint32_t) → expiry
   /// timestamp (steady_clock ns). Mirrors the BPF
   /// wg_blocklist map for `wg blocklist list` / userspace
@@ -380,6 +405,20 @@ struct WgBlocklistView {
   uint64_t total_strikes;    // cumulative for this IP
 };
 std::vector<WgBlocklistView> WgRelayListBlocklist(
+    const WgRelay* r);
+
+/// One row of `wg show drop_sources`. Provides the same three
+/// drop counters the brief flagged as needing more granularity
+/// than aggregate, attributed to the source IP (since they're
+/// definitionally not attributable to a registered peer).
+struct WgDropBySrcView {
+  std::string ip;
+  uint64_t drop_unknown_src;
+  uint64_t drop_not_wg_shaped;
+  uint64_t drop_handshake_no_pubkey_match;
+  uint64_t last_seen_ns;
+};
+std::vector<WgDropBySrcView> WgRelayListDropSources(
     const WgRelay* r);
 
 }  // namespace hyper_derp

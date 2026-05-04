@@ -1978,6 +1978,37 @@ void WgBlocklistList(Server* s, const Request& /*req*/,
   SetBody(r, b);
 }
 
+// Per-source-IP histogram of unattributable drops. The brief
+// asked for per-pair breakdown of drop_unknown_src,
+// drop_not_wg_shaped, and drop_handshake_no_pubkey_match —
+// per-pair is meaningless when the source isn't a registered
+// peer, but per-source-IP is exactly what the runner needs to
+// diagnose internal/external NAT-IP mismatches.
+void WgDropSources(Server* s, const Request& /*req*/,
+                    Response* r) {
+  if (!WgGate(s, r)) return;
+  auto entries = WgRelayListDropSources(s->wg_relay);
+  if (entries.empty()) {
+    SetBody(r, "drop_sources=empty\n");
+    return;
+  }
+  std::string b;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    b += std::format("src.{}.ip={}\n", i, entries[i].ip);
+    b += std::format("src.{}.drop_unknown_src={}\n", i,
+                     entries[i].drop_unknown_src);
+    b += std::format("src.{}.drop_not_wg_shaped={}\n", i,
+                     entries[i].drop_not_wg_shaped);
+    b += std::format(
+        "src.{}.drop_handshake_no_pubkey_match={}\n", i,
+        entries[i].drop_handshake_no_pubkey_match);
+    b += std::format("src.{}.last_seen_ns={}\n", i,
+                     entries[i].last_seen_ns);
+  }
+  b += std::format("count={}\n", entries.size());
+  SetBody(r, b);
+}
+
 void WgShow(Server* s, const Request& /*req*/,
             Response* r) {
   if (!WgGate(s, r)) return;
@@ -2251,6 +2282,14 @@ Registry MakeRegistry() {
       WgBlocklistList, Role::kAny, "wg blocklist list",
       "Source IPs auto-blocked after repeated failed-confirm "
       "strikes (forged-handshake protection)",
+      false, {}};
+  m["wg_show_drop_sources"] = {
+      WgDropSources, Role::kAny, "wg show drop_sources",
+      "Per-source-IP histogram for the three drop classes "
+      "that aren't attributable to a registered peer "
+      "(drop_unknown_src, drop_not_wg_shaped, "
+      "drop_handshake_no_pubkey_match). Capped at 256 IPs; "
+      "FIFO eviction on overflow",
       false, {}};
   return m;
 }
