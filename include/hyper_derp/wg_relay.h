@@ -68,6 +68,14 @@ struct WgRelayPeer {
   /// Times this peer's `endpoint` was relearned via the
   /// MAC1-driven roaming flow. Persisted to the roster.
   uint64_t endpoint_relearn = 0;
+  /// Per-peer drop counters — incremented alongside the
+  /// aggregate `WgRelayStats` counters at sites where the
+  /// drop is attributable to a known source peer. The
+  /// other drop classes (drop_unknown_src,
+  /// drop_not_wg_shaped, drop_handshake_no_pubkey_match)
+  /// are by definition unattributable and stay aggregate.
+  uint64_t drop_no_link_peer = 0;
+  uint64_t drop_pubkey_mismatch_peer = 0;
   /// Pending relearn-candidate, populated when an unknown
   /// source presents a handshake with valid MAC1 against
   /// this peer's link partner. Cleared on confirm (transport
@@ -246,6 +254,14 @@ struct WgRelay {
   std::atomic<bool> running{false};
   std::thread loop_thread;
   std::string roster_path;
+  /// When true, every forwarded frame is logged with
+  /// SHA-256(payload), length, and the source/destination
+  /// peer pubkey prefixes at both ingress and egress.
+  /// Off by default — this is per-frame logging on the hot
+  /// path and will tank throughput. Drive it from the
+  /// `--trace-forward-hashes` daemon flag for debugging
+  /// integrity-mismatch failures.
+  bool trace_forward_hashes = false;
   /// XDP fast path. attached == true iff the BPF program
   /// is live on a NIC. Map updates from `wg link add`
   /// land here; the userspace recv loop still runs as the
@@ -291,6 +307,12 @@ struct WgRelayPeerInfo {
   uint64_t last_seen_ns;
   uint64_t rx_bytes;
   uint64_t fwd_bytes;
+  /// Per-peer drop counters. Aggregate counterparts in
+  /// WgRelayStatsSnapshot stay populated; these are the
+  /// pair-attributable subset for diagnosing which peer's
+  /// traffic is hitting which drop reason.
+  uint64_t drop_no_link;
+  uint64_t drop_pubkey_mismatch;
   std::string linked_to;  // name of peer this is linked to, or empty
 };
 std::vector<WgRelayPeerInfo> WgRelayListPeers(

@@ -1843,6 +1843,10 @@ void WgPeerList(Server* s, const Request& /*req*/,
                      p.rx_bytes);
     b += std::format("peer.{}.fwd_bytes={}\n", idx,
                      p.fwd_bytes);
+    b += std::format("peer.{}.drop_no_link={}\n", idx,
+                     p.drop_no_link);
+    b += std::format("peer.{}.drop_pubkey_mismatch={}\n", idx,
+                     p.drop_pubkey_mismatch);
     idx++;
   }
   b += std::format("peer.count={}\n", idx);

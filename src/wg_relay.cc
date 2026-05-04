@@ -19,6 +19,8 @@
 #include <bpf/libbpf.h>
 #include <linux/if_link.h>
 
+#include <sodium.h>
+
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -38,6 +40,30 @@ uint64_t NowNs() {
              std::chrono::steady_clock::now()
                  .time_since_epoch())
       .count();
+}
+
+// Helpers for the trace-forward-hashes diagnostic path.
+// Both functions are only called when r->trace_forward_hashes
+// is set; the hot path stays untouched when tracing is off.
+std::string Sha256HexPrefix(const uint8_t* data, size_t len) {
+  unsigned char digest[crypto_hash_sha256_BYTES];
+  crypto_hash_sha256(digest, data, len);
+  static constexpr char kHex[] = "0123456789abcdef";
+  // 16 bytes = 32 hex chars; enough to distinguish frames
+  // without spamming the log.
+  std::string out(32, '\0');
+  for (int i = 0; i < 16; ++i) {
+    out[2 * i] = kHex[digest[i] >> 4];
+    out[2 * i + 1] = kHex[digest[i] & 0xF];
+  }
+  return out;
+}
+
+// First 12 chars of a peer's base64 pubkey, "[--]" if unset.
+std::string PubkeyPrefix(const std::string& pubkey_b64) {
+  if (pubkey_b64.empty()) return "[--]";
+  return pubkey_b64.substr(
+      0, std::min<size_t>(12, pubkey_b64.size()));
 }
 
 bool ParseHostPort(const std::string& s,
@@ -1019,6 +1045,7 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
   if (!dst) {
     r->stats.drop_no_link.fetch_add(
         1, std::memory_order_relaxed);
+    src_peer->drop_no_link_peer += 1;
     return;
   }
 
@@ -1035,6 +1062,7 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
       if (!VerifyMac1(pkt, len, partner_pub.data())) {
         r->stats.drop_handshake_pubkey_mismatch.fetch_add(
             1, std::memory_order_relaxed);
+        src_peer->drop_pubkey_mismatch_peer += 1;
         return;
       }
     }
@@ -1042,6 +1070,21 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     // we'd rather forward a packet than drop one because of a
     // bad operator-stamped key. The decode failure shows up at
     // pubkey-set time anyway.
+  }
+
+  // Trace point: ingress (after src match + MAC1 verify, before
+  // forward). The matching egress trace below pairs with this
+  // by SHA-256 — same hash on both lines means the relay didn't
+  // mutate the frame (which is the integrity invariant we
+  // expect for stock WG relay mode).
+  if (r->trace_forward_hashes) {
+    spdlog::info(
+        "wg-relay trace ingress sha256={} len={} type={} "
+        "src_peer={} src_pubkey={} dst_peer={} dst_pubkey={}",
+        Sha256HexPrefix(pkt, len), len,
+        static_cast<int>(pkt[0]), src_peer->name,
+        PubkeyPrefix(src_peer->pubkey_b64), dst->name,
+        PubkeyPrefix(dst->pubkey_b64));
   }
 
   ssize_t sent = sendto(
@@ -1052,6 +1095,16 @@ void HandlePacket(WgRelay* r, const uint8_t* pkt,
     spdlog::warn("wg-relay sendto: {}",
                  std::strerror(errno));
     return;
+  }
+  // Trace point: egress (sendto succeeded). Same SHA-256 as
+  // the matching ingress line proves we forwarded the frame
+  // byte-for-byte — divergence flags a corrupting code path.
+  if (r->trace_forward_hashes) {
+    spdlog::info(
+        "wg-relay trace egress  sha256={} len={} type={} "
+        "src_peer={} dst_peer={}",
+        Sha256HexPrefix(pkt, len), sent,
+        static_cast<int>(pkt[0]), src_peer->name, dst->name);
   }
   // Handshake response → mirror to dst's pending candidate
   // endpoint (so a real roamer at the new IP completes their
@@ -1619,6 +1672,13 @@ WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
   r->sock_fd = sock;
   r->port = cfg.port;
   r->roster_path = cfg.roster_path;
+  r->trace_forward_hashes = cfg.trace_forward_hashes;
+  if (r->trace_forward_hashes) {
+    spdlog::warn(
+        "wg-relay trace_forward_hashes=on — per-frame "
+        "logging will dominate throughput; disable for "
+        "production traffic.");
+  }
   if (!r->roster_path.empty()) {
     std::lock_guard lk(r->peers_mu);
     LoadRosterFile(r, r->roster_path);
@@ -1801,6 +1861,8 @@ std::vector<WgRelayPeerInfo> WgRelayListPeers(
     i.last_seen_ns = p.last_seen_ns;
     i.rx_bytes = p.rx_bytes;
     i.fwd_bytes = p.fwd_bytes;
+    i.drop_no_link = p.drop_no_link_peer;
+    i.drop_pubkey_mismatch = p.drop_pubkey_mismatch_peer;
     // Fold in the XDP per-CPU byte counters when the fast
     // path is attached. Without this the bytes freeze at
     // whatever the cold-start packet was, since every

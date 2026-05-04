@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in
 this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2] - unreleased
+
+### Added — wg-relay diagnostic surface
+
+- **`--trace-forward-hashes` daemon flag**. When set, every wg-relay forward logs a SHA-256(payload) hash + length + source/destination peer pubkey prefix at two points: ingress (after the source peer matches and MAC1 verification, if applicable) and egress (just before `sendto` to the destination). Same hash on both lines proves the relay didn't mutate the frame; divergence flags a corrupting code path. Off by default — this is per-frame logging on the hot path and will tank throughput if left on. Aimed at diagnosing integrity-test failures where a single log line and aggregate counters aren't enough to triage.
+- **Per-peer drop counters**. `wg peer list` now surfaces `peer.<i>.drop_no_link` and `peer.<i>.drop_pubkey_mismatch` alongside the existing per-peer byte counters. The aggregate counters in `wg show` are unchanged; these are the pair-attributable subset for diagnosing which peer's traffic is hitting which drop reason. Other drop classes (`drop_unknown_src`, `drop_not_wg_shaped`, `drop_handshake_no_pubkey_match`) are by definition unattributable to a known peer and remain aggregate-only.
+
 ## [0.2.1] - unreleased
 
 ### Added — wg-relay hardening

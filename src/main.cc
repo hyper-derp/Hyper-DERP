@@ -63,6 +63,15 @@ static void PrintUsage(const char* prog) {
       "(default: 3478)\n"
       "  --xdp-interface <nic> Network interface for "
       "XDP attachment\n"
+      "  --xdp-mode <m>        XDP attach mode: drv "
+      "(default), skb, auto, off\n"
+      "  --trace-forward-hashes "
+      "Log SHA-256 of every forwarded\n"
+      "                        wg-relay frame at ingress + "
+      "egress. Per-frame\n"
+      "                        log; for diagnostics only — "
+      "do not enable in\n"
+      "                        production.\n"
       "  --help                Show this help\n"
       "  --version             Show version",
       prog);
@@ -123,6 +132,8 @@ int main(int argc, char* argv[]) {
   const char* hd_relay_key = nullptr;
   const char* hd_enroll_mode = nullptr;
   const char* xdp_interface = nullptr;
+  const char* xdp_mode = nullptr;
+  bool trace_forward_hashes = false;
   int stun_port = -1;
   int hd_relay_id = -1;
   std::vector<std::string> seed_relays;
@@ -221,6 +232,10 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--xdp-interface"sv &&
                i + 1 < argc) {
       xdp_interface = argv[++i];
+    } else if (arg == "--xdp-mode"sv && i + 1 < argc) {
+      xdp_mode = argv[++i];
+    } else if (arg == "--trace-forward-hashes"sv) {
+      trace_forward_hashes = true;
     } else {
       std::println(stderr,
                    "error: unknown option '{}'", arg);
@@ -338,6 +353,12 @@ int main(int argc, char* argv[]) {
         static_cast<uint16_t>(stun_port);
   if (xdp_interface)
     config.level2.xdp_interface = xdp_interface;
+  // wg-relay-mode-only flags: pass through whether or not
+  // wg-mode is selected (the relay only reads them when it's
+  // active; the daemon ignores them otherwise).
+  if (xdp_mode) config.wg.xdp_mode = xdp_mode;
+  if (trace_forward_hashes)
+    config.wg.trace_forward_hashes = true;
 
   if (pin_spec) {
     int n = ParsePinCores(pin_spec,
