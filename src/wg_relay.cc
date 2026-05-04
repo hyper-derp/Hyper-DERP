@@ -18,6 +18,7 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/if_link.h>
+#include <sys/utsname.h>
 
 #include <sodium.h>
 
@@ -1243,6 +1244,33 @@ bool ReadNicIpv4(const std::string& iface,
   return found;
 }
 
+// Read the kernel module backing a NIC. Returns the basename
+// of /sys/class/net/<iface>/device/driver, or "?" if the
+// symlink doesn't resolve (loopback, bridges, virtual NICs).
+std::string ReadNicDriver(const std::string& iface) {
+  std::string path =
+      "/sys/class/net/" + iface + "/device/driver";
+  char buf[256];
+  ssize_t n =
+      ::readlink(path.c_str(), buf, sizeof(buf) - 1);
+  if (n <= 0) return "?";
+  buf[n] = '\0';
+  std::string s(buf);
+  auto slash = s.rfind('/');
+  return slash == std::string::npos ? s
+                                     : s.substr(slash + 1);
+}
+
+// Running kernel release ("6.12.73+deb13-amd64" etc).
+// Operator-facing field on the xdp_attached log line so
+// driver/kernel pairs that don't support XDP_DRV are
+// distinguishable in the bench log.
+std::string ReadKernelRelease() {
+  utsname u{};
+  if (::uname(&u) != 0) return "?";
+  return u.release;
+}
+
 // Read a NIC's hardware MAC from sysfs. Cleaner than
 // SIOCGIFHWADDR — no socket needed, no ioctl quirks.
 bool ReadNicMac(const std::string& iface, uint8_t mac[6]) {
@@ -1278,9 +1306,46 @@ std::vector<std::string> SplitIfaceList(const std::string& s) {
   return out;
 }
 
+// Resolve the operator's --xdp-mode string into a flags +
+// fallback policy. Empty / "drv" → DRV-only (fail loudly if
+// the driver doesn't support it); "skb" → SKB-only;
+// "auto" → DRV with SKB fallback (the historical behaviour);
+// "off" → caller should skip XdpAttach entirely. Anything
+// else is an operator typo.
+struct XdpModePolicy {
+  bool valid = false;
+  bool try_drv = false;
+  bool try_skb_fallback = false;
+  std::string label;  // "drv" | "skb" | "auto" | "off"
+};
+XdpModePolicy ParseXdpMode(const std::string& mode) {
+  XdpModePolicy p;
+  if (mode.empty() || mode == "drv") {
+    p.valid = true;
+    p.try_drv = true;
+    p.try_skb_fallback = false;
+    p.label = "drv";
+  } else if (mode == "skb") {
+    p.valid = true;
+    p.try_drv = false;
+    p.try_skb_fallback = true;
+    p.label = "skb";
+  } else if (mode == "auto") {
+    p.valid = true;
+    p.try_drv = true;
+    p.try_skb_fallback = true;
+    p.label = "auto";
+  } else if (mode == "off") {
+    p.valid = true;
+    p.label = "off";
+  }
+  return p;
+}
+
 bool XdpAttach(WgRelay* r, const std::string& iface_list,
                 const std::string& bpf_obj_path,
-                uint16_t port) {
+                uint16_t port,
+                const XdpModePolicy& mode) {
   auto ifaces = SplitIfaceList(iface_list);
   if (ifaces.empty()) return false;
 
@@ -1409,30 +1474,40 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
     }
   }
 
-  // Attach to each NIC. Native first; generic fallback per
-  // NIC, since some drivers in a mixed setup support
-  // native and others don't.
+  // Attach per NIC, honouring the operator's mode policy.
+  // The previous code unconditionally tried DRV then fell
+  // back to SKB; that silent fallback is exactly what the
+  // 0.2.1 cloud-gcp-c4 benchmark caught labelling "xdp"
+  // rows that were really running in userspace mode.
   std::vector<bool> natives;
   natives.reserve(attachments.size());
+  std::string kernel = ReadKernelRelease();
   for (const auto& a : attachments) {
-    int rc = bpf_xdp_attach(a.ifindex, prog_fd,
-                             XDP_FLAGS_DRV_MODE, nullptr);
-    bool native = rc == 0;
-    if (rc < 0) {
+    std::string drv = ReadNicDriver(a.iface);
+    int rc = -EOPNOTSUPP;
+    bool native = false;
+    if (mode.try_drv) {
+      rc = bpf_xdp_attach(a.ifindex, prog_fd,
+                           XDP_FLAGS_DRV_MODE, nullptr);
+      if (rc == 0) native = true;
+    }
+    if (rc != 0 && mode.try_skb_fallback) {
       rc = bpf_xdp_attach(a.ifindex, prog_fd,
                            XDP_FLAGS_SKB_MODE, nullptr);
-      if (rc < 0) {
-        spdlog::error(
-            "wg-relay xdp: attach {} failed: {}", a.iface,
-            std::strerror(-rc));
-        // Roll back any NICs we already attached.
-        for (const auto& done : attachments) {
-          if (done.ifindex == a.ifindex) break;
-          bpf_xdp_detach(done.ifindex, 0, nullptr);
-        }
-        bpf_object__close(obj);
-        return false;
+    }
+    if (rc != 0) {
+      spdlog::error(
+          "xdp_attach_failed iface={} ifindex={} mode={} "
+          "driver={} kernel={} reason={}",
+          a.iface, a.ifindex, mode.label, drv, kernel,
+          std::strerror(-rc));
+      // Roll back any NICs we already attached.
+      for (const auto& done : attachments) {
+        if (done.ifindex == a.ifindex) break;
+        bpf_xdp_detach(done.ifindex, 0, nullptr);
       }
+      bpf_object__close(obj);
+      return false;
     }
     natives.push_back(native);
   }
@@ -1451,12 +1526,13 @@ bool XdpAttach(WgRelay* r, const std::string& iface_list,
   r->xdp.blocklist_map_fd = blocklist_fd;
   r->xdp.attached = true;
   for (size_t i = 0; i < r->xdp.attachments.size(); ++i) {
+    const auto& a = r->xdp.attachments[i];
     spdlog::info(
-        "wg-relay xdp: attached on {} "
-        "(ifindex={}, mode={})",
-        r->xdp.attachments[i].iface,
-        r->xdp.attachments[i].ifindex,
-        natives[i] ? "native" : "generic");
+        "xdp_attached iface={} ifindex={} mode={} "
+        "driver={} kernel={}",
+        a.iface, a.ifindex,
+        natives[i] ? "drv" : "skb",
+        ReadNicDriver(a.iface), kernel);
   }
   return true;
 }
@@ -1709,20 +1785,40 @@ WgRelay* WgRelayStart(const WgRelayConfig& cfg) {
   r->loop_thread = std::thread(RecvLoop, r);
 
   // Bring up the XDP fast path if the operator asked for
-  // it. Failure here is non-fatal — we log and stay on
-  // the userspace path; correctness is unchanged.
-  if (!cfg.xdp_interface.empty()) {
+  // it. The mode policy decides whether to try drv, skb, both,
+  // or skip entirely. Attach failure (after the policy says
+  // "really try this") is FATAL: silently falling back to
+  // userspace would label benchmark rows "xdp" that are
+  // actually running on the userspace recv loop, which is
+  // exactly what we're trying to avoid.
+  XdpModePolicy xdp_mode = ParseXdpMode(cfg.xdp_mode);
+  if (!xdp_mode.valid) {
+    spdlog::error(
+        "wg-relay invalid --xdp-mode '{}' (drv | skb | "
+        "auto | off)", cfg.xdp_mode);
+    WgRelayStop(r);
+    return nullptr;
+  }
+  bool xdp_requested = !cfg.xdp_interface.empty() &&
+                        xdp_mode.label != "off";
+  if (xdp_requested) {
     std::string obj_path = cfg.xdp_bpf_obj_path.empty()
         ? std::string("/usr/lib/hyper-derp/wg_relay.bpf.o")
         : cfg.xdp_bpf_obj_path;
-    if (XdpAttach(r, cfg.xdp_interface, obj_path,
-                   cfg.port)) {
-      // Replay current links into the BPF map so the fast
-      // path is live for already-loaded roster entries.
-      std::lock_guard lk(r->peers_mu);
-      for (const auto& l : r->links) {
-        XdpInsertLinkByNameLocked(r, l.a, l.b);
-      }
+    if (!XdpAttach(r, cfg.xdp_interface, obj_path,
+                    cfg.port, xdp_mode)) {
+      // XdpAttach already logged xdp_attach_failed with the
+      // structured detail. Tear the relay down so main.cc
+      // exits non-zero — the runner needs a clear signal,
+      // not a silent userspace fallback.
+      WgRelayStop(r);
+      return nullptr;
+    }
+    // Replay current links into the BPF map so the fast path
+    // is live for already-loaded roster entries.
+    std::lock_guard lk(r->peers_mu);
+    for (const auto& l : r->links) {
+      XdpInsertLinkByNameLocked(r, l.a, l.b);
     }
   }
 

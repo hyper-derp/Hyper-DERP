@@ -168,6 +168,33 @@ TEST_F(WgRelayTraceTest, ForwardsWithTraceOn) {
   EXPECT_EQ(stats.fwd_packets, 1u);
 }
 
+// P0.2 smoke: invalid --xdp-mode causes WgRelayStart to fail.
+// Exercises the ParseXdpMode validation path; the daemon
+// surfacing this means main.cc returns EXIT_FAILURE rather
+// than silently running with a bogus mode.
+TEST_F(WgRelayTraceTest, RejectsUnknownXdpMode) {
+  WgRelayConfig cfg = MakeCfg();
+  cfg.xdp_interface = "lo";
+  cfg.xdp_mode = "extreme";
+  WgRelay* r = WgRelayStart(cfg);
+  EXPECT_EQ(r, nullptr);
+}
+
+// P0.2 smoke: --xdp-mode=off skips XDP attach entirely even
+// when --xdp-interface is set. The relay still comes up; the
+// userspace recv loop handles every packet. Operator opts in
+// to "no XDP" explicitly, rather than getting it as a silent
+// fallback.
+TEST_F(WgRelayTraceTest, XdpModeOffSkipsAttach) {
+  WgRelayConfig cfg = MakeCfg();
+  cfg.xdp_interface = "lo";
+  cfg.xdp_mode = "off";
+  relay_ = WgRelayStart(cfg);
+  ASSERT_NE(relay_, nullptr);
+  auto stats = WgRelayGetStats(relay_);
+  EXPECT_FALSE(stats.xdp_attached);
+}
+
 // Per-peer drop_no_link counter increments when a registered
 // peer sends with no link configured for it. Counter is
 // surfaced via WgRelayListPeers.

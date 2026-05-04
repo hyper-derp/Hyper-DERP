@@ -10,6 +10,14 @@ this file. Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **`--trace-forward-hashes` daemon flag**. When set, every wg-relay forward logs a SHA-256(payload) hash + length + source/destination peer pubkey prefix at two points: ingress (after the source peer matches and MAC1 verification, if applicable) and egress (just before `sendto` to the destination). Same hash on both lines proves the relay didn't mutate the frame; divergence flags a corrupting code path. Off by default — this is per-frame logging on the hot path and will tank throughput if left on. Aimed at diagnosing integrity-test failures where a single log line and aggregate counters aren't enough to triage.
 - **Per-peer drop counters**. `wg peer list` now surfaces `peer.<i>.drop_no_link` and `peer.<i>.drop_pubkey_mismatch` alongside the existing per-peer byte counters. The aggregate counters in `wg show` are unchanged; these are the pair-attributable subset for diagnosing which peer's traffic is hitting which drop reason. Other drop classes (`drop_unknown_src`, `drop_not_wg_shaped`, `drop_handshake_no_pubkey_match`) are by definition unattributable to a known peer and remain aggregate-only.
 
+### Changed — wg-relay XDP attach is no longer silently fallback
+
+- **Structured `xdp_attached` log line**. On successful attach the daemon now logs `xdp_attached iface=<nic> ifindex=N mode={drv,skb} driver=<gve|r8169|...> kernel=<release>` per attached NIC. The achieved mode is now legible from a single grep, instead of having to infer it from the older free-form "(ifindex=N, mode=native)" text.
+- **`--xdp-mode={drv,skb,auto,off}` daemon flag**, default `drv`. Was previously hardcoded to "try DRV, fall back to SKB on failure" — a silent fallback that on the 0.2.1 cloud-gcp-c4 benchmark labelled rows "xdp" that were really running the userspace recv loop. Operators that want the historical behaviour pass `--xdp-mode=auto` explicitly. `off` skips XDP attach even when `--xdp-interface` is set, so the operator can leave the interface flag in their unit file but disable XDP at runtime without editing it.
+- **Attach failure exits non-zero**. `XdpAttach` failure now logs `xdp_attach_failed iface=<nic> ifindex=N mode=<mode> driver=<drv> kernel=<release> reason=<errno-string>` and tears the relay down (`WgRelayStart` returns `nullptr` → `main.cc` exits non-zero). The runner gets a clear signal rather than a silent userspace fallback.
+
+Note for cloud operators: gVNIC (Google) and vmxnet3 (VMware) do not advertise `XDP_DRV` mode on stock kernels through 6.12 — the daemon will fail attach with `reason=Operation not supported` under the default `--xdp-mode=drv`. Pass `--xdp-mode=auto` (or `=skb`) to opt into the generic-mode fallback explicitly.
+
 ## [0.2.1] - unreleased
 
 ### Added — wg-relay hardening
